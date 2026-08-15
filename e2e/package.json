@@ -1,0 +1,15 @@
+{
+  "name": "bid-agent-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "投标软件技术方案智能体 — Playwright E2E 回归测试",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.45.0",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.0"
+  }
+}

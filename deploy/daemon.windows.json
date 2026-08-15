@@ -1,0 +1,15 @@
+{
+  "_comment": "Docker 镜像加速配置示例（Windows / Docker Desktop）。本字段 _comment 仅作说明，粘贴到 Docker Engine 配置时可保留或删除；registry-mirrors 中的地址为【占位符】，请替换为当前可用的镜像加速源后应用。",
+  "registry-mirrors": [
+    "https://<MIRROR-1-REPLACE-ME>",
+    "https://<MIRROR-2-REPLACE-ME>"
+  ],
+  "builder": {
+    "gc": {
+      "enabled": true
+    }
+  },
+  "features": {
+    "buildkit": true
+  }
+}

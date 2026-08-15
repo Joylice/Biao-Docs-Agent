@@ -1,0 +1,104 @@
+"""Proposal 系列模型（骨架/章节/审阅/工作流）— 对齐 SDD §4.1."""
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models.base import Base
+
+
+class ProposalWorkflow(Base):
+    """工作流元数据表 — 每项目一条，记录 LangGraph 执行状态."""
+
+    __tablename__ = "proposal_workflows"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_proposal_workflows_project"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # init|parse|confirm|outline|generate|review|export|done
+    phase: Mapped[str] = mapped_column(String(20), nullable=False, default="init")
+    progress: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # idle|running|waiting|done|failed
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="idle")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    thread_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class ProposalSkeleton(Base):
+    """方案骨架表 — 章节树 JSON."""
+
+    __tablename__ = "proposal_skeletons"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_proposal_skeletons_project"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # [{chapter_no,title,sections}]
+    tree: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ProposalSection(Base):
+    """方案章节表."""
+
+    __tablename__ = "proposal_sections"
+    __table_args__ = (
+        UniqueConstraint("project_id", "section_id", name="uq_proposal_sections_project_section"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    section_id: Mapped[str] = mapped_column(String(32), nullable=False)  # 骨架章节号
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    content_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # draft|generating|review|approved
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    # [{chunk_id,doc_title,page_no}]
+    citations: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class Review(Base):
+    """审阅反馈表."""
+
+    __tablename__ = "reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    section_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)  # approve|edit|rewrite
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)  # 修改后正文或修改意见
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

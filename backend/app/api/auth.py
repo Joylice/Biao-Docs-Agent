@@ -1,0 +1,85 @@
+"""认证 API 路由."""
+
+import uuid
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core import audit
+from app.core.database import get_db
+from app.core.deps import get_current_user_id
+from app.core.exceptions import BizError
+from app.core.response import success
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    hash_password,
+    verify_password,
+)
+from app.models.user import User
+from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserOut
+
+router = APIRouter()
+
+
+@router.post("/register")
+async def register(
+    req: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """用户注册."""
+    # 检查邮箱是否已注册
+    existing = await db.execute(select(User).where(User.email == req.email))
+    if existing.scalar_one_or_none():
+        raise BizError(code=4000, message="该邮箱已注册")
+
+    user = User(
+        email=req.email,
+        password_hash=hash_password(req.password),
+        display_name=req.display_name,
+    )
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
+
+    return success(data=UserOut.model_validate(user).model_dump(mode="json"))
+
+
+@router.post("/login")
+async def login(
+    req: LoginRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """用户登录."""
+    result = await db.execute(select(User).where(User.email == req.email))
+    user = result.scalar_one_or_none()
+
+    if not user or not verify_password(req.password, user.password_hash):
+        raise BizError(code=4001, message="邮箱或密码错误")
+
+    # 审计埋点：登录成功（security.md §4）
+    await audit.record(db, user.id, "auth.login", target_type="user", target_id=str(user.id))
+
+    access_token = create_access_token(str(user.id))
+    refresh_token = create_refresh_token(str(user.id))
+
+    return success(
+        data=TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+        ).model_dump()
+    )
+
+
+@router.get("/me")
+async def get_me(
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """获取当前用户信息."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise BizError(code=4004, message="用户不存在")
+    return success(data=UserOut.model_validate(user).model_dump(mode="json"))

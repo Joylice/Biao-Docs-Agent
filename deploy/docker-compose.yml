@@ -1,0 +1,104 @@
+services:
+  # ── PostgreSQL + pgvector ──
+  postgres:
+    image: docker.1ms.run/pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: bid
+      POSTGRES_PASSWORD: bid
+      POSTGRES_DB: bid
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bid"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Redis ──
+  redis:
+    image: docker.1ms.run/redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── MinIO ──
+  minio:
+    image: docker.1ms.run/minio/minio:RELEASE.2024-02-26T09-33-48Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── 后端 API ──
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      BID_DATABASE_URL: postgresql+psycopg://bid:bid@postgres:5432/bid
+      BID_REDIS_URL: redis://redis:6379/0
+      BID_MINIO_ENDPOINT: minio:9000
+      BID_DEBUG: "true"
+      BID_LLM_MOCK: "true"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  # ── Arq Worker ──
+  worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: arq worker.WorkerSettings
+    environment:
+      BID_DATABASE_URL: postgresql+psycopg://bid:bid@postgres:5432/bid
+      BID_REDIS_URL: redis://redis:6379/0
+      BID_MINIO_ENDPOINT: minio:9000
+      BID_DEBUG: "true"
+      BID_LLM_MOCK: "true"
+    volumes:
+      - ../backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── 前端 ──
+  web:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  miniodata:

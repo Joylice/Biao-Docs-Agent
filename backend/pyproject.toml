@@ -1,0 +1,43 @@
+[project]
+name = "bid-agent"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+# ── ruff ──────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003", "B008"]  # 允许中文全角字符; FastAPI Depends() 在参数默认值中
+
+# ── mypy ──────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+# ── coverage ──────────────────────────────────────────
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/main.py", "app/core/config.py"]
+
+[tool.coverage.report]
+fail_under = 70
+skip_covered = true
+show_missing = true
+
+# ── pytest ────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

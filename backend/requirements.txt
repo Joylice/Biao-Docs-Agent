@@ -1,0 +1,53 @@
+# --- Core ---
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.0,<3.0
+pydantic-settings>=2.0,<3.0
+email-validator>=2.0,<3.0
+
+# --- Database ---
+sqlalchemy[asyncio]>=2.0,<3.0
+psycopg[binary]>=3.1,<4.0
+alembic>=1.13,<2.0
+pgvector>=0.3,<1.0
+
+# --- Auth ---
+# 下界收紧：3.3.0 存在 CVE-2024-33663/33664
+python-jose[cryptography]>=3.4,<4.0
+bcrypt>=4.0,<6.0
+
+# --- LLM ---
+litellm>=1.40,<2.0
+
+# --- Agent ---
+langgraph>=1.0,<2.0
+langgraph-checkpoint-postgres>=3.0,<4.0
+langchain-core>=0.3,<2.0
+
+# --- Task Queue ---
+redis>=5.0,<6.0
+arq>=0.26,<1.0
+
+# --- Object Storage ---
+minio>=7.2,<8.0
+
+# --- Document Parsing ---
+unstructured>=0.15,<1.0
+pymupdf>=1.24,<2.0
+python-docx>=1.1,<2.0
+
+# --- Export ---
+# 下界收紧：3.1.0~3.1.4 存在 CVE-2024-34064 / CVE-2024-56201/56326
+jinja2>=3.1.5,<4.0
+
+# --- Upload ---
+python-multipart>=0.0.9
+
+# --- WebSocket ---
+websockets>=12.0,<14.0
+
+# --- Embedding ---
+numpy>=1.26,<3.0
+
+# --- Prompt Templates ---
+pyyaml>=6.0,<7.0

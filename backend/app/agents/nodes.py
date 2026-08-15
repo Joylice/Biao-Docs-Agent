@@ -1,0 +1,564 @@
+"""LangGraph 节点函数 — 工作流各阶段实现（对齐 SDD §6）.
+
+节点内通过 async_session_factory 打开 DB session（LangGraph 无 DI 注入）。
+HITL 中断点：confirm_score_points / confirm_outline / review。
+"""
+
+import logging
+import uuid
+
+from sqlalchemy import select
+
+from app.core.database import async_session_factory
+from app.models.document import ScorePoint, TechRequirement
+from app.models.project import Project
+from app.models.proposal import ProposalSection, ProposalSkeleton, ProposalWorkflow
+from app.services.event_service import publish_event
+
+logger = logging.getLogger(__name__)
+
+MIN_CHAPTER_LENGTH = 200  # 章节字数下限（validate 节点）
+MAX_VALIDATE_RETRIES = 2  # 校验失败最大重试次数
+
+
+# ───────────────────────── 内部工具 ─────────────────────────
+
+
+async def _update_workflow(
+    db,
+    project_id: str,
+    *,
+    phase: str | None = None,
+    progress: float | None = None,
+    status: str | None = None,
+    error: str | None = None,
+) -> None:
+    """创建或更新项目工作流元数据."""
+    result = await db.execute(
+        select(ProposalWorkflow).where(ProposalWorkflow.project_id == uuid.UUID(project_id))
+    )
+    wf = result.scalar_one_or_none()
+    if not wf:
+        wf = ProposalWorkflow(project_id=uuid.UUID(project_id), thread_id=str(project_id))
+        db.add(wf)
+    if phase is not None:
+        wf.phase = phase
+    if progress is not None:
+        wf.progress = progress
+    if status is not None:
+        wf.status = status
+    if error is not None:
+        wf.error = error
+    await db.flush()
+
+
+async def _load_tender_context(db, project_id: str) -> tuple[str, str, list[dict], list[dict]]:
+    """读取项目名称/编号 + 已解析的评分点与技术需求."""
+    proj_result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    project = proj_result.scalar_one_or_none()
+    project_name = project.name if project else ""
+    tender_no = project.tender_no or "" if project else ""
+
+    sp_result = await db.execute(
+        select(ScorePoint)
+        .where(ScorePoint.project_id == uuid.UUID(project_id))
+        .order_by(ScorePoint.clause_no)
+    )
+    score_points = [
+        {
+            "id": str(sp.id),
+            "clause_no": sp.clause_no,
+            "item": sp.item,
+            "score": float(sp.score) if sp.score is not None else None,
+            "criteria": sp.criteria,
+            "is_star": sp.is_star,
+            "strategy": sp.strategy,
+            "risk_level": sp.risk_level,
+            "confirmed": sp.confirmed,
+        }
+        for sp in sp_result.scalars().all()
+    ]
+
+    tr_result = await db.execute(
+        select(TechRequirement)
+        .where(TechRequirement.project_id == uuid.UUID(project_id))
+        .order_by(TechRequirement.seq)
+    )
+    tech_requirements = [
+        {
+            "seq": tr.seq,
+            "description": tr.description,
+            "category": tr.category,
+            "is_mandatory": tr.is_mandatory,
+        }
+        for tr in tr_result.scalars().all()
+    ]
+    return project_name, tender_no, score_points, tech_requirements
+
+
+async def _upsert_skeleton(db, project_id: str, tree: list[dict]) -> None:
+    """保存大纲到 proposal_skeletons（upsert）."""
+    result = await db.execute(
+        select(ProposalSkeleton).where(ProposalSkeleton.project_id == uuid.UUID(project_id))
+    )
+    skeleton = result.scalar_one_or_none()
+    if not skeleton:
+        skeleton = ProposalSkeleton(project_id=uuid.UUID(project_id), tree=tree)
+        db.add(skeleton)
+    else:
+        skeleton.tree = tree
+    await db.flush()
+
+
+async def _upsert_section(
+    db,
+    project_id: str,
+    section_id: str,
+    title: str,
+    content_md: str,
+    status: str = "draft",
+) -> None:
+    """保存章节到 proposal_sections（upsert）."""
+    result = await db.execute(
+        select(ProposalSection).where(
+            ProposalSection.project_id == uuid.UUID(project_id),
+            ProposalSection.section_id == section_id,
+        )
+    )
+    section = result.scalar_one_or_none()
+    if not section:
+        section = ProposalSection(
+            project_id=uuid.UUID(project_id),
+            section_id=section_id,
+            title=title,
+            content_md=content_md,
+            status=status,
+        )
+        db.add(section)
+    else:
+        section.title = title
+        section.content_md = content_md
+        section.status = status
+    await db.flush()
+
+
+# ───────────────────────── 节点实现 ─────────────────────────
+
+
+async def parse_tender_node(state: dict) -> dict:
+    """节点：招标解析 — 从 DB 读取已确认解析结果（不重复调 LLM）."""
+    project_id = state.get("project_id", "")
+    if not project_id:
+        return {"error": "缺少 project_id", "current_phase": "init"}
+
+    try:
+        async with async_session_factory() as db:
+            project_name, tender_no, score_points, tech_requirements = await _load_tender_context(
+                db, project_id
+            )
+            if not score_points:
+                return {
+                    "error": "项目尚未完成招标解析（无评分点），请先解析招标文件",
+                    "current_phase": "init",
+                }
+            await _update_workflow(db, project_id, phase="confirm", progress=0.15, status="waiting")
+        return {
+            "score_points": score_points,
+            "tech_requirements": tech_requirements,
+            "project_name": project_name,
+            "tender_no": tender_no,
+            "current_phase": "confirm",
+            "progress": 0.15,
+        }
+    except Exception as e:
+        logger.exception("读取解析结果失败")
+        return {"error": f"读取解析结果失败: {e}", "current_phase": "init"}
+
+
+async def confirm_score_points_node(state: dict) -> dict:
+    """节点：HITL — 等待人工确认评分点."""
+    from langgraph.types import interrupt
+
+    decision = interrupt(
+        {
+            "type": "confirm_score_points",
+            "score_points": state.get("score_points", []),
+            "message": "请确认评分点提取结果",
+        }
+    )
+    confirmed = decision is True or (
+        isinstance(decision, dict) and decision.get("confirmed") is True
+    )
+    if not confirmed:
+        return {"error": "评分点未确认", "current_phase": "confirm"}
+    return {"current_phase": "outline", "progress": 0.25}
+
+
+async def generate_outline_node(state: dict) -> dict:
+    """节点：生成大纲 — 基于评分点和技术需求，落库 proposal_skeletons."""
+    from app.services.llm_service import call_llm_with_schema
+    from app.services.prompt_loader import load_outline_prompt
+
+    project_id = state.get("project_id", "")
+    score_points = state.get("score_points", [])
+    tech_requirements = state.get("tech_requirements", [])
+
+    system_prompt, user_prompt = load_outline_prompt(
+        score_points=score_points,
+        tech_requirements=tech_requirements,
+    )
+
+    try:
+        result = await call_llm_with_schema(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "outline",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "chapters": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "chapter_no": {"type": "string"},
+                                        "title": {"type": "string"},
+                                        "sections": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                    "required": ["chapter_no", "title"],
+                                },
+                            }
+                        },
+                        "required": ["chapters"],
+                    },
+                },
+            },
+        )
+        outline = result.get("chapters", [])
+        if not outline:
+            return {"error": "大纲生成为空", "current_phase": "confirm"}
+
+        async with async_session_factory() as db:
+            await _upsert_skeleton(db, project_id, outline)
+            await _update_workflow(db, project_id, phase="outline", progress=0.35, status="waiting")
+        await publish_event(project_id, {"type": "progress", "phase": "outline", "progress": 0.35})
+        return {"outline": outline, "current_phase": "outline", "progress": 0.35}
+    except Exception as e:
+        logger.exception("大纲生成失败")
+        return {"error": f"大纲生成失败: {e}", "current_phase": "confirm"}
+
+
+async def confirm_outline_node(state: dict) -> dict:
+    """节点：HITL — 等待人工确认大纲."""
+    from langgraph.types import interrupt
+
+    decision = interrupt(
+        {
+            "type": "confirm_outline",
+            "outline": state.get("outline", []),
+            "message": "请确认方案大纲",
+        }
+    )
+    confirmed = decision is True or (
+        isinstance(decision, dict) and decision.get("confirmed") is True
+    )
+    if not confirmed:
+        return {"error": "大纲未确认", "current_phase": "outline"}
+    return {"current_phase": "generate", "progress": 0.4, "validate_retries": 0}
+
+
+async def retrieve_node(state: dict) -> dict:
+    """节点：RAG 检索当前章节素材（检索失败降级为空素材）."""
+    from app.services.rag_service import get_embedding, retrieve_similar
+
+    project_id = state.get("project_id", "")
+    outline = state.get("outline", [])
+    chapters = state.get("chapters", {})
+
+    # 找到下一个未生成的章节
+    next_chapter = next((c for c in outline if c["chapter_no"] not in chapters), None)
+    if not next_chapter:
+        return {"current_chapter": "", "retrieved_context": ""}
+
+    context = ""
+    try:
+        query = f"{next_chapter.get('title', '')} {' '.join(next_chapter.get('sections', []))}"
+        query_embedding = await get_embedding(query)
+        async with async_session_factory() as db:
+            results = await retrieve_similar(
+                db=db,
+                project_id=uuid.UUID(project_id),
+                query_embedding=query_embedding,
+                top_k=8,
+            )
+        context = "\n\n---\n\n".join(r.content for r in results)
+    except Exception as e:
+        logger.warning("RAG 检索失败（降级无素材）: %s", e)
+
+    return {"current_chapter": next_chapter["chapter_no"], "retrieved_context": context}
+
+
+async def write_node(state: dict) -> dict:
+    """节点：撰写章节 — RAG 素材 + LLM 生成，落库 proposal_sections 并推送事件."""
+    from app.services.chapter_service import generate_chapter
+
+    project_id = state.get("project_id", "")
+    chapter_no = state.get("current_chapter", "")
+    outline = state.get("outline", [])
+    chapters = dict(state.get("chapters", {}))
+
+    chapter = next((c for c in outline if c["chapter_no"] == chapter_no), None)
+    if not chapter:
+        return {"error": f"章节 {chapter_no} 不在大纲中", "current_phase": "generate"}
+
+    try:
+        content = await generate_chapter(
+            chapter=chapter,
+            score_points=state.get("score_points", []),
+            tech_requirements=state.get("tech_requirements", []),
+            project_id=uuid.UUID(project_id),
+            context=state.get("retrieved_context", ""),
+        )
+    except Exception as e:
+        logger.exception("章节生成失败")
+        return {"error": f"章节 {chapter_no} 生成失败: {e}", "current_phase": "generate"}
+
+    async with async_session_factory() as db:
+        await _upsert_section(
+            db, project_id, chapter_no, chapter.get("title", ""), content, status="draft"
+        )
+        total = len(outline)
+        progress = round(0.4 + 0.35 * (len(chapters) + 1) / max(total, 1), 2)
+        await _update_workflow(
+            db, project_id, phase="generate", progress=progress, status="running"
+        )
+
+    chapters[chapter_no] = content
+    await publish_event(
+        project_id,
+        {
+            "type": "section_done",
+            "chapter_no": chapter_no,
+            "title": chapter.get("title", ""),
+            "content": content,
+        },
+    )
+    await publish_event(
+        project_id,
+        {
+            "type": "progress",
+            "phase": "generate",
+            "progress": progress,
+            "current_chapter": chapter_no,
+        },
+    )
+    return {"chapters": chapters, "current_phase": "generate", "progress": progress}
+
+
+def validate_node(state: dict) -> dict:
+    """节点：校验章节 — 字数下限 + 评分点关键词覆盖（失败可重试 ≤2 次）."""
+    chapter_no = state.get("current_chapter", "")
+    content = state.get("chapters", {}).get(chapter_no, "")
+    retries = state.get("validate_retries", 0)
+
+    issues: list[str] = []
+    if len(content.strip()) < MIN_CHAPTER_LENGTH:
+        issues.append(f"字数不足（{len(content.strip())} < {MIN_CHAPTER_LENGTH}）")
+
+    # 评分点关键词覆盖检查（仅检查 ★ 评分点标题）
+    score_points = state.get("score_points", [])
+    for sp in score_points:
+        if sp.get("is_star") and sp.get("item") and sp["item"][:4] not in content:
+            issues.append(f"未覆盖评分点 {sp.get('clause_no', '')}：{sp['item'][:20]}")
+
+    if issues and retries < MAX_VALIDATE_RETRIES:
+        return {"validation_ok": False, "validate_retries": retries + 1}
+    return {"validation_ok": True, "validate_retries": retries}
+
+
+async def integrate_node(state: dict) -> dict:
+    """节点：全文整合 — 校验章节齐全，进入审阅阶段."""
+    project_id = state.get("project_id", "")
+    outline = state.get("outline", [])
+    chapters = state.get("chapters", {})
+    missing = [c["chapter_no"] for c in outline if c["chapter_no"] not in chapters]
+    if missing:
+        return {"error": f"章节未生成完整，缺失: {missing}", "current_phase": "generate"}
+
+    async with async_session_factory() as db:
+        await _update_workflow(db, project_id, phase="review", progress=0.85, status="waiting")
+    await publish_event(project_id, {"type": "progress", "phase": "review", "progress": 0.85})
+    return {"current_phase": "review", "progress": 0.85}
+
+
+async def review_node(state: dict) -> dict:
+    """节点：HITL 审阅 — interrupt 等待人工通过/反馈."""
+    from langgraph.types import interrupt
+
+    decision = interrupt(
+        {
+            "type": "review_request",
+            "chapters": state.get("chapters", {}),
+            "score_points": state.get("score_points", []),
+            "message": "请审阅章节内容（approved / feedback）",
+        }
+    )
+    if isinstance(decision, dict):
+        action = decision.get("action", "approved")
+        feedback = decision.get("feedback", {})
+    else:
+        action = "approved"
+        feedback = {}
+    return {"review_action": action, "review_feedback": feedback}
+
+
+async def rewrite_node(state: dict) -> dict:
+    """节点：按反馈局部重写 — 记录 reviews 表并重写指定章节."""
+    from app.services.review_service import rewrite_chapter
+
+    project_id = state.get("project_id", "")
+    feedback = state.get("review_feedback", {})
+    chapters = dict(state.get("chapters", {}))
+    outline = state.get("outline", [])
+    if not feedback:
+        return {"error": "无审阅反馈可重写", "current_phase": "review"}
+
+    for chapter_no, comment in feedback.items():
+        if chapter_no not in chapters:
+            continue
+        title = next((c.get("title", "") for c in outline if c["chapter_no"] == chapter_no), "")
+        try:
+            new_content = await rewrite_chapter(
+                chapter_no=chapter_no,
+                original_content=chapters[chapter_no],
+                comment=comment,
+            )
+            chapters[chapter_no] = new_content
+            async with async_session_factory() as db:
+                await _upsert_section(
+                    db, project_id, chapter_no, title, new_content, status="draft"
+                )
+                db.add(_review_record(project_id, chapter_no, comment))
+                await db.flush()
+            await publish_event(
+                project_id,
+                {
+                    "type": "section_done",
+                    "chapter_no": chapter_no,
+                    "title": title,
+                    "content": new_content,
+                },
+            )
+        except Exception as e:
+            logger.exception("章节重写失败")
+            return {"error": f"章节 {chapter_no} 重写失败: {e}", "current_phase": "review"}
+
+    return {"chapters": chapters, "current_phase": "review", "progress": 0.85}
+
+
+def _review_record(project_id: str, chapter_no: str, comment: str):
+    """构造审阅记录（延迟 import 避免循环依赖）."""
+    from app.models.proposal import Review
+
+    return Review(
+        project_id=uuid.UUID(project_id),
+        section_id=chapter_no,
+        action="rewrite",
+        content=comment,
+    )
+
+
+async def export_node(state: dict) -> dict:
+    """节点：导出 Word — 写入 documents(doc_type=export) 并推送完成事件."""
+    from app.services.export_service import export_to_word
+
+    project_id = state.get("project_id", "")
+    chapters = state.get("chapters", {})
+    outline = state.get("outline", [])
+    project_name = state.get("project_name", "技术方案")
+
+    try:
+        storage_key = await export_to_word(
+            chapters=chapters,
+            outline=outline,
+            project_name=project_name,
+        )
+        async with async_session_factory() as db:
+            from app.models.document import Document
+
+            doc = Document(
+                project_id=uuid.UUID(project_id),
+                doc_type="export",
+                title=f"{project_name}.docx",
+                storage_key=storage_key,
+                status="indexed",
+                meta={"source": "workflow", "project_name": project_name},
+            )
+            db.add(doc)
+            await _update_workflow(db, project_id, phase="done", progress=1.0, status="done")
+        await publish_event(
+            project_id,
+            {"type": "task_done", "export_storage_key": storage_key},
+        )
+        return {
+            "export_storage_key": storage_key,
+            "export_status": "done",
+            "current_phase": "done",
+            "progress": 1.0,
+        }
+    except Exception as e:
+        logger.exception("导出失败")
+        async with async_session_factory() as db:
+            await _update_workflow(
+                db, project_id, phase="export", status="failed", error=f"导出失败: {e}"
+            )
+        await publish_event(project_id, {"type": "error", "message": f"导出失败: {e}"})
+        return {"error": f"导出失败: {e}", "export_status": "failed"}
+
+
+# ───────────────────────── 条件路由 ─────────────────────────
+
+
+def chapter_route(state: dict) -> str:
+    """章节循环路由：校验失败重试 / 还有章节继续 / 全部完成整合."""
+    if state.get("error"):
+        return "integrate"
+    if not state.get("validation_ok", True):
+        return "write"
+    outline = state.get("outline", [])
+    chapters = state.get("chapters", {})
+    remaining = [c for c in outline if c["chapter_no"] not in chapters]
+    if remaining:
+        return "retrieve"
+    return "integrate"
+
+
+def review_route(state: dict) -> str:
+    """审阅路由：通过 → 导出；有反馈 → 重写."""
+    if state.get("review_action") == "feedback":
+        return "rewrite"
+    return "export"
+
+
+# ── 兼容旧测试的路由函数（图内已改用 chapter_route/review_route）──
+
+
+def route_after_confirm(state: dict) -> str:
+    """人工确认后路由."""
+    if state.get("score_points_confirmed"):
+        return "generate_outline"
+    return "confirm"  # 回到确认（interrupt）
+
+
+def route_after_outline_confirmed(state: dict) -> str:
+    """大纲确认后路由到章节生成."""
+    if state.get("outline_confirmed"):
+        return "generate_chapter"
+    return "confirm_outline"  # 回到确认
