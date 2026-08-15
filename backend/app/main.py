@@ -10,14 +10,18 @@ from fastapi.responses import JSONResponse
 from app.api import auth, documents, projects, websocket, workflow
 from app.core.config import settings
 from app.core.exceptions import BizError
+from app.services import workflow_runtime
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """应用生命周期：启动/关闭时的资源管理."""
     # TODO: 初始化 MinIO 客户端、Redis 连接池等
+    # 工作流 checkpointer：AsyncPostgresSaver + 独立连接池（thread_id=project_id）
+    await workflow_runtime.init_checkpointer()
     yield
-    # TODO: 清理资源
+    # 清理资源
+    await workflow_runtime.shutdown_checkpointer()
 
 
 app = FastAPI(

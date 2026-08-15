@@ -41,6 +41,15 @@ async def test_confirm_outline_no_auth(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_confirm_review_no_auth(client: AsyncClient) -> None:
+    """未认证确认审阅返回 401."""
+    response = await client.post(
+        "/api/v1/projects/00000000-0000-0000-0000-000000000001/workflow/confirm-review"
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_export_no_auth(client: AsyncClient) -> None:
     """未认证导出返回 401."""
     response = await client.get(

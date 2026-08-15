@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     # ── 数据库 ──
     database_url: str = "postgresql+psycopg://bid:bid@localhost:5432/bid"
+    workflow_pool_timeout: float = 30.0  # checkpointer 连接池等待超时（秒）
 
     # ── Redis ──
     redis_url: str = "redis://localhost:6379/0"

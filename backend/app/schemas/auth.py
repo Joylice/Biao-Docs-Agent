@@ -28,6 +28,12 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class RefreshRequest(BaseModel):
+    """刷新 token 请求."""
+
+    refresh_token: str
+
+
 class UserOut(BaseModel):
     """用户信息输出."""
 

@@ -217,7 +217,7 @@ class BidState(TypedDict):
 
 **职责**：章节生成内容实时推送前端。
 
-**设计**：FastAPI WebSocket（`/ws/projects/{pid}/tasks/{tid}`）；worker 生成时逐 token/逐段 `send_event("section_token", {section_id, delta})`；前端流式渲染；断线重连后拉取已生成缓存（sections 已落库）。
+**设计**：FastAPI WebSocket（`/ws/{project_id}`）；节点生成时经 Redis pubsub 发布事件（`bid:events:{project_id}`），WebSocket 端点订阅并转发前端；前端流式渲染；断线重连后拉取已生成缓存（sections 已落库）。
 
 **握手鉴权**（实现于 `app/api/websocket.py`）：连接 URL 携带 query 参数 `token`（JWT access token）；服务端在握手阶段校验 token 有效性与项目成员资格，失败即关闭连接（close code `4001` 未认证 / `4003` 非成员），不发送任何业务消息；refresh token 一律拒绝。
 
@@ -372,6 +372,7 @@ CREATE INDEX ON audit_logs (project_id);
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | /auth/register, /auth/login | 注册、登录（JWT） |
+| POST | /auth/refresh | refresh token 换新 access token（type 校验，refresh 专用） |
 | GET | /projects, POST /projects | 项目列表、创建 |
 | POST | /projects/{pid}/members | 添加协作者 |
 | POST | /projects/{pid}/documents | 上传文件（tender/kb） |
@@ -380,6 +381,13 @@ CREATE INDEX ON audit_logs (project_id);
 | GET | /projects/{pid}/score-points | 评分点列表（可 PUT 单条确认/改 strategy） |
 | GET | /projects/{pid}/benchmark | 评分对标报告 |
 | POST | /projects/{pid}/generate | 触发方案生成（返回 task_id） |
+| POST | /projects/{pid}/workflow/start | 启动方案生成工作流（API 进程后台任务推进，遇 HITL interrupt 停下；在途重复启动被拒 4009） |
+| GET | /projects/{pid}/workflow/status | 工作流状态（phase/progress/interrupt/score_points/outline/chapters/error） |
+| POST | /projects/{pid}/workflow/confirm-score-points | 确认评分点，resume 工作流进入大纲阶段（前置校验 interrupt 类型） |
+| POST | /projects/{pid}/workflow/confirm-outline | 确认大纲（可携带修改后大纲先回写 state），resume 进入章节生成 |
+| POST | /projects/{pid}/workflow/confirm-review | 审阅确认：approved → 导出；feedback → 章节重写后复审 |
+| POST | /projects/{pid}/workflow/rewrite-chapter | 按审阅意见重写指定章节（query 参数 chapter_no、comment） |
+| GET | /projects/{pid}/workflow/export | 导出 Word（返回导出状态与存储 key） |
 | GET | /projects/{pid}/skeleton | 方案骨架 |
 | GET | /projects/{pid}/sections | 章节列表（含状态/内容） |
 | PUT | /projects/{pid}/sections/{sid} | 章节编辑（人工直接改） |
@@ -389,7 +397,7 @@ CREATE INDEX ON audit_logs (project_id);
 
 ### 5.2 WebSocket
 
-- `/ws/projects/{pid}/tasks/{tid}`：流式推送 `section_token` / `section_done` / `task_done` / `error` 事件。
+- `/ws/{project_id}?token=<JWT access token>`：握手阶段鉴权（token 无效 close `4001` / 非项目成员 close `4003`，refresh token 拒绝）；连接建立后转发节点经 Redis 频道 `bid:events:{project_id}` 发布的工作流进度与章节事件，并支持客户端 `ping/pong` 心跳与 `get_status`（读取 checkpointer 实时状态）。
 
 ### 5.3 统一响应约定
 
@@ -431,9 +439,9 @@ graph.add_edge("export", END)
 ### 6.2 HITL 与中断恢复
 
 - `review_node` 内调用 `interrupt({section_id, content_md, score_points})`；
-- 用户通过 / 编辑 / 重写后 `Command(resume=...)` 恢复执行；
+- 用户通过 / 编辑 / 重写后 `Command(resume=...)` 恢复执行（resume 前校验 pending interrupt 类型匹配，不匹配拒绝）；
 - Checkpointer：`PostgresSaver` 持久化，`thread_id = project_id`，支持任务中断后从断点续跑；
-- 长任务：整个图在 Arq worker 中异步执行，前端通过 WebSocket 接收进度与 interrupt 通知。
+- 长任务：工作流由 API 进程的 asyncio 后台任务推进（不经 Arq worker），Checkpointer 采用 AsyncPostgresSaver + 独立 psycopg 连接池（不与业务 SQLAlchemy 会话混用），由 app lifespan 初始化/释放；Arq worker 仅用于招标文件解析、资料入库等异步任务。前端通过 WebSocket 接收进度与 interrupt 通知。
 
 ### 6.3 工具注册
 
@@ -502,7 +510,7 @@ graph.add_edge("export", END)
 - 密码 bcrypt 哈希；HTTPS 全链路（网关 TLS）；
 - 上传文件白名单（pdf/docx/jpg/png）、大小限制、病毒扫描（MVP 可选 ClamAV）；
 - LLM 外发内容脱敏（铁律，默认开启不可关闭）：`app/core/redact.py` 的 `redact()` 正则替换手机号/身份证/银行卡/邮箱，在 parse/chapter/review 三个拼接点前置脱敏，并在 `llm_service` 出口兜底；
-- 审计：统一封装 `app/core/audit.py::record()` 写入追加式 `audit_logs` 表，已在登录/上传/工作流启动与导出/成员变更埋点；业务表继续记录 created_by 与时间。
+- 审计：统一封装 `app/core/audit.py::record()` 写入追加式 `audit_logs` 表，已在登录/token 刷新/上传/工作流启动与导出/成员变更埋点；业务表继续记录 created_by 与时间。
 
 ---
 

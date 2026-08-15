@@ -178,3 +178,18 @@ async def test_confirm_score_points_by_non_member_returns_403(
     )
     assert resp.status_code == 403
     assert resp.json()["code"] == 4003
+
+
+@pytest.mark.asyncio
+async def test_confirm_review_by_non_member_returns_403(
+    client: AsyncClient, override_db, outsider_headers: dict[str, str]
+) -> None:
+    """确认审阅：非成员 → 403 / code 4003."""
+    override_db([_owned_project(), None])
+    resp = await client.post(
+        f"/api/v1/projects/{PROJECT_ID}/workflow/confirm-review",
+        headers=outsider_headers,
+        json={"action": "approved"},
+    )
+    assert resp.status_code == 403
+    assert resp.json()["code"] == 4003

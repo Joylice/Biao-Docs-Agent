@@ -14,11 +14,12 @@ from app.core.response import success
 from app.core.security import (
     create_access_token,
     create_refresh_token,
+    decode_token,
     hash_password,
     verify_password,
 )
 from app.models.user import User
-from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserOut
+from app.schemas.auth import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse, UserOut
 
 router = APIRouter()
 
@@ -63,6 +64,28 @@ async def login(
 
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
+
+    return success(
+        data=TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+        ).model_dump()
+    )
+
+
+@router.post("/refresh")
+async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    """刷新 token — 验证 refresh token（type=refresh）后签发新 access token."""
+    payload = decode_token(req.refresh_token)
+    if not payload or payload.get("type") != "refresh":
+        raise BizError(code=4001, message="refresh token 无效或已过期")
+
+    access_token = create_access_token(str(payload["sub"]))
+    refresh_token = create_refresh_token(str(payload["sub"]))
+
+    # 审计埋点：token 刷新（security.md §4，对齐 auth.login 惯例）
+    user_id = uuid.UUID(str(payload["sub"]))
+    await audit.record(db, user_id, "auth.refresh", target_type="user", target_id=str(user_id))
 
     return success(
         data=TokenResponse(

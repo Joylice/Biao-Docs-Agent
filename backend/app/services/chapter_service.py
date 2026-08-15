@@ -2,6 +2,8 @@
 
 import uuid
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.redact import redact
 from app.services.llm_service import call_llm_text
 from app.services.prompt_loader import load_chapter_prompt
@@ -13,10 +15,12 @@ async def generate_chapter(
     tech_requirements: list[dict],
     project_id: uuid.UUID,
     context: str = "",
+    db: AsyncSession | None = None,
 ) -> str:
     """生成单个章节内容.
 
     context: 调用方（retrieve 节点）传入的 RAG 检索素材；为空时尝试内部检索兜底。
+    db: 调用方传入的真实 DB session；未传入时兜底检索自行打开 session。
     """
     chapter_title = chapter.get("title", "")
     sections = chapter.get("sections", [])
@@ -24,16 +28,26 @@ async def generate_chapter(
     # RAG 检索相关资料（优先使用调用方传入的检索素材）
     if not context:
         try:
+            from app.core.database import async_session_factory
             from app.services.rag_service import get_embedding, retrieve_similar
 
             query = f"{chapter_title} {' '.join(sections)}"
             query_embedding = await get_embedding(query)
-            similar_chunks = await retrieve_similar(
-                db=None,  # 由 retrieve 节点提供素材；此处仅为兼容旧调用
-                project_id=project_id,
-                query_embedding=query_embedding,
-                top_k=10,
-            )
+            if db is not None:
+                similar_chunks = await retrieve_similar(
+                    db=db,
+                    project_id=project_id,
+                    query_embedding=query_embedding,
+                    top_k=10,
+                )
+            else:
+                async with async_session_factory() as session:
+                    similar_chunks = await retrieve_similar(
+                        db=session,
+                        project_id=project_id,
+                        query_embedding=query_embedding,
+                        top_k=10,
+                    )
             context = "\n\n---\n\n".join(c.content for c in similar_chunks)
         except Exception:
             context = ""  # RAG 失败时降级为无上下文

@@ -43,7 +43,7 @@ def _extract_pdf(content: bytes) -> str:
         import pdfplumber
 
         text_parts = []
-        with pdfplumber.open(file=io.BytesIO(content)) as pdf:
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text()
                 if page_text:
@@ -60,7 +60,7 @@ def _extract_docx(content: bytes) -> str:
     try:
         import docx
 
-        doc = docx.Document(file=io.BytesIO(content))
+        doc = docx.Document(io.BytesIO(content))
         return "\n\n".join(para.text for para in doc.paragraphs if para.text.strip())
     except ImportError:
         raise BizError(code=5008, message="python-docx 未安装") from None

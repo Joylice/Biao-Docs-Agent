@@ -1,8 +1,18 @@
-"""WebSocket 流式输出 — 对齐 SDD §5.4."""
+"""WebSocket 流式输出 — 对齐 SDD §5.4.
 
+事件链路：agents 节点 publish_event → Redis 频道 bid:events:{project_id}
+→ 本端点的事件转发循环 → 前端。两条并发循环：
+- 客户端消息循环：ping/pong、get_status（真实 checkpointer 状态）
+- 事件转发循环：subscribe_events 订阅 Redis pubsub 并转发
+任一循环异常结束即取消另一条（asyncio.TaskGroup）；Redis 不可用时
+事件循环降级退出，客户端消息循环继续可用。
+"""
+
+import asyncio
+import contextlib
 import json
+import logging
 import uuid
-from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.exceptions import BizError
 from app.core.security import decode_token
+from app.services import event_service, workflow_runtime
 from app.services.project_service import _check_project_member
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -33,12 +46,6 @@ class ConnectionManager:
     def disconnect(self, project_id: str) -> None:
         """断开连接."""
         self.active_connections.pop(project_id, None)
-
-    async def send_progress(self, project_id: str, data: dict) -> None:
-        """发送进度消息."""
-        ws = self.active_connections.get(project_id)
-        if ws:
-            await ws.send_json(data)
 
 
 manager = ConnectionManager()
@@ -85,6 +92,58 @@ async def authenticate_websocket(
     return user_id
 
 
+async def _current_status(project_id: str) -> dict:
+    """get_status 响应体：优先取 checkpointer 真实状态，未初始化时降级旧结构."""
+    try:
+        return await workflow_runtime.get_status_dict(project_id)
+    except Exception:
+        logger.debug("checkpointer 状态不可用，降级返回初始状态", exc_info=True)
+        return {"phase": "init", "progress": 0.0}
+
+
+async def _handle_client_messages(websocket: WebSocket, project_id: str) -> None:
+    """客户端消息循环：心跳与控制指令（断开时抛 WebSocketDisconnect 结束连接）."""
+    while True:
+        data = await websocket.receive_text()
+        msg = json.loads(data)
+
+        if msg.get("type") == "ping":
+            await websocket.send_json({"type": "pong"})
+        elif msg.get("type") == "get_status":
+            status = await _current_status(project_id)
+            await websocket.send_json({"type": "status", **status})
+
+
+async def _forward_redis_events(websocket: WebSocket, project_id: str) -> None:
+    """事件转发循环：订阅 Redis pubsub，收到事件解析 JSON 后转发前端.
+
+    Redis 不可用时记 warning 降级退出（客户端消息循环不受影响）；
+    退出前确保 unsubscribe + 关闭 redis client，防止连接泄漏。
+    """
+    try:
+        client, pubsub = await event_service.subscribe_events(project_id)
+    except Exception as e:
+        logger.warning("Redis 不可用，事件转发已降级退出: %s", e)
+        return
+
+    try:
+        while True:
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
+            if message is not None and message.get("type") == "message":
+                payload = message.get("data")
+                text = payload.decode() if isinstance(payload, bytes) else payload
+                await websocket.send_json(json.loads(text))
+            else:
+                await asyncio.sleep(0.05)
+    finally:
+        with contextlib.suppress(Exception):
+            await pubsub.unsubscribe()
+        with contextlib.suppress(Exception):
+            await pubsub.aclose()
+        with contextlib.suppress(Exception):
+            await client.aclose()
+
+
 @router.websocket("/ws/{project_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -97,30 +156,13 @@ async def websocket_endpoint(
 
     await manager.connect(websocket, project_id)
     try:
-        while True:
-            # 接收客户端消息（如心跳、控制指令）
-            data = await websocket.receive_text()
-            msg = json.loads(data)
-
-            if msg.get("type") == "ping":
-                await websocket.send_json({"type": "pong"})
-            elif msg.get("type") == "get_status":
-                # TODO: 从 checkpointer 获取状态
-                await websocket.send_json(
-                    {
-                        "type": "status",
-                        "phase": "init",
-                        "progress": 0.0,
-                    }
-                )
-
-    except WebSocketDisconnect:
+        # 两条并发循环：任一异常结束（如客户端断开）即取消另一条
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(_handle_client_messages(websocket, project_id))
+            tg.create_task(_forward_redis_events(websocket, project_id))
+    except* WebSocketDisconnect:
+        pass  # 客户端正常断开
+    except* Exception:
+        logger.warning("WebSocket 连接异常退出: project_id=%s", project_id, exc_info=True)
+    finally:
         manager.disconnect(project_id)
-    except Exception:
-        manager.disconnect(project_id)
-
-
-async def stream_generation_progress(project_id: str, events: AsyncGenerator[dict, None]) -> None:
-    """流式推送生成进度到前端."""
-    async for event in events:
-        await manager.send_progress(project_id, event)

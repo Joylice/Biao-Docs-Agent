@@ -319,13 +319,15 @@ async def write_node(state: dict) -> dict:
         return {"error": f"章节 {chapter_no} 不在大纲中", "current_phase": "generate"}
 
     try:
-        content = await generate_chapter(
-            chapter=chapter,
-            score_points=state.get("score_points", []),
-            tech_requirements=state.get("tech_requirements", []),
-            project_id=uuid.UUID(project_id),
-            context=state.get("retrieved_context", ""),
-        )
+        async with async_session_factory() as db:
+            content = await generate_chapter(
+                chapter=chapter,
+                score_points=state.get("score_points", []),
+                tech_requirements=state.get("tech_requirements", []),
+                project_id=uuid.UUID(project_id),
+                context=state.get("retrieved_context", ""),
+                db=db,
+            )
     except Exception as e:
         logger.exception("章节生成失败")
         return {"error": f"章节 {chapter_no} 生成失败: {e}", "current_phase": "generate"}

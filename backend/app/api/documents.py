@@ -21,6 +21,7 @@ from app.schemas.document import (
     ScorePointUpdate,
     TechRequirementOut,
 )
+from app.services import task_service
 from app.services.project_service import _check_project_member
 from app.services.storage_service import upload_file
 
@@ -79,6 +80,12 @@ async def upload_document(
         target_id=str(doc.id),
         detail={"title": doc.title, "doc_type": doc_type, "size_bytes": len(content)},
     )
+
+    # 异步任务入队：解析/向量化由 worker 推进状态；Redis 不可用时降级不阻断上传
+    if doc_type == "tender_file":
+        await task_service.enqueue_parse_tender(project_id, doc.id)
+    elif doc_type == "kb_material":
+        await task_service.enqueue_index_document(project_id, doc.id)
 
     return success(data=DocumentUploadOut.model_validate(doc).model_dump(mode="json"))
 

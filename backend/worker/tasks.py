@@ -47,16 +47,19 @@ async def task_parse_tender(ctx: dict, project_id: str, doc_id: str) -> dict:
                 db, uuid.UUID(project_id), uuid.UUID(doc_id), parsed
             )
 
-            # 更新项目信息
+            # 更新项目信息（空值或 mock 占位值不覆盖，避免污染真实项目名/编号）
             from app.models.project import Project
+
+            def _valid_parsed(value: str | None) -> bool:
+                return bool(value) and value.strip().lower() != "mock"
 
             proj_result = await db.execute(
                 select(Project).where(Project.id == uuid.UUID(project_id))
             )
             project = proj_result.scalar_one_or_none()
-            if project and parsed.project_name:
+            if project and _valid_parsed(parsed.project_name):
                 project.name = parsed.project_name
-            if project and parsed.tender_no:
+            if project and _valid_parsed(parsed.tender_no):
                 project.tender_no = parsed.tender_no
 
             await db.commit()
