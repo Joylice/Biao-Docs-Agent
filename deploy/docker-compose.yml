@@ -57,6 +57,10 @@ services:
       BID_MINIO_ENDPOINT: minio:9000
       BID_DEBUG: "true"
       BID_LLM_MOCK: "true"
+      # 管理员账号占位：逗号分隔的用户邮箱列表（项目唯一用户标识为 email）。
+      # 仅列表内账号可 PUT /settings/llm 与 POST /settings/llm/test；
+      # 为空则拒绝写入（403，提示配置）。生产请替换为真实管理员邮箱。
+      BID_ADMIN_USER_IDS: "admin"
     ports:
       - "8000:8000"
     volumes:
@@ -81,6 +85,8 @@ services:
       BID_MINIO_ENDPOINT: minio:9000
       BID_DEBUG: "true"
       BID_LLM_MOCK: "true"
+      # 与 api 保持一致（worker 侧读取同一配置的运行时视图）
+      BID_ADMIN_USER_IDS: "admin"
     volumes:
       - ../backend:/app
     depends_on:

@@ -1,5 +1,6 @@
 """FastAPI 应用入口."""
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -8,14 +9,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import auth, documents, projects, websocket, workflow
+from app.api import settings as settings_api
 from app.core.config import settings
 from app.core.exceptions import BizError
 from app.services import workflow_runtime
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """应用生命周期：启动/关闭时的资源管理."""
+    # 启动期安全告警（W-2）：默认 jwt_secret 且非 mock 模式 → 显著提醒（不拒启动，
+    # 避免破坏测试/开发环境）
+    if settings.jwt_secret == "change-me-in-production" and not settings.llm_mock:
+        logger.error(
+            "安全告警：BID_JWT_SECRET 仍为默认值 'change-me-in-production' 且 llm_mock 已关闭——"
+            "JWT 签名与 LLM 密钥加密均不安全！生产环境请立即设置 BID_JWT_SECRET "
+            "与 BID_LLM_CRYPTO_SECRET"
+        )
     # TODO: 初始化 MinIO 客户端、Redis 连接池等
     # 工作流 checkpointer：AsyncPostgresSaver + 独立连接池（thread_id=project_id）
     await workflow_runtime.init_checkpointer()
@@ -71,4 +83,5 @@ app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["认
 app.include_router(projects.router, prefix=f"{settings.api_prefix}/projects", tags=["项目"])
 app.include_router(documents.router, prefix=f"{settings.api_prefix}/projects", tags=["文档"])
 app.include_router(workflow.router, prefix=f"{settings.api_prefix}/projects", tags=["工作流"])
+app.include_router(settings_api.router, prefix=f"{settings.api_prefix}/settings", tags=["系统设置"])
 app.include_router(websocket.router)

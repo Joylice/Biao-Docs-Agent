@@ -43,6 +43,9 @@ async def start_workflow(
     # 审计埋点：工作流启动（security.md §4）
     await audit.record(db, user_id, "workflow.start", project_id=project_id)
 
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+
     workflow_runtime.start_workflow_in_background(project_id, user_id)
     status = await workflow_runtime.get_status_dict(project_id)
     return success(
@@ -118,6 +121,9 @@ async def confirm_review(
     # 审计埋点：审阅确认（security.md §4）
     await audit.record(db, user_id, "workflow.confirm_review", project_id=project_id)
 
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+
     workflow_runtime.resume_workflow_in_background(project_id, decision)
     next_phase = "export" if decision["action"] == "approved" else "rewrite"
     return success(
@@ -156,6 +162,9 @@ async def export_document(
 
     # 审计埋点：方案导出（security.md §4）
     await audit.record(db, user_id, "workflow.export", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
 
     try:
         result = await workflow_runtime.export_workflow(project_id)

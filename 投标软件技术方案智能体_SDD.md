@@ -355,6 +355,16 @@ CREATE TABLE audit_logs (
 );
 CREATE INDEX ON audit_logs (created_at);
 CREATE INDEX ON audit_logs (project_id);
+
+-- LLM 页面配置（全局单行 upsert；密钥列存 Fernet 密文，key 优先由 BID_LLM_CRYPTO_SECRET 派生、未配置回退 jwt_secret；迁移 0005_llm_settings）
+CREATE TABLE llm_settings (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  deepseek_api_key_enc  VARCHAR(512),   -- Fernet 密文；NULL = 未配置
+  dashscope_api_key_enc VARCHAR(512),   -- Fernet 密文；NULL = 未配置
+  embedding_api_base    VARCHAR(512),   -- NULL = 回退环境变量 BID_EMBEDDING_API_BASE
+  llm_mock              BOOLEAN NOT NULL DEFAULT false,  -- 与 env 任一为 true 即 mock
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 ```
 
 ### 4.2 数据一致性要点
@@ -373,9 +383,13 @@ CREATE INDEX ON audit_logs (project_id);
 |---|---|---|
 | POST | /auth/register, /auth/login | 注册、登录（JWT） |
 | POST | /auth/refresh | refresh token 换新 access token（type 校验，refresh 专用） |
+| GET | /settings/llm | 读取 LLM 页面配置（全局，无项目上下文，普通登录用户可读；密钥脱敏为 sk-****+后4位，附 deepseek/dashscope_configured 标志，永不返回明文） |
+| PUT | /settings/llm | 更新 LLM 页面配置（**仅管理员**，BID_ADMIN_USER_IDS 逗号分隔邮箱列表，为空拒绝写入 403；密钥字段三态契约：省略(None)=保持/""=清除/非空=更新，服务端拒收疑似脱敏串（含连续 4 星号）；embedding_api_base 必填且做 SSRF 校验（禁私网/本机段，debug 档放行 loopback）；密钥 Fernet 加密入库（优先 BID_LLM_CRYPTO_SECRET 派生）；审计 settings.llm_update 的 detail 只记变更字段名；运行时缓存于 commit 成功后失效） |
+| POST | /settings/llm/test | LLM/Embedding 连通性测试（**仅管理员**；body target=llm\|embedding；15s 超时、异常全捕获，业务结果 data.ok=true/false，HTTP 恒 200） |
 | GET | /projects, POST /projects | 项目列表、创建 |
 | POST | /projects/{pid}/members | 添加协作者 |
 | POST | /projects/{pid}/documents | 上传文件（tender/kb） |
+| GET | /projects/{pid}/kb/search | 资料库相似度检索（RAG；query 参数 q 必填，top_k∈[1,20] 默认 5，按相似度倒序返回 {items,total}，仅项目成员可调） |
 | GET | /projects/{pid}/documents | 文档列表与状态 |
 | POST | /projects/{pid}/documents/{did}/parse | 触发招标解析 |
 | GET | /projects/{pid}/score-points | 评分点列表（可 PUT 单条确认/改 strategy） |

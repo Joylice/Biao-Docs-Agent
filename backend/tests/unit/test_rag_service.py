@@ -1,6 +1,12 @@
 """RAG 服务测试."""
 
-from app.services.rag_service import chunk_text
+import uuid
+from unittest.mock import MagicMock
+
+import pytest
+
+from app.services import rag_service
+from app.services.rag_service import ChunkResult, chunk_text
 
 
 class TestChunkText:
@@ -54,3 +60,72 @@ class TestChunkText:
         result = chunk_text(text, chunk_size=80, overlap=20)
         assert all(len(c) <= 80 for c in result)
         assert len(result) >= 3
+
+
+class TestSearchMaterials:
+    """search_materials — 检索端点服务层（E2E-03 缺口补齐）."""
+
+    @pytest.mark.asyncio
+    async def test_returns_chunks_with_doc_titles(self, monkeypatch) -> None:
+        """查询 → embedding → 相似度检索 → 补齐文档标题."""
+        expected_project_id = uuid.uuid4()
+        doc_id = uuid.uuid4()
+        chunk_id = uuid.uuid4()
+
+        async def fake_embedding(_text: str):
+            return [0.1, 0.2]
+
+        async def fake_retrieve(db, project_id, query_embedding, top_k=20, threshold=0.3):
+            assert project_id == expected_project_id
+            assert top_k == 5
+            return [
+                ChunkResult(
+                    chunk_id=chunk_id,
+                    doc_id=doc_id,
+                    content="支持高可用部署",
+                    page_no=1,
+                    score=0.9,
+                )
+            ]
+
+        class FakeDB:
+            async def execute(self, stmt):
+                result = MagicMock()
+                result.all.return_value = [(doc_id, "product-handbook.pdf")]
+                return result
+
+        monkeypatch.setattr(rag_service, "get_embedding", fake_embedding)
+        monkeypatch.setattr(rag_service, "retrieve_similar", fake_retrieve)
+
+        items = await rag_service.search_materials(FakeDB(), expected_project_id, "高可用", top_k=5)
+        assert len(items) == 1
+        assert items[0]["chunk_id"] == str(chunk_id)
+        assert items[0]["doc_id"] == str(doc_id)
+        assert items[0]["title"] == "product-handbook.pdf"
+        assert items[0]["content"] == "支持高可用部署"
+        assert items[0]["page_no"] == 1
+        assert items[0]["score"] == pytest.approx(0.9)
+
+    @pytest.mark.asyncio
+    async def test_no_hits_returns_empty(self, monkeypatch) -> None:
+        """检索无命中返回空列表（不再查标题）."""
+
+        async def fake_embedding(_text: str):
+            return [0.1, 0.2]
+
+        async def fake_retrieve(db, project_id, query_embedding, top_k=20, threshold=0.3):
+            return []
+
+        class FakeDB:
+            def __init__(self) -> None:
+                self.queries = 0
+
+            async def execute(self, stmt):
+                self.queries += 1
+                raise AssertionError("无命中时不应再查询文档标题")
+
+        monkeypatch.setattr(rag_service, "get_embedding", fake_embedding)
+        monkeypatch.setattr(rag_service, "retrieve_similar", fake_retrieve)
+
+        items = await rag_service.search_materials(FakeDB(), uuid.uuid4(), "不存在的主题")
+        assert items == []

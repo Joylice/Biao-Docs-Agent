@@ -1,10 +1,19 @@
 <template>
   <div class="parse-confirm">
-    <a-page-header title="招标解析确认" sub-title="确认评分点和技术需求" />
+    <a-page-header
+      title="招标解析确认"
+      sub-title="确认评分点和技术需求"
+    />
 
-    <a-spin :spinning="loading" tip="解析中...">
+    <a-spin
+      :spinning="loading"
+      tip="解析中..."
+    >
       <!-- 评分点表格 -->
-      <a-card title="评分点" class="mb-4">
+      <a-card
+        title="评分点"
+        class="mb-4"
+      >
         <a-table
           :columns="scoreColumns"
           :data-source="scorePoints"
@@ -19,7 +28,9 @@
               </a-tag>
             </template>
             <template v-if="column.key === 'risk_level'">
-              <a-tag :color="riskColor(record.risk_level)">{{ record.risk_level || '-' }}</a-tag>
+              <a-tag :color="riskColor(record.risk_level)">
+                {{ record.risk_level || '-' }}
+              </a-tag>
             </template>
             <template v-if="column.key === 'strategy'">
               <a-input
@@ -34,7 +45,10 @@
       </a-card>
 
       <!-- 技术需求 -->
-      <a-card title="技术需求" class="mb-4">
+      <a-card
+        title="技术需求"
+        class="mb-4"
+      >
         <a-table
           :columns="techColumns"
           :data-source="techRequirements"
@@ -54,8 +68,17 @@
 
       <!-- 操作按钮 -->
       <div class="actions">
-        <a-button @click="handleReparse" :loading="loading">重新解析</a-button>
-        <a-button type="primary" @click="handleConfirm" :loading="confirming">
+        <a-button
+          :loading="loading"
+          @click="handleReparse"
+        >
+          重新解析
+        </a-button>
+        <a-button
+          type="primary"
+          :loading="confirming"
+          @click="handleConfirm"
+        >
           确认并生成大纲
         </a-button>
       </div>
@@ -69,14 +92,33 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import api from '@/api/client'
 
+interface ScorePoint {
+  id: string
+  clause_no: string
+  item: string
+  score: number
+  criteria: string
+  is_star: boolean
+  risk_level: string
+  strategy: string
+}
+
+interface TechRequirement {
+  id: string
+  seq: number
+  description: string
+  category: string
+  is_mandatory: boolean
+}
+
 const route = useRoute()
 const router = useRouter()
 const projectId = route.params.projectId as string
 
 const loading = ref(false)
 const confirming = ref(false)
-const scorePoints = ref<any[]>([])
-const techRequirements = ref<any[]>([])
+const scorePoints = ref<ScorePoint[]>([])
+const techRequirements = ref<TechRequirement[]>([])
 
 const scoreColumns = [
   { title: '条款号', dataIndex: 'clause_no', key: 'clause_no', width: 100 },

@@ -26,11 +26,12 @@ class FakeScalarResult:
 
 
 class FakeDB:
-    """模拟 AsyncSession."""
+    """模拟 AsyncSession（BUG-2 适配：记录 commit 调用次数）."""
 
     def __init__(self, rows_by_table: dict | None = None) -> None:
         self.rows_by_table = rows_by_table or {}
         self.added: list = []
+        self.commit_count = 0
 
     async def execute(self, stmt):
         entity = stmt.column_descriptions[0]["entity"]
@@ -38,6 +39,9 @@ class FakeDB:
 
     async def flush(self) -> None:
         pass
+
+    async def commit(self) -> None:
+        self.commit_count += 1
 
     def add(self, obj) -> None:
         self.added.append(obj)
@@ -181,8 +185,12 @@ class TestWriteNode:
         async def fake_publish(project_id: str, event: dict) -> None:
             events.append(event)
 
+        dbs: list[FakeDB] = []
+
         def fake_session_factory():
-            return FakeDB()
+            db = FakeDB()
+            dbs.append(db)
+            return db
 
         events: list[dict] = []
         monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
@@ -203,3 +211,46 @@ class TestWriteNode:
         types = [e["type"] for e in events]
         assert "section_done" in types
         assert "progress" in types
+        # BUG-2：章节落库块必须显式 commit，否则 proposal_sections 静默回滚
+        assert dbs, "write_node 应打开 DB session"
+        assert dbs[-1].commit_count >= 1, "章节落库后未 commit（数据将静默回滚）"
+
+
+class TestNodeCommits:
+    """BUG-2：节点写库块在 session 退出前显式 commit."""
+
+    @pytest.mark.asyncio
+    async def test_generate_outline_node_commits(self, monkeypatch) -> None:
+        """大纲落库（proposal_skeletons + workflow）显式提交."""
+
+        async def fake_llm(**kwargs) -> dict:
+            return {"chapters": [{"chapter_no": "1", "title": "概述", "sections": ["背景"]}]}
+
+        async def fake_publish(_project_id: str, _event: dict) -> None:
+            pass
+
+        dbs: list[FakeDB] = []
+
+        def fake_session_factory():
+            db = FakeDB()
+            dbs.append(db)
+            return db
+
+        monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
+        monkeypatch.setattr(nodes, "publish_event", fake_publish)
+        monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", fake_llm)
+
+        state = {
+            "project_id": str(PROJECT_ID),
+            "score_points": [{"clause_no": "1", "item": "技术方案完整性", "is_star": False}],
+            "tech_requirements": [],
+        }
+        result = await nodes.generate_outline_node(state)
+        assert "error" not in result
+        assert result["outline"], "mock LLM 应返回大纲"
+        assert dbs, "generate_outline_node 应打开 DB session"
+        assert dbs[0].commit_count >= 1, "大纲落库后未 commit（skeleton 将静默回滚）"
+        # 大纲确实写入 session
+        assert any(obj.__class__.__name__ == "ProposalSkeleton" for obj in dbs[0].added), (
+            "大纲应写入 proposal_skeletons"
+        )

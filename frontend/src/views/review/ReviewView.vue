@@ -1,6 +1,9 @@
 <template>
   <div class="review-view">
-    <a-page-header title="审阅与导出" sub-title="审阅生成内容，确认导出" />
+    <a-page-header
+      title="审阅与导出"
+      sub-title="审阅生成内容，确认导出"
+    />
 
     <a-alert
       v-if="rewriting"
@@ -12,14 +15,26 @@
 
     <a-spin :spinning="loading">
       <!-- 审阅意见（按章节填写，提交后触发重写） -->
-      <a-card title="审阅意见" class="mb-4" v-if="chapterKeys.length > 0">
-        <a-list :data-source="chapterKeys" size="small">
+      <a-card
+        v-if="chapterKeys.length > 0"
+        title="审阅意见"
+        class="mb-4"
+      >
+        <a-list
+          :data-source="chapterKeys"
+          size="small"
+        >
           <template #renderItem="{ item }">
             <a-list-item>
               <div class="feedback-item">
                 <div class="feedback-item-title">
-                  <a-tag color="blue">章节 {{ item }}</a-tag>
-                  <span v-if="reviewFeedback[item]" class="feedback-last">
+                  <a-tag color="blue">
+                    章节 {{ item }}
+                  </a-tag>
+                  <span
+                    v-if="reviewFeedback[item]"
+                    class="feedback-last"
+                  >
                     上次意见：{{ reviewFeedback[item] }}
                   </span>
                 </div>
@@ -35,10 +50,20 @@
       </a-card>
 
       <!-- 章节内容浏览 -->
-      <a-card title="章节内容" class="mb-4">
+      <a-card
+        title="章节内容"
+        class="mb-4"
+      >
         <a-tabs v-model:activeKey="activeChapter">
-          <a-tab-pane v-for="(content, chapterNo) in chapters" :key="chapterNo" :tab="`章节 ${chapterNo}`">
-            <div class="chapter-content" v-html="renderContent(content)"></div>
+          <a-tab-pane
+            v-for="(content, chapterNo) in chapters"
+            :key="chapterNo"
+            :tab="`章节 ${chapterNo}`"
+          >
+            <div
+              class="chapter-content"
+              v-html="renderContent(content)"
+            />
           </a-tab-pane>
         </a-tabs>
       </a-card>
@@ -46,26 +71,33 @@
 
     <!-- 导出操作 -->
     <div class="actions">
-      <a-button @click="goToGenerate">返回修改</a-button>
-      <a-button type="primary" @click="handleExport" :loading="exporting" size="large">
+      <a-button @click="goToGenerate">
+        返回修改
+      </a-button>
+      <a-button
+        type="primary"
+        :loading="exporting"
+        size="large"
+        @click="handleExport"
+      >
         导出 Word 文档
       </a-button>
       <a-button
         type="primary"
         ghost
-        @click="handleApprove"
         :loading="approving"
         :disabled="polling"
         size="large"
+        @click="handleApprove"
       >
         审阅通过
       </a-button>
       <a-button
         type="primary"
-        @click="handleSubmitFeedback"
         :loading="submittingFeedback"
         :disabled="polling"
         size="large"
+        @click="handleSubmitFeedback"
       >
         提交修改意见
       </a-button>
@@ -79,7 +111,12 @@
       sub-title="技术方案已生成，可下载编辑"
     >
       <template #extra>
-        <a-button type="primary" @click="handleDownload">下载文档</a-button>
+        <a-button
+          type="primary"
+          @click="handleDownload"
+        >
+          下载文档
+        </a-button>
       </template>
     </a-result>
   </div>

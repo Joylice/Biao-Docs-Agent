@@ -1,10 +1,15 @@
-"""LLM 调用服务（LiteLLM 封装）."""
+"""LLM 调用服务（LiteLLM 封装）.
+
+运行时配置：mock 判定与 api_key 解析下沉 settings_service ——
+库内（llm_settings 页面配置）密钥优先于环境变量；库内无配置则回退 env 现状。
+"""
 
 from typing import Any
 
 from app.core.config import settings
 from app.core.exceptions import LLMServiceError
 from app.core.redact import redact
+from app.services import settings_service
 
 _MOCK_TEXT = (
     "（mock 模式）本节内容为离线 mock 占位文本，用于测试环境下生成链路的完整流程验证。"
@@ -14,11 +19,6 @@ _MOCK_TEXT = (
     "本节内容涵盖系统架构、功能实现、安全设计与培训支持等主要环节，"
     "满足招标方对可靠性、可扩展性与可维护性的要求，并提供全生命周期的技术支持与运维服务。"
 )
-
-
-def _is_mock_mode(mock: bool | None) -> bool:
-    """判断是否启用 mock：函数参数优先，其次运行时读取 settings.llm_mock."""
-    return settings.llm_mock if mock is None else mock
 
 
 def _mock_value_from_schema(schema: dict[str, Any]) -> Any:
@@ -52,6 +52,15 @@ def _mock_schema_response(response_format: dict | None) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+async def _api_key_kwargs(model: str) -> dict[str, Any]:
+    """库内密钥优先：模型前缀命中页面配置的密钥则作为 api_key 传入，否则回退 env."""
+    cfg = await settings_service.get_runtime_config()
+    if cfg is None:
+        return {}
+    api_key = cfg.api_key_for(model)
+    return {"api_key": api_key} if api_key else {}
+
+
 async def call_llm_with_schema(
     system_prompt: str,
     user_prompt: str,
@@ -60,7 +69,7 @@ async def call_llm_with_schema(
 ) -> dict:
     """调用 LLM 并解析 JSON 响应."""
     user_prompt = redact(user_prompt)  # 外发 LLM 脱敏（安全铁律，出口兜底，无开关）
-    if _is_mock_mode(mock):
+    if await settings_service.is_mock_enabled(mock):
         return _mock_schema_response(response_format)
     try:
         from litellm import acompletion
@@ -77,6 +86,7 @@ async def call_llm_with_schema(
         }
         if response_format:
             kwargs["response_format"] = response_format
+        kwargs.update(await _api_key_kwargs(settings.llm_model))
 
         response = await acompletion(**kwargs)
         content = response.choices[0].message.content
@@ -99,7 +109,7 @@ async def call_llm_text(
 ) -> str:
     """调用 LLM 获取文本响应."""
     user_prompt = redact(user_prompt)  # 外发 LLM 脱敏（安全铁律，出口兜底，无开关）
-    if _is_mock_mode(mock):
+    if await settings_service.is_mock_enabled(mock):
         return _MOCK_TEXT
     try:
         from litellm import acompletion
@@ -113,6 +123,7 @@ async def call_llm_text(
             model=settings.llm_model,
             messages=messages,
             temperature=temperature,
+            **await _api_key_kwargs(settings.llm_model),
         )
         return response.choices[0].message.content
     except Exception as e:

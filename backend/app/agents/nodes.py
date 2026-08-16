@@ -2,6 +2,11 @@
 
 节点内通过 async_session_factory 打开 DB session（LangGraph 无 DI 注入）。
 HITL 中断点：confirm_score_points / confirm_outline / review。
+
+事务约定（BUG-2 修复）：``async with async_session_factory() as db`` 退出
+仅 close 不 commit，写块必须在退出前显式 ``await db.commit()``，否则
+proposal_skeletons / proposal_sections / reviews 等写入全部静默回滚。
+只读块无需 commit（约定见 core.database.get_db docstring）。
 """
 
 import logging
@@ -162,6 +167,7 @@ async def parse_tender_node(state: dict) -> dict:
                     "current_phase": "init",
                 }
             await _update_workflow(db, project_id, phase="confirm", progress=0.15, status="waiting")
+            await db.commit()  # BUG-2：workflow 元数据写入显式提交
         return {
             "score_points": score_points,
             "tech_requirements": tech_requirements,
@@ -248,6 +254,7 @@ async def generate_outline_node(state: dict) -> dict:
         async with async_session_factory() as db:
             await _upsert_skeleton(db, project_id, outline)
             await _update_workflow(db, project_id, phase="outline", progress=0.35, status="waiting")
+            await db.commit()  # BUG-2：skeleton + workflow 写入显式提交
         await publish_event(project_id, {"type": "progress", "phase": "outline", "progress": 0.35})
         return {"outline": outline, "current_phase": "outline", "progress": 0.35}
     except Exception as e:
@@ -291,7 +298,7 @@ async def retrieve_node(state: dict) -> dict:
     try:
         query = f"{next_chapter.get('title', '')} {' '.join(next_chapter.get('sections', []))}"
         query_embedding = await get_embedding(query)
-        async with async_session_factory() as db:
+        async with async_session_factory() as db:  # 只读块，无需 commit
             results = await retrieve_similar(
                 db=db,
                 project_id=uuid.UUID(project_id),
@@ -319,7 +326,7 @@ async def write_node(state: dict) -> dict:
         return {"error": f"章节 {chapter_no} 不在大纲中", "current_phase": "generate"}
 
     try:
-        async with async_session_factory() as db:
+        async with async_session_factory() as db:  # 只读块（RAG 兜底检索），无需 commit
             content = await generate_chapter(
                 chapter=chapter,
                 score_points=state.get("score_points", []),
@@ -341,6 +348,7 @@ async def write_node(state: dict) -> dict:
         await _update_workflow(
             db, project_id, phase="generate", progress=progress, status="running"
         )
+        await db.commit()  # BUG-2：章节 + workflow 写入显式提交
 
     chapters[chapter_no] = content
     await publish_event(
@@ -396,6 +404,7 @@ async def integrate_node(state: dict) -> dict:
 
     async with async_session_factory() as db:
         await _update_workflow(db, project_id, phase="review", progress=0.85, status="waiting")
+        await db.commit()  # BUG-2：workflow 元数据写入显式提交
     await publish_event(project_id, {"type": "progress", "phase": "review", "progress": 0.85})
     return {"current_phase": "review", "progress": 0.85}
 
@@ -449,6 +458,7 @@ async def rewrite_node(state: dict) -> dict:
                 )
                 db.add(_review_record(project_id, chapter_no, comment))
                 await db.flush()
+                await db.commit()  # BUG-2：章节重写 + 审阅记录显式提交
             await publish_event(
                 project_id,
                 {
@@ -505,6 +515,7 @@ async def export_node(state: dict) -> dict:
             )
             db.add(doc)
             await _update_workflow(db, project_id, phase="done", progress=1.0, status="done")
+            await db.commit()  # BUG-2：导出文档 + workflow 写入显式提交
         await publish_event(
             project_id,
             {"type": "task_done", "export_storage_key": storage_key},
@@ -521,6 +532,7 @@ async def export_node(state: dict) -> dict:
             await _update_workflow(
                 db, project_id, phase="export", status="failed", error=f"导出失败: {e}"
             )
+            await db.commit()  # BUG-2：失败状态写入同样显式提交
         await publish_event(project_id, {"type": "error", "message": f"导出失败: {e}"})
         return {"error": f"导出失败: {e}", "export_status": "failed"}
 

@@ -44,6 +44,9 @@ async def register(
     await db.flush()
     await db.refresh(user)
 
+    # 事务约定（BUG-1）：响应返回前显式提交，确保后续登录/查重立即可见
+    await db.commit()
+
     return success(data=UserOut.model_validate(user).model_dump(mode="json"))
 
 
@@ -61,6 +64,9 @@ async def login(
 
     # 审计埋点：登录成功（security.md §4）
     await audit.record(db, user.id, "auth.login", target_type="user", target_id=str(user.id))
+
+    # 事务约定（BUG-1）：审计写入随响应前显式提交
+    await db.commit()
 
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
@@ -86,6 +92,9 @@ async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)) -> di
     # 审计埋点：token 刷新（security.md §4，对齐 auth.login 惯例）
     user_id = uuid.UUID(str(payload["sub"]))
     await audit.record(db, user_id, "auth.refresh", target_type="user", target_id=str(user_id))
+
+    # 事务约定（BUG-1）：审计写入随响应前显式提交
+    await db.commit()
 
     return success(
         data=TokenResponse(

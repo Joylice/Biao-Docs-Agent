@@ -11,7 +11,7 @@
  * - MinIO 就绪（上传落盘）；worker 就绪（状态推进 uploaded → parsing → parsed）
  * - BID_LLM_MOCK=true 且后端真正走 mock 分支（llm_service.py 已引用 settings.llm_mock，
  *   需后端以 BID_LLM_MOCK=true 启动，见 fixtures/auth.ts llmMockEnabled 注释）
- * - 已知缺口：documents.py 上传后未入队解析任务（无触发端点），状态推进依赖后端补齐
+ * - 上传即入队 task_parse_tender（documents.py → task_service.enqueue_parse_tender，2026-08-16 已接通）
  */
 import {
   api,

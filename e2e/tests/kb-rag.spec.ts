@@ -4,14 +4,15 @@
  *
  * 对齐后端路由：backend/app/api/documents.py
  *   POST /api/v1/projects/{pid}/documents?doc_type=kb_material
+ *   GET  /api/v1/projects/{pid}/kb/search?q=&top_k=（检索端点，2026-08-16 落地）
  * 异步向量化：backend/worker/tasks.py task_index_document（Arq worker）。
  *
  * 前置条件（不满足时对应用例 skip）：
  * - MinIO + pgvector（postgres）就绪；worker 就绪
  * - Embedding 服务（bge-m3，BID_EMBEDDING_API_BASE）就绪
- * - 已知缺口 1：上传未入队 task_index_document（无触发端点）→ 状态轮询不推进则 skip
- * - 已知缺口 2：后端暂未提供 RAG 检索端点（documents.py 无 /search），
- *   检索命中断言先 skip，待 API 落地后启用（对齐 E2E-03 "检索命中"）
+ * - 上传即入队 task_index_document（documents.py → task_service.enqueue_index_document，2026-08-16 已接通）；
+ *   BID_LLM_MOCK=true 时 Embedding 走确定性伪向量（rag_service._mock_embedding），无需外部服务，
+ *   检索端点 min_score 默认 0（按相似度倒序返回 top_k），mock 模式下亦可命中
  */
 import {
   api,
@@ -122,13 +123,58 @@ test.describe('资料库 RAG', () => {
     expect(status).toBe('indexed');
   });
 
-  // 已知缺口：backend/app/api/ 目前无 RAG 检索端点（documents.py 仅上传/列表/评分点/技术需求），
-  // retrieve_similar 仅在 services/rag_service.py 内部可用。
-  // 待后端暴露检索 API（如 GET /projects/{pid}/kb/search?q=）后移除 skip 并断言命中资料标题。
-  test('相似度检索命中资料（E2E-03 检索命中）', async () => {
-    test.skip(
-      true,
-      '后端暂未提供 RAG 检索端点（rag_service.retrieve_similar 未暴露为 API），无法做检索命中断言。',
+  test('相似度检索命中资料（E2E-03 检索命中）', async ({ api: apiCtx }) => {
+    const user = await registerAndLogin(apiCtx, 'kb-search');
+    const project = await createProject(apiCtx, user);
+
+    // 上传 1 份资料并等待向量化完成（indexed 后 kb_chunks 才有向量可检索）
+    const resp = await apiCtx.post(
+      api(`/projects/${project.id}/documents?doc_type=kb_material`),
+      {
+        headers: bearer(user),
+        multipart: {
+          file: {
+            name: MATERIALS[0].name,
+            mimeType: MATERIALS[0].mime,
+            buffer: buildMinimalPdf(MATERIALS[0].text),
+          },
+        },
+      },
     );
+    expect(resp.status(), `上传资料失败: ${await resp.text()}`).toBe(200);
+    const docId = ((await resp.json()) as BizResponse<{ id: string }>).data.id;
+
+    const status = await waitForDocumentStatus(
+      apiCtx,
+      user,
+      project.id,
+      docId,
+      ['indexed', 'failed'],
+      60_000,
+      'kb_material',
+    );
+    test.skip(
+      status !== 'indexed',
+      `资料状态停留在 "${status}"，未推进到 indexed：worker/Embedding 未就绪，检索命中无从断言。`,
+    );
+
+    // 相似度检索（后端契约：GET /projects/{pid}/kb/search?q=&top_k=，
+    // 返回 {items: [{chunk_id, doc_id, title, content, page_no, score}], total}）
+    const search = await apiCtx.get(api(`/projects/${project.id}/kb/search`), {
+      headers: bearer(user),
+      params: { q: 'high availability deployment', top_k: 5 },
+    });
+    expect(search.status(), `检索失败: ${await search.text()}`).toBe(200);
+    const body = (await search.json()) as BizResponse<{
+      items: Array<{ chunk_id: string; doc_id: string; title: string; content: string; score: number }>;
+      total: number;
+    }>;
+    expect(body.data.total).toBeGreaterThan(0);
+    expect(body.data.items.map((i) => i.doc_id)).toContain(docId);
+    expect(body.data.items.map((i) => i.title)).toContain(MATERIALS[0].name);
+    for (const item of body.data.items) {
+      expect(item.content.length, '命中分块内容非空').toBeGreaterThan(0);
+      expect(typeof item.score, '相似度为数值').toBe('number');
+    }
   });
 });

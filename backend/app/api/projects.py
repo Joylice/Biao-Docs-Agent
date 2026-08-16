@@ -28,6 +28,10 @@ async def create_project_api(
 ) -> dict:
     """创建项目."""
     project = await create_project(db, req, user_id)
+
+    # 事务约定（BUG-1）：响应返回前显式提交，新建项目立即可查（不再短暂 404）
+    await db.commit()
+
     return success(data=ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
@@ -74,5 +78,8 @@ async def add_member_api(
         target_type="member",
         target_id=req.email,
     )
+
+    # 事务约定（BUG-1）：成员 + 审计同事务，响应前显式提交（新成员不再短暂 403）
+    await db.commit()
 
     return success(message="成员添加成功")

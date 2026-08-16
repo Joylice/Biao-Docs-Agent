@@ -1,6 +1,9 @@
 <template>
   <div class="kb-view">
-    <a-page-header title="资料库" sub-title="上传公司资料、案例、资质等素材" />
+    <a-page-header
+      title="资料库"
+      sub-title="上传公司资料、案例、资质等素材"
+    />
 
     <!-- 上传区域 -->
     <a-card class="mb-4">
@@ -14,8 +17,12 @@
         <p class="ant-upload-drag-icon">
           <inbox-outlined />
         </p>
-        <p class="ant-upload-text">点击或拖拽文件到此区域上传</p>
-        <p class="ant-upload-hint">支持 PDF、Word 格式，单个文件不超过 50MB</p>
+        <p class="ant-upload-text">
+          点击或拖拽文件到此区域上传
+        </p>
+        <p class="ant-upload-hint">
+          支持 PDF、Word 格式，单个文件不超过 50MB
+        </p>
       </a-upload-dragger>
     </a-card>
 
@@ -31,10 +38,18 @@
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'status'">
-            <a-tag :color="statusColor(record.status)">{{ statusText(record.status) }}</a-tag>
+            <a-tag :color="statusColor(record.status)">
+              {{ statusText(record.status) }}
+            </a-tag>
           </template>
           <template v-if="column.key === 'action'">
-            <a-button size="small" type="link" @click="handleDelete(record)">删除</a-button>
+            <a-button
+              size="small"
+              type="link"
+              @click="handleDelete(record)"
+            >
+              删除
+            </a-button>
           </template>
         </template>
       </a-table>
@@ -47,14 +62,23 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { InboxOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
+import type { UploadFile, UploadProps } from 'ant-design-vue'
 import api from '@/api/client'
+
+interface KbDocument {
+  id: string
+  title: string
+  doc_type: string
+  status: string
+  created_at: string
+}
 
 const route = useRoute()
 const projectId = route.params.projectId as string
 
 const loading = ref(false)
-const documents = ref<any[]>([])
-const fileList = ref<any[]>([])
+const documents = ref<KbDocument[]>([])
+const fileList = ref<UploadFile[]>([])
 
 const columns = [
   { title: '文件名', dataIndex: 'title', key: 'title' },
@@ -100,7 +124,7 @@ const fetchDocuments = async () => {
   }
 }
 
-const beforeUpload = (file: any) => {
+const beforeUpload: NonNullable<UploadProps['beforeUpload']> = (file) => {
   const isLt50M = file.size / 1024 / 1024 < 50
   if (!isLt50M) {
     message.error('文件大小不能超过 50MB')
@@ -108,8 +132,8 @@ const beforeUpload = (file: any) => {
   return isLt50M
 }
 
-const handleUpload = async (options: any) => {
-  const { file, onSuccess, onError } = options
+const handleUpload: NonNullable<UploadProps['customRequest']> = async (options) => {
+  const file = options.file as File
   const formData = new FormData()
   formData.append('file', file)
 
@@ -122,16 +146,16 @@ const handleUpload = async (options: any) => {
         headers: { 'Content-Type': 'multipart/form-data' },
       }
     )
-    onSuccess(res.data, file)
+    options.onSuccess?.(res.data)
     message.success(`${file.name} 上传成功`)
     fetchDocuments()
   } catch (err) {
-    onError(err)
+    options.onError?.(err as Error)
     message.error(`${file.name} 上传失败`)
   }
 }
 
-const handleDelete = (record: any) => {
+const handleDelete = (record: KbDocument) => {
   message.info(`删除功能开发中: ${record.title}`)
 }
 

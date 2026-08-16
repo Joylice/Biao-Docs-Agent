@@ -1,19 +1,40 @@
 <template>
   <div class="project-list">
     <a-page-header title="我的项目" />
-    <a-button type="primary" @click="showCreateModal = true">新建项目</a-button>
-    <a-list :data-source="projects" :loading="loading" style="margin-top: 16px">
+    <a-button
+      type="primary"
+      @click="showCreateModal = true"
+    >
+      新建项目
+    </a-button>
+    <a-list
+      :data-source="projects"
+      :loading="loading"
+      style="margin-top: 16px"
+    >
       <template #renderItem="{ item }">
         <a-list-item>
-          <a-list-item-meta :title="item.name" :description="`招标编号: ${item.tenderNo || '无'}`" />
+          <a-list-item-meta
+            :title="item.name"
+            :description="`招标编号: ${item.tenderNo || '无'}`"
+          />
           <template #actions>
-            <a-button type="link" @click="enterProject(item.id)">进入</a-button>
+            <a-button
+              type="link"
+              @click="enterProject(item.id)"
+            >
+              进入
+            </a-button>
           </template>
         </a-list-item>
       </template>
     </a-list>
 
-    <a-modal v-model:open="showCreateModal" title="新建项目" @ok="handleCreate">
+    <a-modal
+      v-model:open="showCreateModal"
+      title="新建项目"
+      @ok="handleCreate"
+    >
       <a-form :model="newProject">
         <a-form-item label="项目名称">
           <a-input v-model:value="newProject.name" />

@@ -3,10 +3,16 @@
 import io
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import AsyncClient
+
+from app.core.database import get_db
+from app.core.security import create_access_token
+from app.main import app
+from app.models.document import ScorePoint
+from app.models.project import Project
 
 
 @pytest.mark.asyncio
@@ -77,11 +83,15 @@ async def test_upload_invalid_file_type(client: AsyncClient) -> None:
 
 
 class _FakeUploadSession:
-    """mock 会话：成员校验返回 owner；flush 时补齐主键、refresh 时补齐 created_at."""
+    """mock 会话：成员校验返回 owner；flush 时补齐主键、refresh 时补齐 created_at.
+
+    BUG-1 适配：记录 commit 调用（写路径显式提交，get_db 不再兜底 commit）。
+    """
 
     def __init__(self, project) -> None:
         self._project = project
         self.added: list = []
+        self.committed = False
 
     async def execute(self, stmt):
         result = MagicMock()
@@ -99,6 +109,9 @@ class _FakeUploadSession:
     async def refresh(self, obj) -> None:
         if getattr(obj, "created_at", None) is None:
             obj.created_at = datetime.now(UTC)
+
+    async def commit(self) -> None:
+        self.committed = True
 
 
 @pytest.fixture
@@ -172,3 +185,57 @@ async def test_upload_kb_material_enqueues_index(client: AsyncClient, upload_env
     doc_id = uuid.UUID(response.json()["data"]["id"])
     assert upload_env["calls"]["index"] == [(upload_env["project_id"], doc_id)]
     assert upload_env["calls"]["parse"] == []
+
+
+# ── BUG-1：写路径在响应返回前显式 commit ──
+
+
+@pytest.mark.asyncio
+async def test_upload_commits_before_enqueue(client: AsyncClient, upload_env) -> None:
+    """上传登记 + 审计显式提交（worker 领取任务时文档行必须已可见）."""
+    files = {"file": ("kb.pdf", io.BytesIO(b"fake pdf"), "application/pdf")}
+    response = await client.post(
+        f"/api/v1/projects/{upload_env['project_id']}/documents",
+        files=files,
+        params={"doc_type": "kb_material"},
+        headers=upload_env["headers"],
+    )
+    assert response.status_code == 200
+    assert upload_env["session"].committed is True
+
+
+def _result(scalar: object) -> MagicMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = scalar
+    return result
+
+
+@pytest.mark.asyncio
+async def test_update_score_point_commits_before_response(client: AsyncClient) -> None:
+    """BUG-1：评分点更新显式提交（确认状态对后续工作流立即可见）."""
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    sp_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    sp = ScorePoint(
+        id=sp_id,
+        project_id=project_id,
+        doc_id=uuid.uuid4(),
+        clause_no="1",
+        item="技术方案完整性",
+        is_star=False,
+    )
+
+    session = AsyncMock()
+    session.execute.side_effect = [_result(project), _result(sp)]
+    app.dependency_overrides[get_db] = lambda: session
+    try:
+        response = await client.put(
+            f"/api/v1/projects/{project_id}/score-points/{sp_id}",
+            json={"confirmed": True},
+            headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+        )
+        assert response.status_code == 200
+        session.commit.assert_awaited()
+    finally:
+        app.dependency_overrides.pop(get_db, None)

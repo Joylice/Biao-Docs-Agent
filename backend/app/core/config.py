@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     jwt_access_expire_minutes: int = 120  # 2h
     jwt_refresh_expire_days: int = 7
 
+    # ── 权限与安全 ──
+    # 管理员用户邮箱列表（逗号分隔，项目唯一用户标识为 email）。仅列表内账号可
+    # PUT /settings/llm 与 POST /settings/llm/test；为空时拒绝写入并提示配置（C-1）。
+    admin_user_ids: str = ""
+    # LLM 密钥落库加密（Fernet）的独立派生源；为空时回退 jwt_secret 派生并告警（W-2）。
+    llm_crypto_secret: str = ""
+
     # ── MinIO ──
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import BizError
 from app.models.kb_chunk import KbChunk
+from app.services import settings_service
 
 
 @dataclass
@@ -117,9 +118,50 @@ async def retrieve_similar(
     ]
 
 
-def _is_mock_mode(mock: bool | None) -> bool:
-    """判断是否启用 mock：函数参数优先，其次运行时读取 settings.llm_mock."""
-    return settings.llm_mock if mock is None else mock
+async def search_materials(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    query: str,
+    top_k: int = 5,
+    min_score: float = 0.0,
+) -> list[dict]:
+    """资料库检索（API 层入口）：查询文本 → embedding → 相似度检索 → 补文档标题.
+
+    min_score 默认 0：按相似度倒序返回 top_k 条。LLM mock 模式下 embedding
+    为确定性伪向量，相似度趋近 0，阈值过高会恒无命中；生产环境可按需调高。
+    只读操作，不 commit（事务约定见 core.database.get_db）。
+    """
+    from app.models.document import Document
+
+    query_embedding = await get_embedding(query)
+    results = await retrieve_similar(
+        db=db,
+        project_id=project_id,
+        query_embedding=query_embedding,
+        top_k=top_k,
+        threshold=min_score,
+    )
+    if not results:
+        return []
+
+    # 补齐命中分块所属文档的标题
+    doc_ids = list({r.doc_id for r in results})
+    title_result = await db.execute(
+        select(Document.id, Document.title).where(Document.id.in_(doc_ids))
+    )
+    titles = {row[0]: row[1] for row in title_result.all()}
+
+    return [
+        {
+            "chunk_id": str(r.chunk_id),
+            "doc_id": str(r.doc_id),
+            "title": titles.get(r.doc_id, ""),
+            "content": r.content,
+            "page_no": r.page_no,
+            "score": round(float(r.score), 4),
+        }
+        for r in results
+    ]
 
 
 def _mock_embedding(text: str) -> np.ndarray:
@@ -133,9 +175,15 @@ def _mock_embedding(text: str) -> np.ndarray:
     return vec
 
 
+async def _embedding_api_base() -> str:
+    """库内配置优先：页面配置的 embedding_api_base 覆盖 env，无则回退 env."""
+    cfg = await settings_service.get_runtime_config()
+    return (cfg.embedding_api_base if cfg else None) or settings.embedding_api_base
+
+
 async def get_embedding(text: str, *, mock: bool | None = None) -> np.ndarray:
     """调用 bge-m3 Embedding 服务获取向量."""
-    if _is_mock_mode(mock):
+    if await settings_service.is_mock_enabled(mock):
         return _mock_embedding(text)
     try:
         from litellm import aembedding
@@ -143,7 +191,7 @@ async def get_embedding(text: str, *, mock: bool | None = None) -> np.ndarray:
         response = await aembedding(
             model=settings.embedding_model,
             input=[text],
-            api_base=settings.embedding_api_base,
+            api_base=await _embedding_api_base(),
         )
         return np.array(response.data[0]["embedding"], dtype=np.float32)
     except Exception as e:
@@ -152,7 +200,7 @@ async def get_embedding(text: str, *, mock: bool | None = None) -> np.ndarray:
 
 async def get_embeddings_batch(texts: list[str], *, mock: bool | None = None) -> np.ndarray:
     """批量获取 Embedding 向量."""
-    if _is_mock_mode(mock):
+    if await settings_service.is_mock_enabled(mock):
         return np.stack([_mock_embedding(t) for t in texts])
     try:
         from litellm import aembedding
@@ -160,7 +208,7 @@ async def get_embeddings_batch(texts: list[str], *, mock: bool | None = None) ->
         response = await aembedding(
             model=settings.embedding_model,
             input=texts,
-            api_base=settings.embedding_api_base,
+            api_base=await _embedding_api_base(),
         )
         embeddings = [item["embedding"] for item in response.data]
         return np.array(embeddings, dtype=np.float32)

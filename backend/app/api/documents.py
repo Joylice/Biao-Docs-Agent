@@ -21,7 +21,7 @@ from app.schemas.document import (
     ScorePointUpdate,
     TechRequirementOut,
 )
-from app.services import task_service
+from app.services import rag_service, task_service
 from app.services.project_service import _check_project_member
 from app.services.storage_service import upload_file
 
@@ -81,6 +81,10 @@ async def upload_document(
         detail={"title": doc.title, "doc_type": doc_type, "size_bytes": len(content)},
     )
 
+    # 事务约定（BUG-1）：登记 + 审计在入队前显式提交，
+    # 确保 worker 领取解析/向量化任务时文档行已可见
+    await db.commit()
+
     # 异步任务入队：解析/向量化由 worker 推进状态；Redis 不可用时降级不阻断上传
     if doc_type == "tender_file":
         await task_service.enqueue_parse_tender(project_id, doc.id)
@@ -120,6 +124,26 @@ async def list_documents(
 
     items_data = [DocumentListOut.model_validate(d).model_dump(mode="json") for d in items]
     return paginated(items_data, total)
+
+
+@router.get("/{project_id}/kb/search")
+async def search_kb(
+    project_id: uuid.UUID,
+    q: str = Query(..., min_length=1, description="检索查询文本"),
+    top_k: int = Query(5, ge=1, le=20, description="返回条数上限"),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """资料库相似度检索（RAG，E2E-03 检索命中）.
+
+    委托 rag_service.search_materials（embed → pgvector 余弦检索 → 补文档标题）。
+    min_score 默认 0：按相似度倒序返回 top_k 条（LLM mock 模式下确定性伪向量
+    相似度趋近 0，若设高阈值将恒无命中）。
+    """
+    await _check_project_member(db, project_id, user_id)
+
+    items = await rag_service.search_materials(db=db, project_id=project_id, query=q, top_k=top_k)
+    return success(data={"items": items, "total": len(items)})
 
 
 @router.get("/{project_id}/score-points")
@@ -164,6 +188,10 @@ async def update_score_point(
 
     await db.flush()
     await db.refresh(sp)
+
+    # 事务约定（BUG-1）：确认/策略修改响应前显式提交，后续工作流立即可见
+    await db.commit()
+
     return success(data=ScorePointOut.model_validate(sp).model_dump(mode="json"))
 
 

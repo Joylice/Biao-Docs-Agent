@@ -34,11 +34,12 @@ class FakeScalarResult:
 
 
 class FakeDB:
-    """模拟 AsyncSession：按目标模型返回预设行."""
+    """模拟 AsyncSession：按目标模型返回预设行（BUG-2 适配：记录 commit）."""
 
     def __init__(self, rows_by_table: dict | None = None) -> None:
         self.rows_by_table = rows_by_table or {}
         self.added: list = []
+        self.commit_count = 0
 
     async def execute(self, stmt):
         entity = stmt.column_descriptions[0]["entity"]
@@ -46,6 +47,9 @@ class FakeDB:
 
     async def flush(self) -> None:
         pass
+
+    async def commit(self) -> None:
+        self.commit_count += 1
 
     def add(self, obj) -> None:
         self.added.append(obj)

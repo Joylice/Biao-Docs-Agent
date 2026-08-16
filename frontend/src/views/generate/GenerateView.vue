@@ -1,20 +1,46 @@
 <template>
   <div class="generate-view">
-    <a-page-header title="方案生成" :sub-title="`进度: ${Math.round(progress * 100)}%`" />
+    <a-page-header
+      title="方案生成"
+      :sub-title="`进度: ${Math.round(progress * 100)}%`"
+    />
 
     <!-- 进度条 -->
-    <a-progress :percent="Math.round(progress * 100)" :status="progressStatus" class="mb-4" />
+    <a-progress
+      :percent="Math.round(progress * 100)"
+      :status="progressStatus"
+      class="mb-4"
+    />
 
     <!-- 大纲预览 -->
-    <a-card title="方案大纲" class="mb-4" v-if="outline.length > 0">
-      <a-list :data-source="outline" size="small">
+    <a-card
+      v-if="outline.length > 0"
+      title="方案大纲"
+      class="mb-4"
+    >
+      <a-list
+        :data-source="outline"
+        size="small"
+      >
         <template #renderItem="{ item }">
           <a-list-item>
             <strong>{{ item.chapter_no }}</strong> {{ item.title }}
             <template #extra>
-              <a-tag v-if="chapters[item.chapter_no]" color="green">已生成</a-tag>
-              <a-tag v-else-if="currentChapter === item.chapter_no" color="blue">生成中</a-tag>
-              <a-tag v-else>待生成</a-tag>
+              <a-tag
+                v-if="chapters[item.chapter_no]"
+                color="green"
+              >
+                已生成
+              </a-tag>
+              <a-tag
+                v-else-if="currentChapter === item.chapter_no"
+                color="blue"
+              >
+                生成中
+              </a-tag>
+              <a-tag v-else>
+                待生成
+              </a-tag>
             </template>
           </a-list-item>
         </template>
@@ -22,19 +48,38 @@
     </a-card>
 
     <!-- 章节内容预览 -->
-    <a-card v-if="selectedChapter" :title="`章节 ${selectedChapter}`">
+    <a-card
+      v-if="selectedChapter"
+      :title="`章节 ${selectedChapter}`"
+    >
       <template #extra>
-        <a-button size="small" @click="selectedChapter = ''">关闭</a-button>
+        <a-button
+          size="small"
+          @click="selectedChapter = ''"
+        >
+          关闭
+        </a-button>
       </template>
-      <div class="chapter-content" v-html="renderedContent"></div>
+      <div
+        class="chapter-content"
+        v-html="renderedContent"
+      />
     </a-card>
 
     <!-- 操作按钮 -->
     <div class="actions">
-      <a-button @click="handleStartGenerate" :loading="generating" v-if="!generating && !generated">
+      <a-button
+        v-if="!generating && !generated"
+        :loading="generating"
+        @click="handleStartGenerate"
+      >
         开始生成
       </a-button>
-      <a-button type="primary" @click="goToReview" v-if="generated">
+      <a-button
+        v-if="generated"
+        type="primary"
+        @click="goToReview"
+      >
         进入审阅
       </a-button>
     </div>
@@ -47,6 +92,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import api from '@/api/client'
 
+interface OutlineItem {
+  chapter_no: string
+  title: string
+}
+
 const route = useRoute()
 const router = useRouter()
 const projectId = route.params.projectId as string
@@ -54,7 +104,7 @@ const projectId = route.params.projectId as string
 const progress = ref(0)
 const generating = ref(false)
 const generated = ref(false)
-const outline = ref<any[]>([])
+const outline = ref<OutlineItem[]>([])
 const chapters = ref<Record<string, string>>({})
 const currentChapter = ref('')
 const selectedChapter = ref('')

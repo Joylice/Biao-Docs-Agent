@@ -8,9 +8,15 @@ import pytest
 from httpx import AsyncClient
 
 from app.core.database import get_db
-from app.core.security import create_access_token, create_refresh_token, decode_token
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_password,
+)
 from app.main import app
 from app.models.audit_log import AuditLog
+from app.models.user import User
 
 
 @pytest.fixture
@@ -112,3 +118,63 @@ class TestRefreshToken:
         assert str(added.user_id) == user_id
         assert added.target_type == "user"
         assert added.target_id == user_id
+
+
+class TestWritePathCommit:
+    """BUG-1：注册/登录写路径在响应返回前显式 commit（消除提交竞态）."""
+
+    @pytest.mark.asyncio
+    async def test_register_commits_before_response(self, client: AsyncClient, mock_db) -> None:
+        """注册成功即提交：后续登录/查重立即可见新用户行."""
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None  # 邮箱未注册
+        mock_db.execute = AsyncMock(return_value=result)
+
+        async def fill_id(*_args, **_kwargs) -> None:
+            for call in mock_db.add.call_args_list:
+                obj = call.args[0]
+                if getattr(obj, "id", None) is None:
+                    obj.id = uuid.uuid4()
+
+        mock_db.flush = AsyncMock(side_effect=fill_id)
+
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": "commit@example.com",
+                "password": "Pass#12345",
+                "display_name": "提交竞态",
+            },
+        )
+        assert response.status_code == 200
+        mock_db.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_login_commits_before_response(self, client: AsyncClient, mock_db) -> None:
+        """登录成功（含审计写入）在响应前显式 commit."""
+        user = User(
+            id=uuid.uuid4(),
+            email="commit@example.com",
+            password_hash=hash_password("Pass#12345"),
+            display_name="提交竞态",
+        )
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = user
+        mock_db.execute = AsyncMock(return_value=result)
+
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "commit@example.com", "password": "Pass#12345"},
+        )
+        assert response.status_code == 200
+        mock_db.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_refresh_commits_before_response(self, client: AsyncClient, mock_db) -> None:
+        """refresh（含审计写入）在响应前显式 commit."""
+        response = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": create_refresh_token(str(uuid.uuid4()))},
+        )
+        assert response.status_code == 200
+        mock_db.commit.assert_awaited()

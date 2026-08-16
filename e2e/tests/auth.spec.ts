@@ -1,9 +1,10 @@
 /**
  * 场景 1 / E2E-01：注册登录
- * 注册 → 登录获取 JWT → （刷新 token）→ /auth/me 校验身份。
+ * 注册 → 登录获取 JWT → 刷新 token → /auth/me 校验身份。
  *
  * 对齐后端路由：backend/app/api/auth.py
- *   POST /api/v1/auth/register | POST /api/v1/auth/login | GET /api/v1/auth/me
+ *   POST /api/v1/auth/register | POST /api/v1/auth/login
+ *   POST /api/v1/auth/refresh  | GET  /api/v1/auth/me
  */
 import {
   api,
@@ -41,6 +42,19 @@ test.describe('注册登录', () => {
     const first = await apiCtx.post(api('/auth/register'), { data });
     expect(first.status()).toBe(200);
 
+    // 等待首次注册事务提交可见（后端 get_db 响应后 commit 的竞态规避；
+    // 竞态窗口内重复注册会因唯一约束冲突返回 500，属产品 bug，已单独记录）。
+    const deadline = Date.now() + 10_000;
+    let committed = false;
+    while (Date.now() < deadline && !committed) {
+      const probe = await apiCtx.post(api('/auth/login'), {
+        data: { email, password: data.password },
+      });
+      committed = probe.status() === 200;
+      if (!committed) await new Promise((r) => setTimeout(r, 300));
+    }
+    expect(committed, '首次注册 10s 内登录仍失败（提交未收敛）').toBe(true);
+
     const second = await apiCtx.post(api('/auth/register'), { data });
     expect(second.status()).toBe(400);
     const body = (await second.json()) as BizResponse;
@@ -77,11 +91,39 @@ test.describe('注册登录', () => {
     expect(unauthorized.status()).toBe(401);
   });
 
-  // 前置条件缺失：backend/app/api/auth.py 目前仅实现 register/login/me，
-  // 未提供 /auth/refresh 端点（refresh_token 仅在登录响应中下发，无法换新 access_token）。
-  // 待后端补充刷新端点后移除 skip。
-  test('刷新 token（refresh → 新 access_token）', async () => {
-    test.skip(true, '后端暂未实现 /auth/refresh 端点（auth.py 仅有 register/login/me），无法验证刷新流程。');
+  // /auth/refresh 已实现（auth.py:76）：refresh_token（type=refresh）换新 access_token。
+  test('刷新 token（refresh → 新 access_token）', async ({ api: apiCtx }) => {
+    const user = await registerAndLogin(apiCtx, 'refresh');
+
+    // 注意：后端 JWT payload 仅含 sub/exp/type（无 jti/iat），同一秒内签发的 token
+    // 完全相同；等待跨秒以便断言"新 token ≠ 旧 token"。（低危观察项：无 jti 影响撤销粒度）
+    await new Promise((r) => setTimeout(r, 1_100));
+
+    const resp = await apiCtx.post(api('/auth/refresh'), {
+      data: { refresh_token: user.refreshToken },
+    });
+    expect(resp.status(), `刷新失败: ${await resp.text()}`).toBe(200);
+    const body = (await resp.json()) as BizResponse<{
+      access_token: string;
+      refresh_token: string;
+    }>;
+    expect(body.code).toBe(0);
+    expect(body.data.access_token).toBeTruthy();
+    expect(body.data.access_token).not.toBe(user.accessToken);
+
+    // 新 access_token 可正常访问受保护端点
+    const me = await apiCtx.get(api('/auth/me'), {
+      headers: { Authorization: `Bearer ${body.data.access_token}` },
+    });
+    expect(me.status()).toBe(200);
+    expect(((await me.json()) as BizResponse<{ email: string }>).data.email).toBe(user.email);
+
+    // 负例：无效 refresh_token 被拒（4001）
+    const invalid = await apiCtx.post(api('/auth/refresh'), {
+      data: { refresh_token: 'not-a-valid-token' },
+    });
+    expect(invalid.status()).toBe(401);
+    expect(((await invalid.json()) as BizResponse).code).toBe(4001);
   });
 
   test('UI：登录页可访问，登录后进入项目列表（E2E-01 进入工作台）', async ({
@@ -100,7 +142,8 @@ test.describe('注册登录', () => {
 
     await page.getByPlaceholder('邮箱').fill(user.email);
     await page.getByPlaceholder('密码').fill(user.password);
-    await page.getByRole('button', { name: '登录' }).click();
+    // antd 两字中文按钮会在中间插入空格（accessible name 为 "登 录"），用正则匹配
+    await page.getByRole('button', { name: /登\s*录/ }).click();
 
     // 登录成功后路由跳转项目列表（router/index.ts: '/' => Projects）
     await expect(page).toHaveURL(/\/$/);
