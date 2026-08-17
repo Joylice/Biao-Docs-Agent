@@ -42,9 +42,21 @@ async def test_enqueue_parse_tender_calls_pool(fake_pool) -> None:
     """招标文件解析任务入队：任务名与位置参数正确，池用后关闭."""
     ok = await task_service.enqueue_parse_tender(PROJECT_ID, DOC_ID)
     assert ok is True
-    assert fake_pool.jobs == [("task_parse_tender", (str(PROJECT_ID), str(DOC_ID)), {})]
+    assert fake_pool.jobs == [
+        ("task_parse_tender", (str(PROJECT_ID), str(DOC_ID)), {"score_points_only": False})
+    ]
     assert fake_pool.redis_settings is not None
     assert fake_pool.closed is True
+
+
+@pytest.mark.asyncio
+async def test_enqueue_parse_tender_score_points_only(fake_pool) -> None:
+    """重新解析入队：score_points_only=True 透传给 worker 任务."""
+    ok = await task_service.enqueue_parse_tender(PROJECT_ID, DOC_ID, score_points_only=True)
+    assert ok is True
+    assert fake_pool.jobs == [
+        ("task_parse_tender", (str(PROJECT_ID), str(DOC_ID)), {"score_points_only": True})
+    ]
 
 
 @pytest.mark.asyncio

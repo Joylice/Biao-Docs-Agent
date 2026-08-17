@@ -62,14 +62,17 @@ def upload_file(
 def download_file(storage_key: str) -> bytes:
     """从 MinIO 下载文件，返回字节内容."""
     client = _get_client()
+    response = None
     try:
         response = client.get_object(settings.minio_bucket, storage_key)
         return response.read()
     except S3Error as e:
         raise BizError(code=5003, message=f"文件下载失败: {e}") from None
     finally:
-        response.close()
-        response.release_conn()
+        # get_object 失败时 response 未赋值，直接 close 会 UnboundLocalError 掩盖原始异常
+        if response is not None:
+            response.close()
+            response.release_conn()
 
 
 def delete_file(storage_key: str) -> None:

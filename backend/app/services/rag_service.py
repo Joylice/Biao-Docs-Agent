@@ -76,13 +76,21 @@ async def retrieve_similar(
     query_embedding: np.ndarray,
     top_k: int = 20,
     threshold: float = 0.3,
+    doc_ids: list[uuid.UUID] | None = None,
 ) -> list[ChunkResult]:
-    """向量相似度检索（cosine distance）."""
+    """向量相似度检索（cosine distance）.
+
+    doc_ids: 资料库挂载配置 — 非 None 时仅检索指定文档的分块（空列表=不挂载）；
+    None 时检索项目全部文档（原行为）。
+    """
     from app.models.document import Document
 
-    # 获取项目下的 doc_ids
-    doc_ids_result = await db.execute(select(Document.id).where(Document.project_id == project_id))
-    doc_ids = [row[0] for row in doc_ids_result.all()]
+    # 获取项目下的 doc_ids（挂载配置显式传入时跳过全量查询）
+    if doc_ids is None:
+        doc_ids_result = await db.execute(
+            select(Document.id).where(Document.project_id == project_id)
+        )
+        doc_ids = [row[0] for row in doc_ids_result.all()]
     if not doc_ids:
         return []
 
@@ -124,22 +132,28 @@ async def search_materials(
     query: str,
     top_k: int = 5,
     min_score: float = 0.0,
+    doc_ids: list[uuid.UUID] | None = None,
 ) -> list[dict]:
     """资料库检索（API 层入口）：查询文本 → embedding → 相似度检索 → 补文档标题.
 
+    doc_ids: 显式指定检索范围（全局资料库等跨项目场景传 doc_ids 过滤）；
+    None 时按 project_id 检索项目文档。
     min_score 默认 0：按相似度倒序返回 top_k 条。LLM mock 模式下 embedding
-    为确定性伪向量，相似度趋近 0，阈值过高会恒无命中；生产环境可按需调高。
+    为确定性伪向量，相似度在 [-1,1] 随机分布（可能为负），阈值自动放宽到
+    -1 以免概率性零命中；生产（真实 embedding）按 min_score 过滤。
     只读操作，不 commit（事务约定见 core.database.get_db）。
     """
     from app.models.document import Document
 
+    mock_enabled = await settings_service.is_mock_enabled()
     query_embedding = await get_embedding(query)
     results = await retrieve_similar(
         db=db,
         project_id=project_id,
         query_embedding=query_embedding,
         top_k=top_k,
-        threshold=min_score,
+        threshold=-1.0 if mock_enabled else min_score,
+        doc_ids=doc_ids,
     )
     if not results:
         return []
@@ -181,8 +195,17 @@ async def _embedding_api_base() -> str:
     return (cfg.embedding_api_base if cfg else None) or settings.embedding_api_base
 
 
+async def _embedding_api_key_kwargs() -> dict[str, str]:
+    """库内密钥优先：embedding 模型前缀命中页面配置则作为 api_key 传入，否则回退 env（不传参）."""
+    cfg = await settings_service.get_runtime_config()
+    if cfg is None:
+        return {}
+    api_key = cfg.api_key_for(settings.embedding_model)
+    return {"api_key": api_key} if api_key else {}
+
+
 async def get_embedding(text: str, *, mock: bool | None = None) -> np.ndarray:
-    """调用 bge-m3 Embedding 服务获取向量."""
+    """调用 Embedding 服务获取向量."""
     if await settings_service.is_mock_enabled(mock):
         return _mock_embedding(text)
     try:
@@ -192,6 +215,7 @@ async def get_embedding(text: str, *, mock: bool | None = None) -> np.ndarray:
             model=settings.embedding_model,
             input=[text],
             api_base=await _embedding_api_base(),
+            **await _embedding_api_key_kwargs(),
         )
         return np.array(response.data[0]["embedding"], dtype=np.float32)
     except Exception as e:
@@ -209,6 +233,7 @@ async def get_embeddings_batch(texts: list[str], *, mock: bool | None = None) ->
             model=settings.embedding_model,
             input=texts,
             api_base=await _embedding_api_base(),
+            **await _embedding_api_key_kwargs(),
         )
         embeddings = [item["embedding"] for item in response.data]
         return np.array(embeddings, dtype=np.float32)

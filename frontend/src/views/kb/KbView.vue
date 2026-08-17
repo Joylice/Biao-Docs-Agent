@@ -138,12 +138,12 @@ const handleUpload: NonNullable<UploadProps['customRequest']> = async (options) 
   formData.append('file', file)
 
   try {
+    // 不手动设 Content-Type：axios 自动带 boundary
     const res = await api.post(
       `/projects/${projectId}/documents`,
       formData,
       {
         params: { doc_type: 'kb_material' },
-        headers: { 'Content-Type': 'multipart/form-data' },
       }
     )
     options.onSuccess?.(res.data)

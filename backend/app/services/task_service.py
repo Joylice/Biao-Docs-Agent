@@ -12,7 +12,9 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-async def _enqueue(job_name: str, project_id: uuid.UUID, doc_id: uuid.UUID) -> bool:
+async def _enqueue(
+    job_name: str, project_id: uuid.UUID | None, doc_id: uuid.UUID, **job_kwargs
+) -> bool:
     """入队 arq 任务；Redis 不可用时记 warning 并返回 False（不抛异常）."""
     try:
         from arq import create_pool
@@ -21,7 +23,10 @@ async def _enqueue(job_name: str, project_id: uuid.UUID, doc_id: uuid.UUID) -> b
 
         pool = await create_pool(parse_redis_url(settings.redis_url))
         try:
-            await pool.enqueue_job(job_name, str(project_id), str(doc_id))
+            # project_id 为空 = 全局资料库文档（worker 按 doc_id 定位，不依赖 project）
+            await pool.enqueue_job(
+                job_name, str(project_id) if project_id else "", str(doc_id), **job_kwargs
+            )
         finally:
             await pool.aclose()
         return True
@@ -30,11 +35,21 @@ async def _enqueue(job_name: str, project_id: uuid.UUID, doc_id: uuid.UUID) -> b
         return False
 
 
-async def enqueue_parse_tender(project_id: uuid.UUID, doc_id: uuid.UUID) -> bool:
-    """入队招标文件解析任务（worker.tasks.task_parse_tender）."""
-    return await _enqueue("task_parse_tender", project_id, doc_id)
+async def enqueue_parse_tender(
+    project_id: uuid.UUID, doc_id: uuid.UUID, score_points_only: bool = False
+) -> bool:
+    """入队招标文件解析任务（worker.tasks.task_parse_tender）.
+
+    score_points_only=True（重新解析场景）：只提取评分点，跳过技术需求提取。
+    """
+    return await _enqueue(
+        "task_parse_tender", project_id, doc_id, score_points_only=score_points_only
+    )
 
 
-async def enqueue_index_document(project_id: uuid.UUID, doc_id: uuid.UUID) -> bool:
-    """入队资料库文档向量化任务（worker.tasks.task_index_document）."""
+async def enqueue_index_document(project_id: uuid.UUID | None, doc_id: uuid.UUID) -> bool:
+    """入队资料库文档向量化任务（worker.tasks.task_index_document）.
+
+    project_id 可空：全局资料库（kb_material 独立管理）传 None。
+    """
     return await _enqueue("task_index_document", project_id, doc_id)

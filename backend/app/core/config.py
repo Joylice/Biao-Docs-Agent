@@ -52,7 +52,10 @@ class Settings(BaseSettings):
     llm_backup: str = "qwen/qwen-plus"
 
     # ── Embedding ──
-    embedding_model: str = "bge-m3"
+    # 默认 DashScope 云端 embedding；模型名必须携带 litellm provider 前缀
+    # （如 dashscope/text-embedding-v3），否则报 "LLM Provider NOT provided"。
+    # 本地 Ollama 等场景可用 BID_EMBEDDING_MODEL 覆盖（如 ollama/bge-m3）。
+    embedding_model: str = "dashscope/text-embedding-v3"
     embedding_dimension: int = 1024
     embedding_api_base: str = "http://localhost:11434/v1"
 
