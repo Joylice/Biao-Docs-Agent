@@ -79,6 +79,38 @@ class TestRuleSuggestions:
         ]
         assert await outline_suggest_service.build_outline_suggestions(SCORE_POINTS, full) == []
 
+    @pytest.mark.asyncio
+    async def test_mock_placeholder_full_coverage_falls_back(self, monkeypatch) -> None:
+        """mock 占位数据（clause_no/covered_clauses 均为 mock）自洽覆盖 → 确定性兜底建议."""
+        monkeypatch.setattr(settings, "llm_mock", True)
+        sp = [
+            {
+                "clause_no": "mock",
+                "item": "mock",
+                "score": 1,
+                "criteria": "mock",
+                "is_star": False,
+            }
+        ]
+        outline = [
+            {
+                "chapter_no": "mock",
+                "title": "mock",
+                "sections": ["mock"],
+                "covered_clauses": ["mock"],
+            }
+        ]
+        suggestions = await outline_suggest_service.build_outline_suggestions(sp, outline)
+        assert len(suggestions) == 1
+        s = suggestions[0]
+        assert s["suggestion_type"] == "add_chapter"
+        assert s["target"]["title"] == "补充章节"
+        assert s["suggestion_id"]
+        # 兜底建议可被 apply 应用（大纲增加一章）
+        applied = apply_outline_suggestions(outline, [s["suggestion_id"]])
+        assert len(applied) == 2
+        assert applied[-1]["title"] == "补充章节"
+
 
 class TestLLMSuggestions:
     """生产模式：LLM 建议 + 失败降级 + 脱敏."""

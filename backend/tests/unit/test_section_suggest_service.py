@@ -61,6 +61,27 @@ class TestRuleSuggestions:
         assert await section_suggest_service.build_section_suggestions(full, SCORE_POINTS) == []
 
     @pytest.mark.asyncio
+    async def test_mock_placeholder_content_falls_back(self, monkeypatch) -> None:
+        """mock 占位数据（item=mock 且章节内容含 mock 字样）自洽覆盖 → 确定性兜底建议."""
+        monkeypatch.setattr(settings, "llm_mock", True)
+        sp = [
+            {
+                "clause_no": "mock",
+                "item": "mock",
+                "score": 1,
+                "criteria": "mock",
+                "is_star": False,
+            }
+        ]
+        chapters = {"mock": "（mock 模式）占位章节内容"}
+        suggestions = await section_suggest_service.build_section_suggestions(chapters, sp)
+        assert len(suggestions) == 1
+        s = suggestions[0]
+        assert s["chapter_no"] == "mock"
+        assert "未覆盖" in s["issue"]
+        assert s["severity"] == "medium"
+
+    @pytest.mark.asyncio
     async def test_rule_suggestions_are_deterministic(self, monkeypatch) -> None:
         """同输入两次生成 → 建议完全一致."""
         monkeypatch.setattr(settings, "llm_mock", True)

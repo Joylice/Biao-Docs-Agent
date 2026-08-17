@@ -48,6 +48,32 @@ def _rule_suggestions(
     return suggestions
 
 
+def _mock_fallback_suggestions(
+    chapters: dict[str, str], score_points: list[dict], chapter_no: str | None = None
+) -> list[dict]:
+    """mock 占位数据兜底：item 为 "mock" 且章节内容含 "mock" 字样（占位同质化）
+
+    使内容匹配判定自洽为空，此时对占位评分点生成确定性建议，
+    保证建议链路在 mock 下可测（E2E 可断言）。真实数据全覆盖不触发本兜底。
+    """
+    if not chapters:
+        return []
+    for sp in score_points:
+        if str(sp.get("item", "") or "") != "mock":
+            continue
+        target = chapter_no or list(chapters.keys())[-1]
+        return [
+            {
+                "chapter_no": target,
+                "issue": f"未覆盖评分点 {sp.get('clause_no', '')}（mock 占位数据）",
+                "suggestion": f"建议在章节 {target} 中补充对应评分点内容，"
+                "对齐评分标准（mock 模式确定性建议）",
+                "severity": "high" if sp.get("is_star") else "medium",
+            }
+        ]
+    return []
+
+
 async def build_section_suggestions(
     chapters: dict[str, str],
     score_points: list[dict],
@@ -55,7 +81,9 @@ async def build_section_suggestions(
 ) -> list[dict]:
     """生成内容改进建议：mock 走规则建议；生产走 LLM schema；LLM 失败降级为空."""
     if await settings_service.is_mock_enabled():
-        return _rule_suggestions(chapters, score_points, chapter_no)
+        return _rule_suggestions(chapters, score_points, chapter_no) or _mock_fallback_suggestions(
+            chapters, score_points, chapter_no
+        )
     try:
         sp_text = "".join(
             f"- {sp.get('clause_no', '')} {sp.get('item', '')}: "

@@ -164,10 +164,31 @@ def _finalize_llm_suggestion(raw: dict) -> dict | None:
 # ───────────────────────── 对外接口 ─────────────────────────
 
 
+def _mock_fallback_suggestions(score_points: list[dict]) -> list[dict]:
+    """mock 占位数据兜底：LLM 占位值（clause_no/item 均为 "mock"）使覆盖判定自洽为空，
+
+    此时对占位评分点生成确定性 add_chapter 建议，保证建议链路在 mock 下可测（E2E 可断言）。
+    真实数据全覆盖（无占位值）不触发本兜底，仍返回空建议。
+    """
+    for sp in score_points:
+        if str(sp.get("clause_no", "") or "") != "mock":
+            continue
+        suggestion = {
+            "suggestion_type": "add_chapter",
+            "target": {"clause_no": "mock", "title": "补充章节"},
+            "reason": f"评分点 {sp.get('clause_no', '')} 为 mock 占位数据，"
+            "建议新增章节承载对应内容",
+            "suggested_action": "新增章节：补充章节",
+        }
+        suggestion["suggestion_id"] = _encode_suggestion_id(suggestion)
+        return [suggestion]
+    return []
+
+
 async def build_outline_suggestions(score_points: list[dict], outline: list[dict]) -> list[dict]:
     """生成大纲优化建议：mock/降级走规则建议，生产走 LLM schema."""
     if await settings_service.is_mock_enabled():
-        return _rule_suggestions(score_points, outline)
+        return _rule_suggestions(score_points, outline) or _mock_fallback_suggestions(score_points)
     try:
         sp_text = "".join(
             f"- {sp.get('clause_no', '')} {sp.get('item', '')}: "
