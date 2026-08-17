@@ -43,6 +43,12 @@ class ConfirmReviewBody(BaseModel):
     feedback: dict[str, str] = {}
 
 
+class SectionEditBody(BaseModel):
+    """章节人工编辑请求体 — content 为编辑后的 Markdown 正文."""
+
+    content: str
+
+
 @router.post("/{project_id}/workflow/start")
 async def start_workflow(
     project_id: uuid.UUID,
@@ -234,6 +240,32 @@ async def rewrite_chapter(
     except Exception as e:
         raise BizError(code=5011, message=f"章节重写失败: {e}") from None
     return success(data={"chapter_no": chapter_no, "content": new_content})
+
+
+@router.put("/{project_id}/workflow/sections/{chapter_no}")
+async def save_section_edit(
+    project_id: uuid.UUID,
+    chapter_no: str,
+    body: SectionEditBody,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """人工编辑章节内容直接落库（state + proposal_sections 同步）."""
+    await _check_project_member(db, project_id, user_id)
+
+    try:
+        await workflow_runtime.save_section_edit(db, project_id, chapter_no, body.content)
+    except BizError:
+        raise
+    except Exception as e:
+        raise BizError(code=5011, message=f"章节保存失败: {e}") from None
+
+    # 审计埋点：章节人工编辑（security.md §4）
+    await audit.record(db, user_id, "workflow.section_edit", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"chapter_no": chapter_no, "saved": True})
 
 
 @router.get("/{project_id}/workflow/export")

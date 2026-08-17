@@ -217,6 +217,42 @@ async def rewrite_chapter(project_id: uuid.UUID | str, chapter_no: str, comment:
     return new_content
 
 
+async def save_section_edit(
+    db,
+    project_id: uuid.UUID | str,
+    chapter_no: str,
+    content: str,
+) -> None:
+    """人工编辑章节直接落库：state（chapters + 摘要重算）与 DB 同步.
+
+    与 rewrite_chapter 的差异：不经 LLM，内容来自人工编辑；落库 status=review
+    （对齐 write_node 的 _upsert_section 字段口径）。摘要重算保持章间上下文
+    一致性链路（后续章节生成引用最新摘要）。DB 提交由 API 层统一 commit。
+    """
+    from app.agents.nodes import _upsert_section
+    from app.services.chapter_service import extract_chapter_summary
+
+    snapshot = await get_state(project_id)
+    values = snapshot.values or {}
+    chapters = values.get("chapters", {})
+    if chapter_no not in chapters:
+        raise BizError(code=4004, message=f"章节 {chapter_no} 尚未生成，无法保存")
+
+    # 标题取大纲（章节均来自大纲生成）；缺失时保留既有摘要中的标题
+    outline = values.get("outline", [])
+    title = next((c.get("title", "") for c in outline if c.get("chapter_no") == chapter_no), "")
+    if not title:
+        title = (values.get("chapter_summaries", {}).get(chapter_no) or {}).get("title", "")
+
+    summaries = dict(values.get("chapter_summaries", {}))
+    summaries[chapter_no] = {"title": title, "summary": extract_chapter_summary(content)}
+    await update_state(
+        project_id,
+        {"chapters": {chapter_no: content}, "chapter_summaries": summaries},
+    )
+    await _upsert_section(db, str(project_id), chapter_no, title, content, status="review")
+
+
 async def export_workflow(project_id: uuid.UUID | str) -> dict:
     """导出 Word — 复用图内 export 节点（export_to_word + 落库 + 事件），结果回写 state."""
     snapshot = await get_state(project_id)

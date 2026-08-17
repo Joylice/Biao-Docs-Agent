@@ -10,8 +10,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from app.agents import nodes
 from app.core.config import settings
 from app.core.exceptions import BizError
-from app.models.proposal import ProposalSkeleton
+from app.models.proposal import ProposalSection, ProposalSkeleton
 from app.services import workflow_runtime
+from app.services.chapter_service import extract_chapter_summary
 from tests.agents.test_graph import make_fake_db
 
 PROJECT_ID = uuid.uuid4()
@@ -501,3 +502,68 @@ class TestOutlineDraftClear:
         assert (status.get("interrupt") or {}).get("type") == "review_request"
         assert skeleton.draft is None, "确认大纲后应清除草稿"
         assert skeleton.tree[0]["title"] == "确认后大纲"
+
+
+class TestSaveSectionEdit:
+    """人工编辑章节保存：state 回写（chapters + 摘要重算）+ proposal_sections 落库."""
+
+    async def _advance_to_review(self) -> None:
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+        await workflow_runtime.resume_workflow(PROJECT_ID, True)
+
+    @pytest.mark.asyncio
+    async def test_save_section_edit_updates_state_and_db(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """编辑内容回写 state.chapters、摘要重算，proposal_sections 落库 status=review."""
+        await self._advance_to_review()
+        db = make_fake_db()
+        new_content = "# 项目概述\n\n人工编辑后的完整内容，用于校验保存通道。"
+
+        await workflow_runtime.save_section_edit(db, PROJECT_ID, "1", new_content)
+
+        snapshot = await workflow_runtime.get_state(PROJECT_ID)
+        assert snapshot.values["chapters"]["1"] == new_content
+        assert snapshot.values["chapter_summaries"]["1"]["summary"] == extract_chapter_summary(
+            new_content
+        ), "保存后应重算章节摘要（保持章间上下文链路有效）"
+
+        sections = [o for o in db.added if isinstance(o, ProposalSection)]
+        assert sections, "编辑内容应落库 proposal_sections"
+        assert sections[-1].section_id == "1"
+        assert sections[-1].content_md == new_content
+        assert sections[-1].status == "review"
+
+    @pytest.mark.asyncio
+    async def test_save_section_edit_upserts_existing_row(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """已存在的 proposal_sections 行更新而非重复插入（upsert）."""
+        await self._advance_to_review()
+        db = make_fake_db()
+        existing = ProposalSection(
+            project_id=PROJECT_ID,
+            section_id="1",
+            title="旧标题",
+            content_md="旧内容",
+            status="draft",
+        )
+        db.rows_by_table[ProposalSection] = [existing]
+
+        await workflow_runtime.save_section_edit(db, PROJECT_ID, "1", "覆盖后的内容")
+
+        assert existing.content_md == "覆盖后的内容"
+        assert existing.status == "review"
+        assert existing not in db.added, "已存在行应原地更新而非新增"
+
+    @pytest.mark.asyncio
+    async def test_save_section_edit_missing_chapter_raises(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """未生成章节保存被拒（4004）."""
+        await self._advance_to_review()
+        db = make_fake_db()
+        with pytest.raises(BizError) as ei:
+            await workflow_runtime.save_section_edit(db, PROJECT_ID, "99", "内容")
+        assert ei.value.code == 4004
