@@ -1,4 +1,4 @@
-.PHONY: check security-check test lint format type-check
+.PHONY: check security-check test lint format type-check eval
 
 # ── 一键自检（CI 本地等价物） ──
 check: lint type-check test
@@ -32,6 +32,10 @@ security-check:
 	pip-audit -r backend/requirements.txt || true
 	@echo "=== pnpm audit ==="
 	cd frontend && pnpm audit --audit-level high || true
+
+# ── 离线评测（评测集与质量度量，缺 Key 自动跳过；--check 用于门禁） ──
+eval:
+	cd backend && python -m eval.run --task all
 
 # ── 数据库迁移 ──
 migrate:

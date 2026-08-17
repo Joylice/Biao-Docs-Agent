@@ -1,0 +1,37 @@
+{
+  "id": "sample_001_synthetic",
+  "score_points": [
+    {"clause_no": "3.2.1", "item": "技术方案完整性", "confirmed": true},
+    {"clause_no": "3.2.2", "item": "项目实施计划", "confirmed": true},
+    {"clause_no": "3.2.3", "item": "数据安全保障", "confirmed": true},
+    {"clause_no": "3.2.4", "item": "运维服务保障", "confirmed": true},
+    {"clause_no": "3.2.5", "item": "项目团队配置", "confirmed": true},
+    {"clause_no": "3.3.1", "item": "已取消的评分点", "confirmed": false}
+  ],
+  "outline": [
+    {
+      "chapter_no": 1,
+      "title": "技术方案总体设计",
+      "covered_clauses": ["3.2.1"],
+      "children": []
+    },
+    {
+      "chapter_no": 2,
+      "title": "项目实施计划",
+      "covered_clauses": ["3.2.2"],
+      "children": []
+    },
+    {
+      "chapter_no": 3,
+      "title": "数据安全保障方案",
+      "covered_clauses": ["3.2.3"],
+      "children": []
+    },
+    {
+      "chapter_no": 4,
+      "title": "运维服务保障方案",
+      "covered_clauses": ["3.2.4", "3.2.5"],
+      "children": []
+    }
+  ]
+}

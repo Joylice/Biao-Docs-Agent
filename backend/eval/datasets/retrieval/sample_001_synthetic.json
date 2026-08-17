@@ -1,0 +1,49 @@
+{
+  "id": "sample_001_synthetic",
+  "docs": [
+    {
+      "doc_id": "doc_ops_manual",
+      "title": "运维服务手册",
+      "chunks": [
+        "公司提供 7×24 小时运维支持服务，服务热线全年无休受理故障申报。",
+        "故障响应承诺：一般故障 30 分钟内远程响应，重大故障 4 小时内工程师到场处置。",
+        "定期巡检：每季度对系统运行状况进行一次全面巡检，并出具巡检报告。"
+      ]
+    },
+    {
+      "doc_id": "doc_security_solution",
+      "title": "信息安全解决方案",
+      "chunks": [
+        "平台已通过等级保护三级测评，具备完善的数据加密、访问控制与审计追溯能力。",
+        "数据传输采用 TLS1.3 加密，敏感字段存储采用国密 SM4 算法加密。",
+        "系统提供完整的操作审计日志，日志留存时间不少于六个月。"
+      ]
+    },
+    {
+      "doc_id": "doc_project_cases",
+      "title": "同类项目案例集",
+      "chunks": [
+        "某市政务云平台运维项目：服务期三年，系统可用率 99.95%。",
+        "某省直单位信息化建设项目：按期交付并通过等保三级测评验收。"
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "query": "运维支持响应时间承诺",
+      "relevant_doc_ids": ["doc_ops_manual"]
+    },
+    {
+      "query": "等保三级数据安全与加密措施",
+      "relevant_doc_ids": ["doc_security_solution"]
+    },
+    {
+      "query": "政务信息化项目交付案例",
+      "relevant_doc_ids": ["doc_project_cases"]
+    },
+    {
+      "query": "系统安全审计日志留存",
+      "relevant_doc_ids": ["doc_security_solution"]
+    }
+  ]
+}

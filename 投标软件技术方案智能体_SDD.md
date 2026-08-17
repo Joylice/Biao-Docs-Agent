@@ -19,14 +19,14 @@
 
 **范围内**：
 - 简单账号登录 + 项目级隔离（不做 RBAC）；
-- 真实资料批量入库与向量检索（RAG 底座，不做重排/评测集）；
+- 真实资料批量入库与向量检索（RAG 底座，含云端 rerank 精排与离线评测框架）；
 - 招标文件解析（PDF/Word → 评分点/★条款/资格要求结构化提取）；
 - 评分点对标分析；
 - 方案骨架生成与章节内容生成（含校验）；
 - 章节级人工审阅反馈与局部重写（不做行内批注/diff）；
 - 流式输出；Word 文档导出（固定模板）。
 
-**范围外（二期）**：版本管理与 diff、RBAC 角色权限、Reranker 精排、多模型路由降级、OCR 扫描件、商务/报价标生成、私有化部署。
+**范围外（二期）**：版本管理与 diff、RBAC 角色权限、多模型路由降级、OCR 扫描件、商务/报价标生成、私有化部署。（Reranker 精排与离线评测框架已提前落地，见 §7.2 / §10.3）
 
 ### 1.3 读者
 
@@ -582,7 +582,7 @@ graph.add_edge("export", END)
 
 - 检索为空 → 提示"资料库无相关内容"，撰写节点降级为基于通用知识撰写并标记"待人工补充"；
 - 引用溯源：写入 `proposal_sections.citations`，导出时标注 `【来源：XX P12】`；
-- Reranker 已引入（云端 API，见 7.2 降级矩阵）；评测集仍留待后续（用人工确认页兜底）。
+- Reranker 已引入（云端 API，见 7.2 降级矩阵）；离线评测框架已落地（见 §10.3，含合成种子样本；真实标注样本由业务人员后续补充），人工确认页继续作为运行时兜底。
 
 ---
 
@@ -632,7 +632,31 @@ graph.add_edge("export", END)
 | 检索命中 | 章节相关素材 Top-8 有效 |
 | 中断恢复 | 断点续跑成功 |
 
-### 10.3 冒烟用例（开发自测）
+可量化三项（提取准召率/覆盖/检索）由离线评测框架度量，执行方式：`cd backend && python -m eval.run --task all`（或 `make eval`），`--check` 用于门禁（未达标退出码非零，skipped 不计失败）。
+
+### 10.3 评测框架（离线质量度量）
+
+代码位于 `backend/eval/`（独立于 app 分层，仅复用 services 层函数）；单测一律 mock，禁止真实 LLM/Embedding 调用；缺 Key（非 mock 模式）时对应任务自动 skipped 并在报告注明。
+
+**数据集 schema**（`eval/datasets/{extraction,coverage,retrieval}/*.json`，含合成种子样本）：
+
+| 类型 | 结构 |
+|---|---|
+| extraction | `{id, name, tender_text, gold: {score_points: [{clause_no, item, criteria, is_star}], tech_requirements: [{seq, description, category}]}}` |
+| coverage | `{id, score_points: [{clause_no, item, confirmed}], outline: [{chapter_no, title, covered_clauses}]}`（格式同工作流 state） |
+| retrieval | `{id, docs: [{doc_id, title, chunks}], queries: [{query, relevant_doc_ids}]}` |
+
+**三项任务与指标口径**：
+
+| 任务 | 链路 | 指标 | 默认阈值 |
+|---|---|---|---|
+| extraction | `parse_service.parse_tender_with_llm` 提取 → 与 gold 匹配（clause_no 精确优先，item 字符 bigram F1 ≥0.5 兜底；重复预测只计一次） | precision / recall / F1 | F1 ≥ 0.85 |
+| coverage | `coverage_service.compute_coverage`（未确认评分点不计入），多样本取均值 | coverage_rate | ≥ 0.90 |
+| retrieval | 数据集离线灌库 kb_chunks → `rag_service.retrieve_with_rerank` → doc 首现序（rerank 未启用时报告注明为纯向量召回序） | Recall@8 / MRR 均值 | Recall@8 ≥ 0.80（框架保守设定） |
+
+出稿时间（≤4h）与 Word 可编辑性依赖真实运行，不纳入自动化评测。
+
+### 10.4 冒烟用例（开发自测）
 
 1. 注册 → 登录 → 创建项目；
 2. 上传招标文件 → 解析 → 人工确认评分点；
