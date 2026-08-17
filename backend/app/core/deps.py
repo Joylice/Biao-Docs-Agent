@@ -1,4 +1,4 @@
-"""认证依赖 — 从请求中提取当前用户 / 管理员校验."""
+"""认证依赖 — 从请求中提取当前用户 / 角色校验（三期：users.role 细分）."""
 
 import uuid
 
@@ -14,6 +14,12 @@ from app.core.security import decode_token
 from app.models.user import User
 
 bearer_scheme = HTTPBearer()
+
+# 三期角色模型：member（默认）/ kb_admin（全局资料库管理）/ admin（系统管理）
+ROLE_MEMBER = "member"
+ROLE_KB_ADMIN = "kb_admin"
+ROLE_ADMIN = "admin"
+VALID_ROLES = {ROLE_MEMBER, ROLE_KB_ADMIN, ROLE_ADMIN}
 
 
 def get_current_user_id(
@@ -32,20 +38,51 @@ def get_current_user_id(
         raise UnauthorizedError("Token 用户 ID 格式错误") from None
 
 
+def _whitelist_emails() -> set[str]:
+    """BID_ADMIN_USER_IDS 邮箱白名单（小写）."""
+    return {s.strip().lower() for s in settings.admin_user_ids.split(",") if s.strip()}
+
+
+async def _load_user_or_forbid(db: AsyncSession, user_id: uuid.UUID) -> User:
+    """载入用户；不存在时拒绝（token 有效但用户已删除的边界场景）."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise ForbiddenError("无权操作：用户不存在")
+    return user
+
+
+def _is_admin(user: User) -> bool:
+    """系统管理员：role=admin 或邮箱命中白名单（过渡期兼容，避免迁移遗漏锁死管理员）."""
+    return user.role == ROLE_ADMIN or user.email.lower() in _whitelist_emails()
+
+
+def _is_kb_admin(user: User) -> bool:
+    """资料库管理员：role 为 kb_admin/admin，或白名单兼容."""
+    return user.role in (ROLE_KB_ADMIN, ROLE_ADMIN) or user.email.lower() in _whitelist_emails()
+
+
 async def get_current_admin_id(
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> uuid.UUID:
-    """管理员校验：用户 email 须在 settings.admin_user_ids（逗号分隔）内.
+    """系统管理员校验（三期：users.role 判定，白名单兼容并存）.
 
-    C-1：User 表无 role 且开放注册，全局 LLM 配置写端点仅允许管理员调用；
-    列表为空时拒绝写入并提示配置 BID_ADMIN_USER_IDS（不放宽为任意登录用户）。
+    C-1 沿革：一期无 role 时靠 BID_ADMIN_USER_IDS 邮箱白名单；三期引入
+    users.role 后以 role=admin 为准，白名单命中视为 admin（OR 判定）。
     """
-    admins = {s.strip().lower() for s in settings.admin_user_ids.split(",") if s.strip()}
-    if not admins:
-        raise ForbiddenError("未配置管理员账号（BID_ADMIN_USER_IDS）")
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None or user.email.lower() not in admins:
-        raise ForbiddenError("无权操作：仅管理员可修改全局 LLM 配置")
+    user = await _load_user_or_forbid(db, user_id)
+    if not _is_admin(user):
+        raise ForbiddenError("无权操作：该操作仅限管理员")
+    return user_id
+
+
+async def get_current_kb_admin_id(
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> uuid.UUID:
+    """资料库管理员校验：全局资料删除/编辑等（三期 S1）."""
+    user = await _load_user_or_forbid(db, user_id)
+    if not _is_kb_admin(user):
+        raise ForbiddenError("无权操作：该操作仅限资料库管理员")
     return user_id

@@ -73,7 +73,12 @@ export interface WorkflowStatus {
   phase: string;
   progress: number;
   score_points: unknown[];
-  outline: Array<{ chapter_no: string; title: string; sections?: string[] }>;
+  outline: Array<{
+    chapter_no: string;
+    title: string;
+    sections?: string[];
+    covered_clauses?: string[];
+  }>;
   chapters: Record<string, string>;
   review_action?: string;
   review_feedback?: Record<string, string>;
