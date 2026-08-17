@@ -9,6 +9,7 @@
  *   事件转发：agents 节点 publish_event → Redis 频道 bid:events:{project_id} → 本端点转发。
  *   事件类型（event_service.py 协议注释）：
  *     progress      {"type":"progress","phase":...,"progress":...,"current_chapter":...}
+ *     section_token {"type":"section_token","chapter_no":...,"delta":...}（三期 S4 真流式增量）
  *     section_done  {"type":"section_done","chapter_no":...,"title":...,"content":...}
  *     task_done     {"type":"task_done","export_storage_key":...}
  *     error         {"type":"error","message":...}
@@ -318,5 +319,28 @@ test.describe('WebSocket 流式推送', () => {
       expect(sd.chapter_no).toBeTruthy();
     }
     expect(types.indexOf('section_done')).toBeLessThan(types.lastIndexOf('task_done'));
+
+    // 三期 S4 真流式：事件流含 section_token，且先于对应章节的 section_done；
+    // token delta 拼接 == section_done 全文（完整性）
+    const sectionTokens = events.filter((e) => e.type === 'section_token');
+    expect(
+      sectionTokens.length,
+      `缺少 section_token 事件（真流式未生效）: ${JSON.stringify(types)}`,
+    ).toBeGreaterThan(0);
+    for (const sd of sectionDones) {
+      const no = sd.chapter_no as string;
+      const tokensOfChapter = sectionTokens.filter((t) => t.chapter_no === no);
+      expect(
+        tokensOfChapter.length,
+        `章节 ${no} 无 section_token 增量事件`,
+      ).toBeGreaterThan(0);
+      // 顺序：该章最后一条 token 先于其 section_done
+      const lastTokenIdx = events.lastIndexOf(tokensOfChapter[tokensOfChapter.length - 1]);
+      const doneIdx = events.indexOf(sd);
+      expect(lastTokenIdx, `章节 ${no} token 未先于 section_done`).toBeLessThan(doneIdx);
+      // 完整性：delta 拼接 == 全文
+      const joined = tokensOfChapter.map((t) => (t.delta as string) ?? '').join('');
+      expect(joined, `章节 ${no} delta 拼接与全文不一致`).toBe(sd.content as string);
+    }
   });
 });

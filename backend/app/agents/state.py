@@ -21,6 +21,9 @@ class BidState(TypedDict, total=False):
     # ── 大纲 ──
     outline: list[dict]  # [{chapter_no, title, sections: [...]}]
 
+    # ── 资料库挂载（confirm_outline 提交：None=项目全量 / []=不挂载 / 列表=指定文档）──
+    mounted_doc_ids: list[str] | None
+
     # ── 章节生成（逐章合并）──
     chapters: Annotated[dict[str, str], operator.or_]
     current_chapter: str
@@ -40,6 +43,7 @@ class BidState(TypedDict, total=False):
     current_phase: str  # init|parse|confirm|outline|generate|review|export|done
     error: str
     progress: float
+    regenerate_requested: bool  # confirm_outline 请求重新生成大纲（图边路由标记）
 
 
 @dataclass

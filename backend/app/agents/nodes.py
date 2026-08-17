@@ -10,6 +10,7 @@ proposal_skeletons / proposal_sections / reviews 等写入全部静默回滚。
 """
 
 import logging
+import time
 import uuid
 
 from sqlalchemy import select
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 MIN_CHAPTER_LENGTH = 200  # 章节字数下限（validate 节点）
 MAX_VALIDATE_RETRIES = 2  # 校验失败最大重试次数
+
+# 三期 S4：section_token 节流参数（取先到者），避免 Redis 高频发布
+STREAM_FLUSH_CHARS = 40  # 累积字符数上限
+STREAM_FLUSH_SECS = 0.2  # 距上次发布间隔上限（秒）
 
 
 # ───────────────────────── 内部工具 ─────────────────────────
@@ -237,8 +242,13 @@ async def generate_outline_node(state: dict) -> dict:
                                             "type": "array",
                                             "items": {"type": "string"},
                                         },
+                                        "covered_clauses": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                            "description": "本章节覆盖的评分点条款号",
+                                        },
                                     },
-                                    "required": ["chapter_no", "title"],
+                                    "required": ["chapter_no", "title", "covered_clauses"],
                                 },
                             }
                         },
@@ -249,7 +259,11 @@ async def generate_outline_node(state: dict) -> dict:
         )
         outline = result.get("chapters", [])
         if not outline:
-            return {"error": "大纲生成为空", "current_phase": "confirm"}
+            return {
+                "error": "大纲生成为空",
+                "current_phase": "confirm",
+                "regenerate_requested": False,
+            }
 
         async with async_session_factory() as db:
             await _upsert_skeleton(db, project_id, outline)
@@ -259,35 +273,98 @@ async def generate_outline_node(state: dict) -> dict:
         return {"outline": outline, "current_phase": "outline", "progress": 0.35}
     except Exception as e:
         logger.exception("大纲生成失败")
-        return {"error": f"大纲生成失败: {e}", "current_phase": "confirm"}
+        return {
+            "error": f"大纲生成失败: {e}",
+            "current_phase": "confirm",
+            "regenerate_requested": False,
+        }
 
 
 async def confirm_outline_node(state: dict) -> dict:
-    """节点：HITL — 等待人工确认大纲."""
+    """节点：HITL — 等待人工确认大纲（支持二次编辑与 action=regenerate 重新生成）.
+
+    resume 值：
+    - True / {"confirmed": True} → 确认大纲，进入章节生成
+    - {"confirmed": True, "outline": [...]} → 采用前端二次编辑后的大纲
+      （替换 state.outline 并落库 proposal_skeletons），随后进入章节生成
+    - {"confirmed": True, "mounted_doc_ids": [...]} → 资料库挂载配置写入 state
+      （None=项目全量 / []=不挂载 / 列表=指定文档）
+    - {"action": "regenerate"} → 用最新提示词重新生成大纲（复用 generate_outline_node
+      逻辑，落库 proposal_skeletons 并更新 state.outline），随后再次 interrupt 挂起
+      等待确认；循环支持多次重新生成。
+    """
     from langgraph.types import interrupt
 
-    decision = interrupt(
-        {
-            "type": "confirm_outline",
+    while True:
+        decision = interrupt(
+            {
+                "type": "confirm_outline",
+                "outline": state.get("outline", []),
+                "message": "请确认方案大纲",
+            }
+        )
+        if isinstance(decision, dict):
+            # 重新生成大纲：return 标记后经图边回 generate_outline 节点（节点返回值
+            # 写入 checkpoint，保证 state 与 DB 落库一致），生成后回本节点再次挂起；
+            # 不再内联调用 generate_outline_node（普通函数返回不经图，曾致 state 陈旧）
+            if decision.get("action") == "regenerate":
+                return {"regenerate_requested": True, "current_phase": "outline"}
+            # 前端二次编辑后的大纲：替换 state.outline 并落库（DB 与 state 一致）
+            if "outline" in decision and decision["outline"] is not None:
+                state = {**state, "outline": decision["outline"]}
+                async with async_session_factory() as db:
+                    await _upsert_skeleton(db, state.get("project_id", ""), decision["outline"])
+                    await db.commit()
+            # 资料库挂载配置（None = 项目全量，[] = 不挂载）
+            if "mounted_doc_ids" in decision:
+                state = {**state, "mounted_doc_ids": decision["mounted_doc_ids"]}
+        confirmed = decision is True or (
+            isinstance(decision, dict) and decision.get("confirmed") is True
+        )
+        if not confirmed:
+            return {
+                "error": "大纲未确认",
+                "current_phase": "outline",
+                "regenerate_requested": False,
+            }
+        # 确认成功：清除二次编辑草稿（独立 DB 写；防陈旧草稿下次误恢复）
+        async with async_session_factory() as db:
+            await _clear_outline_draft(db, state.get("project_id", ""))
+            await db.commit()
+        updates: dict = {
+            "current_phase": "generate",
+            "progress": 0.4,
+            "validate_retries": 0,
             "outline": state.get("outline", []),
-            "message": "请确认方案大纲",
+            "regenerate_requested": False,
         }
+        # 挂载配置仅在显式提交过时写入 state（缺省 None 保持项目全量检索）
+        if "mounted_doc_ids" in state:
+            updates["mounted_doc_ids"] = state["mounted_doc_ids"]
+        return updates
+
+
+async def _clear_outline_draft(db, project_id: str) -> None:
+    """确认大纲后清除二次编辑草稿（幂等）."""
+    result = await db.execute(
+        select(ProposalSkeleton).where(ProposalSkeleton.project_id == uuid.UUID(project_id))
     )
-    confirmed = decision is True or (
-        isinstance(decision, dict) and decision.get("confirmed") is True
-    )
-    if not confirmed:
-        return {"error": "大纲未确认", "current_phase": "outline"}
-    return {"current_phase": "generate", "progress": 0.4, "validate_retries": 0}
+    skeleton = result.scalar_one_or_none()
+    if skeleton:
+        skeleton.draft = None
+        skeleton.draft_updated_at = None
 
 
 async def retrieve_node(state: dict) -> dict:
     """节点：RAG 检索当前章节素材（检索失败降级为空素材）."""
+    from app.services.chapter_service import flatten_sections
     from app.services.rag_service import get_embedding, retrieve_similar
 
     project_id = state.get("project_id", "")
     outline = state.get("outline", [])
     chapters = state.get("chapters", {})
+    # 资料库挂载配置（confirm-outline 写入）：None = 项目全量，[] = 不挂载
+    mounted_doc_ids = state.get("mounted_doc_ids")
 
     # 找到下一个未生成的章节
     next_chapter = next((c for c in outline if c["chapter_no"] not in chapters), None)
@@ -296,7 +373,8 @@ async def retrieve_node(state: dict) -> dict:
 
     context = ""
     try:
-        query = f"{next_chapter.get('title', '')} {' '.join(next_chapter.get('sections', []))}"
+        sec_text = " ".join(flatten_sections(next_chapter.get("sections", [])))
+        query = f"{next_chapter.get('title', '')} {sec_text}"
         query_embedding = await get_embedding(query)
         async with async_session_factory() as db:  # 只读块，无需 commit
             results = await retrieve_similar(
@@ -304,6 +382,11 @@ async def retrieve_node(state: dict) -> dict:
                 project_id=uuid.UUID(project_id),
                 query_embedding=query_embedding,
                 top_k=8,
+                doc_ids=(
+                    [uuid.UUID(str(d)) for d in mounted_doc_ids]
+                    if mounted_doc_ids is not None
+                    else None
+                ),
             )
         context = "\n\n---\n\n".join(r.content for r in results)
     except Exception as e:
@@ -320,10 +403,38 @@ async def write_node(state: dict) -> dict:
     chapter_no = state.get("current_chapter", "")
     outline = state.get("outline", [])
     chapters = dict(state.get("chapters", {}))
+    # 资料库挂载配置（confirm-outline 写入）：None = 项目全量，[] = 不挂载
+    mounted_doc_ids = state.get("mounted_doc_ids")
 
     chapter = next((c for c in outline if c["chapter_no"] == chapter_no), None)
     if not chapter:
         return {"error": f"章节 {chapter_no} 不在大纲中", "current_phase": "generate"}
+
+    # 三期 S4：真流式 — on_delta 节流发布 section_token（≥ STREAM_FLUSH_CHARS 字符
+    # 或距上次 ≥ STREAM_FLUSH_SECS 秒，取先到者）；结束后尾部缓冲区兜底 flush
+    token_buffer: list[str] = []
+    token_buf_len = 0
+    last_token_at = time.monotonic()
+
+    async def _flush_tokens() -> None:
+        nonlocal token_buf_len, last_token_at
+        if not token_buffer:
+            return
+        await publish_event(
+            project_id,
+            {"type": "section_token", "chapter_no": chapter_no, "delta": "".join(token_buffer)},
+        )
+        token_buffer.clear()
+        token_buf_len = 0
+        last_token_at = time.monotonic()
+
+    async def on_delta(delta: str) -> None:
+        nonlocal token_buf_len
+        token_buffer.append(delta)
+        token_buf_len += len(delta)
+        overdue = time.monotonic() - last_token_at >= STREAM_FLUSH_SECS
+        if token_buf_len >= STREAM_FLUSH_CHARS or overdue:
+            await _flush_tokens()
 
     try:
         async with async_session_factory() as db:  # 只读块（RAG 兜底检索），无需 commit
@@ -334,10 +445,18 @@ async def write_node(state: dict) -> dict:
                 project_id=uuid.UUID(project_id),
                 context=state.get("retrieved_context", ""),
                 db=db,
+                doc_ids=(
+                    [uuid.UUID(str(d)) for d in mounted_doc_ids]
+                    if mounted_doc_ids is not None
+                    else None
+                ),
+                on_delta=on_delta,
             )
     except Exception as e:
         logger.exception("章节生成失败")
         return {"error": f"章节 {chapter_no} 生成失败: {e}", "current_phase": "generate"}
+
+    await _flush_tokens()  # 尾部未达阈值的缓冲也要发出，保证 delta 拼接 == 全文
 
     async with async_session_factory() as db:
         await _upsert_section(

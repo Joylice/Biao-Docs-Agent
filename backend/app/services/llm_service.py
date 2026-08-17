@@ -4,6 +4,9 @@
 库内（llm_settings 页面配置）密钥优先于环境变量；库内无配置则回退 env 现状。
 """
 
+import asyncio
+import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 from app.core.config import settings
@@ -61,6 +64,27 @@ async def _api_key_kwargs(model: str) -> dict[str, Any]:
     return {"api_key": api_key} if api_key else {}
 
 
+def _compat_response_format(
+    model: str, response_format: dict | None, system_prompt: str
+) -> tuple[dict | None, str]:
+    """供应商兼容处理：DeepSeek 不支持 strict json_schema，降级 json_object + schema 入 prompt.
+
+    DeepSeek 兼容接口对 response_format 仅支持 json_object（json_schema 报
+    "This response_format type is unavailable now"）；降级后将 schema 结构
+    写入 system prompt 约束输出，其余模型保持原样透传。
+    """
+    if not response_format or response_format.get("type") != "json_schema":
+        return response_format, system_prompt
+    if not model.startswith("deepseek"):
+        return response_format, system_prompt
+    schema = response_format.get("json_schema", {}).get("schema", {})
+    constraint = (
+        "\n\n输出要求：仅输出严格匹配以下 JSON Schema 的 JSON 对象，不得包含任何其他内容：\n"
+        + json.dumps(schema, ensure_ascii=False)
+    )
+    return {"type": "json_object"}, system_prompt + constraint
+
+
 async def call_llm_with_schema(
     system_prompt: str,
     user_prompt: str,
@@ -74,6 +98,9 @@ async def call_llm_with_schema(
     try:
         from litellm import acompletion
 
+        response_format, system_prompt = _compat_response_format(
+            settings.llm_model, response_format, system_prompt
+        )
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -90,9 +117,6 @@ async def call_llm_with_schema(
 
         response = await acompletion(**kwargs)
         content = response.choices[0].message.content
-
-        # 解析 JSON
-        import json
 
         return json.loads(content)
     except json.JSONDecodeError as e:
@@ -128,3 +152,46 @@ async def call_llm_text(
         return response.choices[0].message.content
     except Exception as e:
         raise LLMServiceError(f"LLM 调用失败: {e}") from None
+
+
+_MOCK_STREAM_SLICE = 20  # mock 流式切片长度（字符）
+
+
+async def call_llm_stream(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.7,
+    mock: bool | None = None,
+) -> AsyncIterator[str]:
+    """调用 LLM 获取流式文本响应（三期 S4）.
+
+    mock 模式：把 _MOCK_TEXT 按 ~20 字切片 yield（含微小 sleep 模拟节奏）；
+    真实模式：acompletion(stream=True)，逐 chunk yield delta（跳过空 delta）。
+    """
+    user_prompt = redact(user_prompt)  # 外发 LLM 脱敏（安全铁律，出口兜底，无开关）
+    if await settings_service.is_mock_enabled(mock):
+        for i in range(0, len(_MOCK_TEXT), _MOCK_STREAM_SLICE):
+            yield _MOCK_TEXT[i : i + _MOCK_STREAM_SLICE]
+            await asyncio.sleep(0.01)
+        return
+    try:
+        from litellm import acompletion
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        response = await acompletion(
+            model=settings.llm_model,
+            messages=messages,
+            temperature=temperature,
+            stream=True,
+            **await _api_key_kwargs(settings.llm_model),
+        )
+        async for chunk in response:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta
+    except Exception as e:
+        raise LLMServiceError(f"LLM 流式调用失败: {e}") from None

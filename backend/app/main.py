@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import auth, documents, projects, websocket, workflow
+from app.api import audit, auth, documents, kb, projects, requirements, users, websocket, workflow
 from app.api import settings as settings_api
 from app.core.config import settings
 from app.core.exceptions import BizError
@@ -82,6 +82,10 @@ async def health_check() -> dict[str, str]:
 app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["认证"])
 app.include_router(projects.router, prefix=f"{settings.api_prefix}/projects", tags=["项目"])
 app.include_router(documents.router, prefix=f"{settings.api_prefix}/projects", tags=["文档"])
+app.include_router(requirements.router, prefix=f"{settings.api_prefix}/projects", tags=["技术需求"])
 app.include_router(workflow.router, prefix=f"{settings.api_prefix}/projects", tags=["工作流"])
+app.include_router(kb.router, prefix=f"{settings.api_prefix}/kb", tags=["资料库"])
+app.include_router(users.router, prefix=f"{settings.api_prefix}", tags=["用户管理"])
+app.include_router(audit.router, prefix=f"{settings.api_prefix}", tags=["审计日志"])
 app.include_router(settings_api.router, prefix=f"{settings.api_prefix}/settings", tags=["系统设置"])
 app.include_router(websocket.router)

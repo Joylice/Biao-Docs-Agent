@@ -41,6 +41,11 @@ def get_async_postgres_saver():
     return AsyncPostgresSaver
 
 
+def outline_route(state: dict) -> str:
+    """confirm_outline 出口：regenerate 标记 → 回 generate_outline 重新生成；否则进入章节循环."""
+    return "generate_outline" if state.get("regenerate_requested") else "retrieve"
+
+
 def build_workflow() -> StateGraph:
     """构建投标方案生成工作流图."""
     workflow = StateGraph(BidState)
@@ -66,8 +71,12 @@ def build_workflow() -> StateGraph:
     workflow.add_edge("confirm_score_points", "generate_outline")
     workflow.add_edge("generate_outline", "confirm_outline")
 
-    # confirm_outline → 章节循环（retrieve → write → validate）
-    workflow.add_edge("confirm_outline", "retrieve")
+    # confirm_outline → [regenerate: generate_outline → confirm_outline 回边] / 章节循环
+    workflow.add_conditional_edges(
+        "confirm_outline",
+        outline_route,
+        {"generate_outline": "generate_outline", "retrieve": "retrieve"},
+    )
     workflow.add_edge("retrieve", "write")
     workflow.add_edge("write", "validate")
     workflow.add_conditional_edges(
