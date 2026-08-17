@@ -54,6 +54,8 @@ def load_chapter_prompt(
     context: str,
     score_points: str,
     tech_requirements: str,
+    prior_summaries: str = "",
+    supplement_points: str = "",
 ) -> tuple[str, str]:
     """加载章节生成提示词模板."""
     config = _load_template("chapter")
@@ -67,6 +69,8 @@ def load_chapter_prompt(
         context=context,
         score_points=score_points,
         tech_requirements=tech_requirements,
+        prior_summaries=prior_summaries,
+        supplement_points=supplement_points,
     )
     return system_prompt, user_prompt
 
@@ -84,6 +88,15 @@ def load_review_prompt(
         chapter_summary=chapter_summary,
         score_points=score_points,
     )
+    return system_prompt, user_prompt
+
+
+def load_consistency_prompt(full_text: str) -> tuple[str, str]:
+    """加载全文一致性检查提示词模板."""
+    config = _load_template("consistency")
+    system_prompt = config.get("system_prompt", "")
+    user_prompt_template = config.get("user_prompt", "{full_text}")
+    user_prompt = user_prompt_template.format(full_text=full_text)
     return system_prompt, user_prompt
 
 

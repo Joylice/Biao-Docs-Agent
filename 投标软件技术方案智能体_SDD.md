@@ -475,9 +475,10 @@ CREATE TABLE llm_settings (
 graph = StateGraph(BidState)
 graph.add_node("parse", parse_node)            # 解析评分点（已有则跳过）
 graph.add_node("skeleton", skeleton_node)      # 生成章节树
-graph.add_node("retrieve", retrieve_node)      # RAG 检索当前章节素材
+graph.add_node("retrieve", retrieve_node)      # RAG 检索当前章节素材（召回+rerank 精排）
 graph.add_node("write", write_node)            # 撰写章节（三期：真流式，on_delta 节流发 section_token）
 graph.add_node("validate", validate_node)      # 校验章节
+graph.add_node("consistency_check", consistency_check_node)  # 全文一致性检查（integrate 前）
 graph.add_node("integrate", integrate_node)    # 术语/编号/目录整合
 graph.add_node("review", review_node)          # HITL：interrupt() 等人工
 graph.add_node("rewrite", rewrite_node)        # 按反馈局部重写
@@ -485,14 +486,22 @@ graph.add_node("export", export_node)          # 导出 Word
 
 graph.add_edge("parse", "skeleton")
 graph.add_edge("skeleton", "retrieve")
-graph.add_conditional_edges("write", validate_route, {"ok": "integrate", "retry": "write", "next": "retrieve"})
+graph.add_conditional_edges("validate", chapter_route, {"write": "write", "retrieve": "retrieve", "consistency_check": "consistency_check", "integrate": "integrate"})
+graph.add_edge("consistency_check", "integrate")
 graph.add_edge("integrate", "review")
 graph.add_conditional_edges("review", review_route, {"approved": "export", "feedback": "rewrite"})
 graph.add_edge("rewrite", "integrate")
 graph.add_edge("export", END)
 
-# 章节循环：skeleton 后对每个 section 执行 retrieve→write→validate
+# 章节循环：skeleton 后对每个 section 执行 retrieve→write→validate；
+# 全部完成后先经 consistency_check 再 integrate（错误路径直达 integrate）
 ```
+
+**全文生成质量保障**（阶段三）：
+
+1. **章节间上下文注入**：每章生成后提取 ≤200 字摘要存 `state.chapter_summaries`（去 Markdown 标记截断，`extract_chapter_summary`），`write_node` 按大纲顺序将已完成章节摘要注入下一章提示词（`chapter.yaml` 新增全文一致性约束：术语统一/编号连续/不得复述/衔接自然）；rewrite 后同步刷新摘要。
+2. **评分点覆盖矩阵**：`coverage_service.compute_coverage` 比对 confirmed 评分点与大纲 `covered_clauses`；未覆盖评分点注入各章提示词补写（supplement_points），`coverage_rate` 随 progress 事件推送前端。
+3. **全文一致性检查**：`consistency_check_node`（integrate 前）经 `consistency_service.check_consistency` 一次 LLM 调用检查术语冲突/重复段落/编号断裂；可修复 issues 按章聚合意见走一轮定向重写（复用 rewrite 链路，最多 1 次，落库+section_done 事件）；不可修复/已重写过/检查异常 → warning 事件降级，不阻塞导出；mock 模式直通空 issues（E2E 确定性）。
 
 **大纲节点输出契约（2026-08-16 增强）**：`generate_outline_node` 的 LLM 响应 schema 为 `{"chapters": [{chapter_no, title, sections, covered_clauses}]}`，`covered_clauses` 为本章节关联的评分点条款号数组（必填，可为空数组——前置章节如项目概述无关联条款；骨架章节不得为空），用于评分点覆盖校验与追溯。提示词正文（prompts/outline.yaml，2026-08-16 两次优化）：**核心章节按最终定稿骨架模板组织**（顺序与命名保持，子节由技术需求推导）——①需求分析（按性能/信创/安全/对接/实施交付类别归纳全部技术需求）②业务流程设计（巡检/告警处置/数据流转等）③总体架构设计（架构、选型、信创适配、性能指标支撑）④详细功能说明（功能类需求逐项实现要点）⑤对接方案（外部系统与设备接口/协议/联调）⑥培训与运维服务方案（培训、运维保障、实施交付）；无对应技术需求内容时允许精简合并相关章节，可补充项目概述等前置章节。**技术需求为核心唯一依据填充章节内容**——全部技术需求完整映射无遗漏；**评分点仅作追溯辅助**（covered_clauses 标注），不得以评分项/分值划分章节，不得直接采用评分项名称作为章节标题，无对应技术需求的评分项并入最相关章节；user_prompt 中技术需求优先于评分点呈现。大纲整段（含 covered_clauses）随 `proposal_skeletons.tree` JSONB 持久化，下游 confirm-outline HITL 可读取并编辑。
 

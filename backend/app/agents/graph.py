@@ -1,8 +1,8 @@
 """LangGraph 工作流图构建 — 对齐 SDD §6.
 
 流程：parse → confirm(HITL) → outline → confirm_outline(HITL)
-      → (retrieve → write → validate 循环) → integrate → review(HITL)
-      → [approved: export / feedback: rewrite → integrate → review]
+      → (retrieve → write → validate 循环) → consistency_check → integrate
+      → review(HITL) → [approved: export / feedback: rewrite → integrate → review]
       → export → END
 
 Checkpointer：生产用 AsyncPostgresSaver（thread_id = project_id）；测试用 InMemorySaver。
@@ -14,6 +14,7 @@ from app.agents.nodes import (
     chapter_route,
     confirm_outline_node,
     confirm_score_points_node,
+    consistency_check_node,
     export_node,
     generate_outline_node,
     integrate_node,
@@ -58,6 +59,7 @@ def build_workflow() -> StateGraph:
     workflow.add_node("retrieve", retrieve_node)
     workflow.add_node("write", write_node)
     workflow.add_node("validate", validate_node)
+    workflow.add_node("consistency_check", consistency_check_node)
     workflow.add_node("integrate", integrate_node)
     workflow.add_node("review", review_node)
     workflow.add_node("rewrite", rewrite_node)
@@ -85,9 +87,13 @@ def build_workflow() -> StateGraph:
         {
             "write": "write",  # 校验失败重试
             "retrieve": "retrieve",  # 生成下一章
-            "integrate": "integrate",  # 全部完成
+            "consistency_check": "consistency_check",  # 全部完成 → 全文一致性检查
+            "integrate": "integrate",  # 错误路径直达整合
         },
     )
+
+    # consistency_check → integrate（检查不阻塞交付主链路）
+    workflow.add_edge("consistency_check", "integrate")
 
     # integrate → review(HITL)
     workflow.add_edge("integrate", "review")

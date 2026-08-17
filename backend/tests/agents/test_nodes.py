@@ -110,7 +110,8 @@ class TestRoutes:
             "outline": [{"chapter_no": "1"}, {"chapter_no": "2"}],
             "chapters": {"1": "x", "2": "y"},
         }
-        assert nodes.chapter_route(state) == "integrate"
+        # 全部章节完成 → 先经全文一致性检查再整合
+        assert nodes.chapter_route(state) == "consistency_check"
 
     def test_review_route_approved(self) -> None:
         assert nodes.review_route({"review_action": "approved"}) == "export"
@@ -339,6 +340,249 @@ class TestWriteNode:
         )
         done = next(e for e in events if e["type"] == "section_done")
         assert done["content"] == full_content
+
+
+class TestWriteNodeChapterSummaries:
+    """章节间上下文 — write_node 注入 prior_summaries 并回存 chapter_summaries."""
+
+    @pytest.mark.asyncio
+    async def test_injects_prior_summaries_from_state(self, monkeypatch) -> None:
+        """state 已有前序章节摘要 → 按大纲顺序传入 generate_chapter."""
+        captured = {}
+
+        async def fake_generate(**kwargs):
+            captured.update(kwargs)
+            return "# 总体架构\n\n" + "内容" * 100
+
+        monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
+        monkeypatch.setattr(nodes, "publish_event", self._noop_publish())
+        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+
+        state = {
+            "project_id": str(PROJECT_ID),
+            "current_chapter": "2",
+            "outline": [
+                {"chapter_no": "1", "title": "项目概述", "sections": []},
+                {"chapter_no": "2", "title": "总体架构", "sections": []},
+            ],
+            "chapters": {"1": "第一章全文"},
+            "chapter_summaries": {"1": {"title": "项目概述", "summary": "介绍项目背景"}},
+            "score_points": [],
+            "tech_requirements": [],
+            "retrieved_context": "素材",
+        }
+        await nodes.write_node(state)
+        prior = captured["prior_summaries"]
+        assert prior == [{"chapter_no": "1", "title": "项目概述", "summary": "介绍项目背景"}]
+
+    @pytest.mark.asyncio
+    async def test_stores_summary_after_generation(self, monkeypatch) -> None:
+        """生成后提取 ≤200 字摘要存入 chapter_summaries（含标题）."""
+        full_content = "# 总体架构\n\n" + "架" * 500
+
+        async def fake_generate(**kwargs):
+            return full_content
+
+        monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
+        monkeypatch.setattr(nodes, "publish_event", self._noop_publish())
+        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+
+        state = {
+            "project_id": str(PROJECT_ID),
+            "current_chapter": "2",
+            "outline": [
+                {"chapter_no": "1", "title": "项目概述", "sections": []},
+                {"chapter_no": "2", "title": "总体架构", "sections": []},
+            ],
+            "chapters": {"1": "第一章全文"},
+            "chapter_summaries": {"1": {"title": "项目概述", "summary": "介绍项目背景"}},
+            "score_points": [],
+            "tech_requirements": [],
+            "retrieved_context": "素材",
+        }
+        result = await nodes.write_node(state)
+        summaries = result["chapter_summaries"]
+        # 前序摘要保留，本章新增
+        assert summaries["1"]["summary"] == "介绍项目背景"
+        assert summaries["2"]["title"] == "总体架构"
+        assert summaries["2"]["summary"]
+        assert len(summaries["2"]["summary"]) <= 200
+        assert "#" not in summaries["2"]["summary"]
+
+    @staticmethod
+    def _noop_publish():
+        async def fake_publish(_project_id: str, _event: dict) -> None:
+            pass
+
+        return fake_publish
+
+
+class TestWriteNodeCoverageMatrix:
+    """评分点覆盖矩阵 — 未覆盖评分点注入补写指令，覆盖率随 progress 事件推送."""
+
+    @pytest.mark.asyncio
+    async def test_uncovered_points_injected_and_rate_pushed(self, monkeypatch) -> None:
+        """confirmed SP 未被大纲覆盖 → supplement_points 传入生成，progress 事件带覆盖率."""
+        captured = {}
+        events: list[dict] = []
+
+        async def fake_generate(**kwargs):
+            captured.update(kwargs)
+            return "# 章节\n\n" + "内容" * 100
+
+        async def fake_publish(_project_id: str, event: dict) -> None:
+            events.append(event)
+
+        monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
+        monkeypatch.setattr(nodes, "publish_event", fake_publish)
+        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+
+        state = {
+            "project_id": str(PROJECT_ID),
+            "current_chapter": "1",
+            "outline": [
+                {"chapter_no": "1", "title": "概述", "sections": [], "covered_clauses": ["1"]},
+            ],
+            "chapters": {},
+            "score_points": [
+                {"clause_no": "1", "item": "架构", "confirmed": True},
+                {"clause_no": "2", "item": "安全", "confirmed": True},
+            ],
+            "tech_requirements": [],
+            "retrieved_context": "素材",
+        }
+        await nodes.write_node(state)
+        # 未覆盖评分点注入补写指令
+        assert [sp["clause_no"] for sp in captured["supplement_points"]] == ["2"]
+        # progress 事件携带覆盖率（1/2）
+        progress_event = next(e for e in events if e["type"] == "progress")
+        assert progress_event["coverage_rate"] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_full_coverage_no_supplement(self, monkeypatch) -> None:
+        """全覆盖 → supplement_points 为空，覆盖率 1.0."""
+        captured = {}
+
+        async def fake_generate(**kwargs):
+            captured.update(kwargs)
+            return "# 章节\n\n" + "内容" * 100
+
+        monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
+        monkeypatch.setattr(
+            nodes,
+            "publish_event",
+            TestWriteNodeChapterSummaries._noop_publish(),
+        )
+        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+
+        state = {
+            "project_id": str(PROJECT_ID),
+            "current_chapter": "1",
+            "outline": [
+                {"chapter_no": "1", "title": "概述", "sections": [], "covered_clauses": ["1"]},
+            ],
+            "chapters": {},
+            "score_points": [{"clause_no": "1", "item": "架构", "confirmed": True}],
+            "tech_requirements": [],
+            "retrieved_context": "素材",
+        }
+        await nodes.write_node(state)
+        assert captured["supplement_points"] == []
+
+
+class TestConsistencyCheckNode:
+    """全文一致性检查节点 — integrate 前检查，可修复问题定向重写一轮，失败降级不阻塞."""
+
+    @pytest.mark.asyncio
+    async def test_no_issues_passes_through(self, monkeypatch) -> None:
+        async def fake_check(chapters, outline):
+            return []
+
+        monkeypatch.setattr("app.services.consistency_service.check_consistency", fake_check)
+        state = {"project_id": str(PROJECT_ID), "chapters": {"1": "x"}, "outline": []}
+        result = await nodes.consistency_check_node(state)
+        assert result["consistency_issues"] == []
+        assert "chapters" not in result  # 无问题不触发重写
+
+    @pytest.mark.asyncio
+    async def test_fixable_issues_trigger_one_rewrite_round(self, monkeypatch) -> None:
+        """可修复 issues → 按章节聚合意见走 rewrite 链路，标记 consistency_retried."""
+        rewritten: list[str] = []
+
+        async def fake_check(chapters, outline):
+            return [
+                {
+                    "chapter_no": "1",
+                    "type": "terminology",
+                    "description": "术语不一致",
+                    "fixable": True,
+                },
+                {
+                    "chapter_no": "1",
+                    "type": "numbering",
+                    "description": "编号断裂",
+                    "fixable": True,
+                },
+            ]
+
+        async def fake_rewrite(**kwargs):
+            rewritten.append(kwargs["chapter_no"])
+            return "修复后的内容" + "字" * 200
+
+        monkeypatch.setattr("app.services.consistency_service.check_consistency", fake_check)
+        monkeypatch.setattr("app.services.review_service.rewrite_chapter", fake_rewrite)
+        monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
+        monkeypatch.setattr(nodes, "publish_event", TestWriteNodeChapterSummaries._noop_publish())
+
+        state = {
+            "project_id": str(PROJECT_ID),
+            "chapters": {"1": "原文"},
+            "outline": [{"chapter_no": "1", "title": "概述"}],
+        }
+        result = await nodes.consistency_check_node(state)
+        assert rewritten == ["1"]  # 同章多 issue 聚合为一轮重写
+        assert result["consistency_retried"] is True
+        assert result["chapters"]["1"] == "修复后的内容" + "字" * 200
+
+    @pytest.mark.asyncio
+    async def test_retried_issues_degrade_to_warning(self, monkeypatch) -> None:
+        """已重写过一轮仍有问题 → 发 warning 事件，不再重写、不阻塞导出."""
+        events: list[dict] = []
+
+        async def fake_check(chapters, outline):
+            return [{"chapter_no": "1", "description": "重复段落", "fixable": True}]
+
+        async def fake_rewrite(**kwargs):
+            raise AssertionError("已重试过不应再次重写")
+
+        async def fake_publish(_project_id: str, event: dict) -> None:
+            events.append(event)
+
+        monkeypatch.setattr("app.services.consistency_service.check_consistency", fake_check)
+        monkeypatch.setattr("app.services.review_service.rewrite_chapter", fake_rewrite)
+        monkeypatch.setattr(nodes, "publish_event", fake_publish)
+
+        state = {
+            "project_id": str(PROJECT_ID),
+            "chapters": {"1": "原文"},
+            "outline": [],
+            "consistency_retried": True,
+        }
+        result = await nodes.consistency_check_node(state)
+        assert len(result["consistency_issues"]) == 1
+        assert any(e["type"] == "warning" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_check_failure_degrades_not_blocking(self, monkeypatch) -> None:
+        """检查异常 → 降级无问题继续流程（不阻塞导出）."""
+
+        async def fake_check(chapters, outline):
+            raise RuntimeError("LLM 不可用")
+
+        monkeypatch.setattr("app.services.consistency_service.check_consistency", fake_check)
+        state = {"project_id": str(PROJECT_ID), "chapters": {"1": "x"}, "outline": []}
+        result = await nodes.consistency_check_node(state)
+        assert result["consistency_issues"] == []
 
 
 class TestNodeCommits:

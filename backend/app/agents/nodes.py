@@ -397,19 +397,39 @@ async def retrieve_node(state: dict) -> dict:
 
 
 async def write_node(state: dict) -> dict:
-    """节点：撰写章节 — RAG 素材 + LLM 生成，落库 proposal_sections 并推送事件."""
-    from app.services.chapter_service import generate_chapter
+    """节点：撰写章节 — RAG 素材 + LLM 生成，落库 proposal_sections 并推送事件.
+
+    章节间上下文：按大纲顺序汇总已完成章节摘要（state.chapter_summaries）
+    注入提示词防重复保衔接；生成后提取本章 ≤200 字摘要回存。
+    """
+    from app.services.chapter_service import extract_chapter_summary, generate_chapter
+    from app.services.coverage_service import compute_coverage
 
     project_id = state.get("project_id", "")
     chapter_no = state.get("current_chapter", "")
     outline = state.get("outline", [])
     chapters = dict(state.get("chapters", {}))
+    summaries = dict(state.get("chapter_summaries", {}))
     # 资料库挂载配置（confirm-outline 写入）：None = 项目全量，[] = 不挂载
     mounted_doc_ids = state.get("mounted_doc_ids")
 
     chapter = next((c for c in outline if c["chapter_no"] == chapter_no), None)
     if not chapter:
         return {"error": f"章节 {chapter_no} 不在大纲中", "current_phase": "generate"}
+
+    # 已完成章节摘要（按大纲顺序，仅取已生成章节）
+    prior_summaries = [
+        {
+            "chapter_no": c["chapter_no"],
+            "title": summaries[c["chapter_no"]].get("title", c.get("title", "")),
+            "summary": summaries[c["chapter_no"]].get("summary", ""),
+        }
+        for c in outline
+        if c["chapter_no"] in summaries and c["chapter_no"] != chapter_no
+    ]
+
+    # 评分点覆盖矩阵：未覆盖的 confirmed 评分点注入本章提示词补写，覆盖率随 progress 推送
+    coverage = compute_coverage(state.get("score_points", []), outline)
 
     # 三期 S4：真流式 — on_delta 节流发布 section_token（≥ STREAM_FLUSH_CHARS 字符
     # 或距上次 ≥ STREAM_FLUSH_SECS 秒，取先到者）；结束后尾部缓冲区兜底 flush
@@ -452,6 +472,8 @@ async def write_node(state: dict) -> dict:
                     else None
                 ),
                 on_delta=on_delta,
+                prior_summaries=prior_summaries,
+                supplement_points=coverage["uncovered"],
             )
     except Exception as e:
         logger.exception("章节生成失败")
@@ -471,6 +493,10 @@ async def write_node(state: dict) -> dict:
         await db.commit()  # BUG-2：章节 + workflow 写入显式提交
 
     chapters[chapter_no] = content
+    summaries[chapter_no] = {
+        "title": chapter.get("title", ""),
+        "summary": extract_chapter_summary(content),
+    }
     await publish_event(
         project_id,
         {
@@ -487,9 +513,15 @@ async def write_node(state: dict) -> dict:
             "phase": "generate",
             "progress": progress,
             "current_chapter": chapter_no,
+            "coverage_rate": coverage["coverage_rate"],
         },
     )
-    return {"chapters": chapters, "current_phase": "generate", "progress": progress}
+    return {
+        "chapters": chapters,
+        "chapter_summaries": summaries,
+        "current_phase": "generate",
+        "progress": progress,
+    }
 
 
 def validate_node(state: dict) -> dict:
@@ -511,6 +543,94 @@ def validate_node(state: dict) -> dict:
     if issues and retries < MAX_VALIDATE_RETRIES:
         return {"validation_ok": False, "validate_retries": retries + 1}
     return {"validation_ok": True, "validate_retries": retries}
+
+
+async def consistency_check_node(state: dict) -> dict:
+    """节点：全文一致性检查（integrate 前）— 术语冲突/重复段落/编号断裂.
+
+    一次 LLM 调用产出 issues；可修复且未重写过 → 按章节聚合意见走一轮
+    定向重写（复用 rewrite 链路，最多 1 次）；否则发 warning 事件不阻塞导出。
+    检查异常降级无问题继续（一致性检查不阻塞交付主链路）。
+    """
+    from app.services.chapter_service import extract_chapter_summary
+    from app.services.consistency_service import check_consistency
+    from app.services.review_service import rewrite_chapter
+
+    project_id = state.get("project_id", "")
+    chapters = dict(state.get("chapters", {}))
+    summaries = dict(state.get("chapter_summaries", {}))
+    outline = state.get("outline", [])
+
+    try:
+        issues = await check_consistency(chapters, outline)
+    except Exception as e:
+        logger.warning("全文一致性检查失败（降级继续）: %s", e)
+        issues = []
+
+    if not issues:
+        return {"consistency_issues": []}
+
+    fixable = [i for i in issues if i.get("fixable") and i.get("chapter_no") in chapters]
+    if fixable and not state.get("consistency_retried"):
+        # 同章多 issue 聚合为一条重写意见，一轮定向重写
+        comments: dict[str, list[str]] = {}
+        for issue in fixable:
+            comments.setdefault(issue["chapter_no"], []).append(issue.get("description", ""))
+        for chapter_no, descs in comments.items():
+            title = next((c.get("title", "") for c in outline if c["chapter_no"] == chapter_no), "")
+            try:
+                new_content = await rewrite_chapter(
+                    chapter_no=chapter_no,
+                    original_content=chapters[chapter_no],
+                    comment="全文一致性问题修复：\n" + "\n".join(f"- {d}" for d in descs),
+                )
+                chapters[chapter_no] = new_content
+                if chapter_no in summaries:
+                    summaries[chapter_no] = {
+                        **summaries[chapter_no],
+                        "summary": extract_chapter_summary(new_content),
+                    }
+                async with async_session_factory() as db:
+                    await _upsert_section(
+                        db, project_id, chapter_no, title, new_content, status="draft"
+                    )
+                    await db.commit()  # BUG-2：重写章节显式提交
+                await publish_event(
+                    project_id,
+                    {
+                        "type": "section_done",
+                        "chapter_no": chapter_no,
+                        "title": title,
+                        "content": new_content,
+                    },
+                )
+            except Exception as e:
+                logger.warning("一致性修复重写失败（降级告警）: %s", e)
+                await publish_event(
+                    project_id,
+                    {
+                        "type": "warning",
+                        "message": f"章节 {chapter_no} 一致性修复失败，请人工审阅",
+                        "issues": issues,
+                    },
+                )
+        return {
+            "chapters": chapters,
+            "chapter_summaries": summaries,
+            "consistency_issues": issues,
+            "consistency_retried": True,
+        }
+
+    # 不可修复 / 已重写过一轮 → 告警事件不阻塞导出
+    await publish_event(
+        project_id,
+        {
+            "type": "warning",
+            "message": f"全文一致性检查发现 {len(issues)} 个问题，未自动修复，请人工审阅",
+            "issues": issues,
+        },
+    )
+    return {"consistency_issues": issues}
 
 
 async def integrate_node(state: dict) -> dict:
@@ -551,12 +671,14 @@ async def review_node(state: dict) -> dict:
 
 
 async def rewrite_node(state: dict) -> dict:
-    """节点：按反馈局部重写 — 记录 reviews 表并重写指定章节."""
+    """节点：按反馈局部重写 — 记录 reviews 表并重写指定章节（同步刷新摘要）."""
+    from app.services.chapter_service import extract_chapter_summary
     from app.services.review_service import rewrite_chapter
 
     project_id = state.get("project_id", "")
     feedback = state.get("review_feedback", {})
     chapters = dict(state.get("chapters", {}))
+    summaries = dict(state.get("chapter_summaries", {}))
     outline = state.get("outline", [])
     if not feedback:
         return {"error": "无审阅反馈可重写", "current_phase": "review"}
@@ -572,6 +694,11 @@ async def rewrite_node(state: dict) -> dict:
                 comment=comment,
             )
             chapters[chapter_no] = new_content
+            if chapter_no in summaries:  # 重写后刷新摘要，保持章间上下文同步
+                summaries[chapter_no] = {
+                    **summaries[chapter_no],
+                    "summary": extract_chapter_summary(new_content),
+                }
             async with async_session_factory() as db:
                 await _upsert_section(
                     db, project_id, chapter_no, title, new_content, status="draft"
@@ -592,7 +719,12 @@ async def rewrite_node(state: dict) -> dict:
             logger.exception("章节重写失败")
             return {"error": f"章节 {chapter_no} 重写失败: {e}", "current_phase": "review"}
 
-    return {"chapters": chapters, "current_phase": "review", "progress": 0.85}
+    return {
+        "chapters": chapters,
+        "chapter_summaries": summaries,
+        "current_phase": "review",
+        "progress": 0.85,
+    }
 
 
 def _review_record(project_id: str, chapter_no: str, comment: str):
@@ -671,7 +803,7 @@ def chapter_route(state: dict) -> str:
     remaining = [c for c in outline if c["chapter_no"] not in chapters]
     if remaining:
         return "retrieve"
-    return "integrate"
+    return "consistency_check"
 
 
 def review_route(state: dict) -> str:

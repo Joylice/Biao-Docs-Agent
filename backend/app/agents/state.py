@@ -30,6 +30,12 @@ class BidState(TypedDict, total=False):
     retrieved_context: str  # 当前章节 RAG 检索素材
     validate_retries: int  # 校验失败重试计数（≤2）
     validation_ok: bool
+    # 章节间上下文：{chapter_no: {title, summary}}，每章生成后提取 ≤200 字摘要
+    chapter_summaries: Annotated[dict[str, dict], operator.or_]
+
+    # ── 全文一致性检查（integrate 前）──
+    consistency_issues: list[dict]  # [{chapter_no, type, description, fixable}]
+    consistency_retried: bool  # 已走过一轮定向重写（最多 1 次）
 
     # ── 审阅（HITL resume 结果）──
     review_action: str  # approved | feedback
