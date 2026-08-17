@@ -1,100 +1,408 @@
 <template>
   <div class="generate-view">
-    <a-page-header
+    <PageContainer
       title="方案生成"
-      :sub-title="`进度: ${Math.round(progress * 100)}%`"
-    />
-
-    <!-- 进度条 -->
-    <a-progress
-      :percent="Math.round(progress * 100)"
-      :status="progressStatus"
-      class="mb-4"
-    />
-
-    <!-- 大纲预览 -->
-    <a-card
-      v-if="outline.length > 0"
-      title="方案大纲"
-      class="mb-4"
+      :subtitle="`进度: ${Math.round(progress * 100)}%`"
     >
-      <a-list
-        :data-source="outline"
-        size="small"
-      >
-        <template #renderItem="{ item }">
-          <a-list-item>
-            <strong>{{ item.chapter_no }}</strong> {{ item.title }}
-            <template #extra>
-              <a-tag
-                v-if="chapters[item.chapter_no]"
-                color="green"
-              >
-                已生成
-              </a-tag>
-              <a-tag
-                v-else-if="currentChapter === item.chapter_no"
-                color="blue"
-              >
-                生成中
-              </a-tag>
-              <a-tag v-else>
-                待生成
-              </a-tag>
-            </template>
-          </a-list-item>
-        </template>
-      </a-list>
-    </a-card>
-
-    <!-- 章节内容预览 -->
-    <a-card
-      v-if="selectedChapter"
-      :title="`章节 ${selectedChapter}`"
-    >
-      <template #extra>
-        <a-button
-          size="small"
-          @click="selectedChapter = ''"
-        >
-          关闭
-        </a-button>
-      </template>
-      <div
-        class="chapter-content"
-        v-html="renderedContent"
+      <!-- 断线重连提示 -->
+      <a-alert
+        v-if="wsError"
+        type="warning"
+        show-icon
+        class="mb-4"
+        :message="wsError"
       />
-    </a-card>
 
-    <!-- 操作按钮 -->
-    <div class="actions">
-      <a-button
-        v-if="!generating && !generated"
-        :loading="generating"
-        @click="handleStartGenerate"
+      <!-- 状态加载失败 -->
+      <ErrorState
+        v-if="loadError"
+        :description="loadError"
       >
-        开始生成
-      </a-button>
-      <a-button
-        v-if="generated"
-        type="primary"
-        @click="goToReview"
+        <template #action>
+          <a-button
+            type="primary"
+            @click="loadInitial"
+          >
+            重试
+          </a-button>
+        </template>
+      </ErrorState>
+
+      <!-- 整体进度条 -->
+      <a-progress
+        :percent="Math.round(progress * 100)"
+        :status="progressStatus"
+        class="mb-4"
+      />
+
+      <!-- 资料库挂载配置（大纲待确认时选择参与检索的文档） -->
+      <a-card
+        v-if="awaitingOutlineConfirm && !loadError"
+        size="small"
+        class="mb-4 kb-mount-card"
       >
-        进入审阅
-      </a-button>
-    </div>
+        <template #title>
+          <span class="kb-mount__title">
+            <DatabaseOutlined />
+            资料库挂载
+          </span>
+        </template>
+        <template #extra>
+          <a-tag
+            v-if="!kbLoading && !kbError"
+            color="blue"
+          >
+            已挂载 {{ mountedCount }} 份
+          </a-tag>
+        </template>
+        <a-alert
+          v-if="kbError"
+          type="warning"
+          show-icon
+          :message="kbError"
+        />
+        <LoadingSkeleton
+          v-else-if="kbLoading"
+          :rows="2"
+        />
+        <template v-else-if="kbDocs.length > 0">
+          <div class="kb-mount__toolbar">
+            <a-checkbox
+              :checked="mountAllChecked"
+              @change="onToggleMountAll"
+            >
+              全选
+            </a-checkbox>
+            <span class="kb-mount__hint">仅勾选的资料库文档会参与方案生成检索（RAG）</span>
+          </div>
+          <a-checkbox-group
+            v-model:value="mountedIds"
+            class="kb-mount__list"
+          >
+            <a-checkbox
+              v-for="doc in kbDocs"
+              :key="doc.id"
+              :value="doc.id"
+              class="kb-mount__item"
+            >
+              {{ doc.title }}
+            </a-checkbox>
+          </a-checkbox-group>
+        </template>
+        <EmptyState
+          v-else
+          description="全局资料库暂无文档：上传公司资料后可挂载参与方案生成检索"
+        >
+          <template #action>
+            <a-button
+              type="link"
+              @click="router.push({ name: 'Materials' })"
+            >
+              前往全局资料库
+            </a-button>
+          </template>
+        </EmptyState>
+      </a-card>
+
+      <!-- 尚未确认评分点：引导回招标解析页（HITL 第一步） -->
+      <EmptyState
+        v-if="needConfirmScorePoints && !loadError"
+        description="尚未确认评分点：请先在「招标解析」页确认智能解析的评分点，确认后自动生成方案大纲"
+      >
+        <template #action>
+          <a-button
+            type="primary"
+            @click="router.push({ name: 'Parse', params: { projectId } })"
+          >
+            前往招标解析
+          </a-button>
+        </template>
+      </EmptyState>
+
+      <!-- 评分点已确认，大纲后台生成中：轮询等待 -->
+      <a-card
+        v-else-if="outlinePolling"
+        class="mb-4 outline-polling-card"
+      >
+        <a-alert
+          type="info"
+          show-icon
+          message="评分点已确认，方案大纲正在生成中，请稍候..."
+        />
+        <LoadingSkeleton
+          class="outline-polling-skeleton"
+          :rows="4"
+        />
+      </a-card>
+
+      <EmptyState
+        v-else-if="outline.length === 0 && !generating && !generated && !loadError"
+        description="尚未开始生成，点击下方按钮开始生成技术方案"
+      >
+        <template #action>
+          <a-button
+            type="primary"
+            :loading="generating"
+            @click="handleStartGenerate"
+          >
+            开始生成
+          </a-button>
+        </template>
+      </EmptyState>
+
+      <template v-else>
+        <a-layout
+          class="gen-layout"
+          has-sider
+        >
+          <!-- 章节树侧栏 -->
+          <a-layout-sider
+            v-model:collapsed="outlineCollapsed"
+            :width="264"
+            :collapsed-width="0"
+            breakpoint="lg"
+            theme="light"
+            class="gen-sider"
+          >
+            <div class="gen-sider__title">
+              方案大纲
+              <a-tooltip :title="outlineCollapsed ? '展开大纲' : '收起大纲'">
+                <a-button
+                  size="small"
+                  type="text"
+                  @click="outlineCollapsed = !outlineCollapsed"
+                >
+                  <template #icon>
+                    <MenuFoldOutlined v-if="!outlineCollapsed" />
+                    <MenuUnfoldOutlined v-else />
+                  </template>
+                </a-button>
+              </a-tooltip>
+            </div>
+            <div
+              v-if="outlineCollapsed"
+              class="gen-sider__collapsed-tip"
+            >
+              <a-button
+                type="text"
+                block
+                @click="outlineCollapsed = false"
+              >
+                <template #icon>
+                  <MenuUnfoldOutlined />
+                </template>
+              </a-button>
+            </div>
+            <a-tree
+              v-else
+              :tree-data="sideTreeData"
+              :selected-keys="sideSelectedKeys"
+              :default-expand-all="true"
+              class="gen-outline"
+              @select="onSideTreeSelect"
+            />
+          </a-layout-sider>
+
+          <a-layout-content class="gen-content">
+            <!-- 大纲已生成待确认：提示用户核对后启动生成 -->
+            <a-alert
+              v-if="awaitingOutlineConfirm"
+              type="info"
+              show-icon
+              class="mb-4"
+              message="大纲已生成：可编辑章节标题/子节/覆盖评分点，确认后按此结构生成各章内容"
+            />
+
+            <!-- 大纲二次编辑（仅确认态）：树形编辑 → 草稿自动保存 → 确认后才进入章节生成 -->
+            <a-card
+              v-if="awaitingOutlineConfirm"
+              class="mb-4 outline-edit-card"
+              title="大纲编辑"
+            >
+              <template #extra>
+                <a-space size="middle">
+                  <a-tag
+                    v-if="draftState !== 'idle'"
+                    :color="draftTagColor"
+                  >
+                    {{ draftStatusText }}
+                  </a-tag>
+                  <a-button
+                    size="small"
+                    :loading="draftState === 'saving'"
+                    @click="saveDraftNow"
+                  >
+                    保存草稿
+                  </a-button>
+                </a-space>
+              </template>
+              <a-alert
+                type="info"
+                show-icon
+                class="mb-4"
+                message="标题编号按层级自动重算（1 / 1.1 / 1.1.1）；可增删子节、调整顺序与层级；编辑内容自动保存草稿，防刷新丢失"
+              />
+              <OutlineTreeEditor
+                :nodes="editedTree"
+                :active-key="activeNodeKey"
+                @select="onEditSelect"
+                @add-child="handleAddChild"
+                @remove="handleRemoveNode"
+                @move="handleMoveNode"
+                @promote="handlePromoteNode"
+                @demote="handleDemoteNode"
+                @update-title="handleUpdateTitle"
+                @update-clauses="handleUpdateClauses"
+              />
+              <a-button
+                type="dashed"
+                block
+                class="mt-4"
+                @click="handleAddChapter"
+              >
+                <template #icon>
+                  <PlusOutlined />
+                </template>
+                添加章节
+              </a-button>
+            </a-card>
+
+            <!-- 草稿恢复确认（进入大纲编辑时发现未保存草稿） -->
+            <a-modal
+              v-model:open="draftRestoreVisible"
+              title="恢复编辑草稿"
+              :ok-text="'恢复草稿'"
+              cancel-text="丢弃草稿"
+              @ok="applyDraft"
+              @cancel="discardDraft"
+            >
+              <p>
+                检测到 {{ pendingDraftUpdatedAt }} 保存的未完成大纲编辑草稿，是否恢复继续编辑？
+              </p>
+            </a-modal>
+
+            <!-- 当前章节名 + 状态徽标 -->
+            <div class="gen-header">
+              <a-space wrap>
+                <a-tag
+                  v-if="generating || generated"
+                  color="blue"
+                >
+                  <DatabaseOutlined /> 资料库已挂载 {{ mountedCount }} 份
+                </a-tag>
+                <a-tag
+                  v-if="currentChapter"
+                  color="blue"
+                >
+                  生成中：章节 {{ currentChapter }}
+                </a-tag>
+                <a-badge
+                  v-if="generating"
+                  status="processing"
+                  text="正在生成"
+                />
+                <a-badge
+                  v-else-if="generated"
+                  status="success"
+                  text="已生成"
+                />
+                <a-badge
+                  v-else
+                  status="default"
+                  text="待生成"
+                />
+              </a-space>
+            </div>
+
+            <!-- 章节内容（确认态被大纲编辑卡替代） -->
+            <a-card
+              v-if="!awaitingOutlineConfirm && selectedChapter"
+              :title="`章节 ${selectedChapter}`"
+              class="chapter-card"
+            >
+              <template #extra>
+                <a-button
+                  size="small"
+                  @click="selectedChapter = ''"
+                >
+                  关闭
+                </a-button>
+              </template>
+              <MarkdownRenderer
+                v-if="displayChapters[selectedChapter]"
+                :source="displayChapters[selectedChapter]"
+              />
+              <LoadingSkeleton
+                v-else
+                :rows="6"
+              />
+            </a-card>
+            <a-card
+              v-if="!awaitingOutlineConfirm && !selectedChapter"
+              class="chapter-card"
+            >
+              <EmptyState description="从左侧大纲选择章节查看内容" />
+            </a-card>
+
+            <!-- 操作按钮 -->
+            <div class="actions">
+              <a-popconfirm
+                v-if="awaitingOutlineConfirm && !generating && !generated"
+                title="重新生成将用最新提示词覆盖当前大纲，确认继续？"
+                :ok-text="'重新生成'"
+                cancel-text="取消"
+                :confirm-loading="regeneratingOutline"
+                @confirm="handleRegenerateOutline"
+              >
+                <a-button
+                  :loading="regeneratingOutline"
+                >
+                  重新生成大纲
+                </a-button>
+              </a-popconfirm>
+              <a-button
+                v-if="!generating && !generated"
+                type="primary"
+                :loading="generating"
+                @click="handleStartGenerate"
+              >
+                开始生成
+              </a-button>
+              <a-button
+                v-if="generated"
+                type="primary"
+                @click="goToReview"
+              >
+                进入审阅
+              </a-button>
+            </div>
+          </a-layout-content>
+        </a-layout>
+      </template>
+    </PageContainer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
+import { DatabaseOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import api from '@/api/client'
+import PageContainer from '@/components/PageContainer.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import ErrorState from '@/components/ErrorState.vue'
+import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
+import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
+import OutlineTreeEditor from '@/components/outline/OutlineTreeEditor.vue'
+import type { OutlineItem, OutlineSection, OutlineTreeNode } from '@/types/outline'
 
-interface OutlineItem {
-  chapter_no: string
+interface KbDocument {
+  id: string
   title: string
+  doc_type: string
+  status: string
+  created_at: string
 }
 
 const route = useRoute()
@@ -104,10 +412,481 @@ const projectId = route.params.projectId as string
 const progress = ref(0)
 const generating = ref(false)
 const generated = ref(false)
+const regeneratingOutline = ref(false)
 const outline = ref<OutlineItem[]>([])
+/** 编辑树（确认态可编辑副本）：大纲变化时重建；编辑操作直接改树并触发草稿防抖保存 */
+const editedTree = ref<OutlineTreeNode[]>([])
+/** 编辑区当前选中的节点（与左侧树联动） */
+const activeNodeKey = ref('')
 const chapters = ref<Record<string, string>>({})
 const currentChapter = ref('')
 const selectedChapter = ref('')
+const outlineCollapsed = ref(false)
+const wsError = ref('')
+const loadError = ref('')
+
+/* ---------------- 大纲二次编辑草稿（防抖自动保存 + 手动保存 + 恢复） ---------------- */
+type DraftState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
+const draftState = ref<DraftState>('idle')
+const draftRestoreVisible = ref(false)
+const pendingDraft = ref<{ outline: OutlineItem[]; mounted_doc_ids: string[] | null } | null>(null)
+const pendingDraftUpdatedAt = ref('')
+/** 重建树等非用户编辑引起的变更不触发草稿保存 */
+let suppressDraftWatch = false
+let draftTimer: number | null = null
+const DRAFT_DEBOUNCE_MS = 2000
+
+/** 树节点本地 key（仅编辑态使用，提交时丢弃） */
+let nodeKeySeed = 0
+const nextNodeKey = (): string => `n${Date.now()}_${nodeKeySeed++}`
+
+/* ---------------- 工作流状态（HITL：评分点确认 → 大纲生成 → 大纲确认） ---------------- */
+const phase = ref('init')
+const interruptType = ref('')
+const outlinePolling = ref(false)
+let outlinePollTimer: number | null = null
+let outlinePollCount = 0
+
+/** 尚未确认评分点：工作流未启动或停在评分点 interrupt → 引导回招标解析页 */
+const needConfirmScorePoints = computed(
+  () =>
+    outline.value.length === 0 &&
+    !generating.value &&
+    !generated.value &&
+    !outlinePolling.value &&
+    (phase.value === 'init' || interruptType.value === 'confirm_score_points'),
+)
+
+/** 大纲已生成待人工确认（confirm_outline interrupt 挂起） */
+const awaitingOutlineConfirm = computed(
+  () => interruptType.value === 'confirm_outline' && !generating.value && !generated.value,
+)
+
+const stopOutlinePolling = () => {
+  if (outlinePollTimer !== null) {
+    clearInterval(outlinePollTimer)
+    outlinePollTimer = null
+  }
+  outlinePolling.value = false
+}
+
+/* ---------------- 大纲树转换（OutlineItem[] ↔ 编辑树 OutlineTreeNode[]） ---------------- */
+
+/** LLM 大纲 → 编辑树（sections 的 string[] 或嵌套树 → 子节点树） */
+const outlineToTree = (items: OutlineItem[]): OutlineTreeNode[] =>
+  items.map((c) => ({
+    key: nextNodeKey(),
+    title: c.title,
+    covered_clauses: [...(c.covered_clauses ?? [])],
+    children: sectionsToTree(c.sections),
+  }))
+
+const sectionsToTree = (sections?: OutlineSection[]): OutlineTreeNode[] => {
+  if (!Array.isArray(sections)) return []
+  return sections.map((s) =>
+    typeof s === 'string'
+      ? { key: nextNodeKey(), title: s }
+      : { key: nextNodeKey(), title: s.title, children: sectionsToTree(s.children) },
+  )
+}
+
+/** 编辑树 → 提交大纲（章节编号按位置重算 1/2/3…；sections 转嵌套树保留层级） */
+const treeToOutline = (nodes: OutlineTreeNode[]): OutlineItem[] =>
+  nodes.map((n, i) => ({
+    chapter_no: String(i + 1),
+    title: n.title.trim(),
+    sections: treeToSections(n.children),
+    covered_clauses: n.covered_clauses?.length ? n.covered_clauses : undefined,
+  }))
+
+const treeToSections = (nodes?: OutlineTreeNode[]): OutlineSection[] | undefined => {
+  if (!nodes?.length) return undefined
+  return nodes.map((n) => {
+    const children = treeToSections(n.children)
+    return children?.length ? { title: n.title.trim(), children } : { title: n.title.trim() }
+  })
+}
+
+/** 大纲就绪/变化 → 重建编辑树（抑制草稿保存；默认选中首章） */
+const syncTreeFromOutline = () => {
+  suppressDraftWatch = true
+  editedTree.value = outlineToTree(outline.value)
+  activeNodeKey.value = editedTree.value[0]?.key ?? ''
+  nextTick(() => {
+    suppressDraftWatch = false
+  })
+}
+
+watch(outline, syncTreeFromOutline, { deep: true })
+
+/* ---------------- 树操作（编号/层级/顺序；变更即触发草稿防抖保存） ---------------- */
+
+/** DFS 查找节点索引路径（null = 不存在） */
+const findNodePath = (nodes: OutlineTreeNode[], key: string): number[] | null => {
+  for (let i = 0; i < nodes.length; i += 1) {
+    if (nodes[i].key === key) return [i]
+    if (nodes[i].children?.length) {
+      const found = findNodePath(nodes[i].children!, key)
+      if (found) return [i, ...found]
+    }
+  }
+  return null
+}
+
+/** 按索引路径取节点 */
+const nodeAt = (path: number[] | null): OutlineTreeNode | null => {
+  if (!path) return null
+  let nodes: OutlineTreeNode[] = editedTree.value
+  let cur: OutlineTreeNode | null = null
+  for (const i of path) {
+    cur = nodes[i]
+    if (!cur) return null
+    nodes = cur.children ?? []
+  }
+  return cur
+}
+
+/** 节点所在列表与下标（顶层章节列表或父节点 children） */
+const nodeListAndIndex = (path: number[] | null): [OutlineTreeNode[], number] | null => {
+  if (!path) return null
+  const list = path.length > 1 ? nodeAt(path.slice(0, -1))?.children : editedTree.value
+  if (!list) return null
+  return [list, path[path.length - 1]]
+}
+
+/** 添加章节（顶层；编号提交时按位置重算） */
+const handleAddChapter = () => {
+  editedTree.value.push({ key: nextNodeKey(), title: '', covered_clauses: [] })
+}
+
+/** 添加子节（最深 4 级：章节/节/条/款） */
+const handleAddChild = (key: string) => {
+  const path = findNodePath(editedTree.value, key)
+  const node = nodeAt(path)
+  if (!node || !path) return
+  if (path.length >= 4) {
+    message.warning('最多支持 4 级层级（章节/节/条/款）')
+    return
+  }
+  node.children = node.children ?? []
+  node.children.push({ key: nextNodeKey(), title: '' })
+}
+
+/** 删除节点（含子树） */
+const handleRemoveNode = (key: string) => {
+  const pair = nodeListAndIndex(findNodePath(editedTree.value, key))
+  if (!pair) return
+  pair[0].splice(pair[1], 1)
+  if (activeNodeKey.value === key) activeNodeKey.value = ''
+}
+
+/** 兄弟间上移/下移 */
+const handleMoveNode = (key: string, dir: -1 | 1) => {
+  const pair = nodeListAndIndex(findNodePath(editedTree.value, key))
+  if (!pair) return
+  const [list, idx] = pair
+  const j = idx + dir
+  if (j < 0 || j >= list.length) return
+  const tmp = list[idx]
+  list[idx] = list[j]
+  list[j] = tmp
+}
+
+/** 降级：成为前一个兄弟的最后一个子节点（最深 4 级） */
+const handlePromoteNode = (key: string) => {
+  const path = findNodePath(editedTree.value, key)
+  if (!path || path.length >= 4) return
+  const pair = nodeListAndIndex(path)
+  if (!pair || pair[1] === 0) return
+  const [list, idx] = pair
+  const prev = list[idx - 1]
+  prev.children = prev.children ?? []
+  prev.children.push(list[idx])
+  list.splice(idx, 1)
+}
+
+/** 升级：移出父节点，成为父节点之后的兄弟 */
+const handleDemoteNode = (key: string) => {
+  const path = findNodePath(editedTree.value, key)
+  if (!path || path.length <= 1) return
+  const parent = nodeAt(path.slice(0, -1))
+  const grand = nodeListAndIndex(path.slice(0, -1))
+  if (!parent || !grand) return
+  const node = parent.children!.splice(path[path.length - 1], 1)[0]
+  grand[0].splice(grand[1] + 1, 0, node)
+}
+
+/** 标题实时编辑 */
+const handleUpdateTitle = (key: string, title: string) => {
+  const node = nodeAt(findNodePath(editedTree.value, key))
+  if (node) node.title = title
+}
+
+/** 覆盖评分点：文本 → 数组存储 */
+const handleUpdateClauses = (key: string, text: string) => {
+  const node = nodeAt(findNodePath(editedTree.value, key))
+  if (!node) return
+  node.covered_clauses = text
+    .split(/[,，、]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/* ---------------- 左侧大纲树（编辑态与编辑树同步；生成态展示大纲） ---------------- */
+
+interface TreeDataItem {
+  key: string
+  title: string
+  children?: TreeDataItem[]
+}
+
+/** 编辑树 → a-tree 数据（title 前缀自动编号） */
+const toEditTreeData = (nodes: OutlineTreeNode[], prefix = ''): TreeDataItem[] =>
+  nodes.map((n, i) => {
+    const no = prefix ? `${prefix}.${i + 1}` : `${i + 1}`
+    return {
+      key: n.key,
+      title: `${no} ${n.title || '（未命名）'}`,
+      children: n.children?.length ? toEditTreeData(n.children, no) : undefined,
+    }
+  })
+
+/** 大纲 → a-tree 数据（章节 + 子节层级，key 带 ch-/sub- 前缀） */
+const toOutlineTreeData = (items: OutlineItem[]): TreeDataItem[] =>
+  items.map((c) => ({
+    key: `ch-${c.chapter_no}`,
+    title: `${c.chapter_no} ${c.title}`,
+    children: toSectionTreeData(c.sections ?? [], c.chapter_no),
+  }))
+
+const toSectionTreeData = (sections: OutlineSection[], prefix: string): TreeDataItem[] => {
+  if (!Array.isArray(sections)) return []
+  return sections.map((s, i) => {
+    const no = `${prefix}.${i + 1}`
+    if (typeof s === 'string') return { key: `sub-${no}`, title: `${no} ${s}` }
+    return {
+      key: `sub-${no}`,
+      title: `${no} ${s.title}`,
+      children: s.children?.length ? toSectionTreeData(s.children, no) : undefined,
+    }
+  })
+}
+
+const sideTreeData = computed(() =>
+  awaitingOutlineConfirm.value ? toEditTreeData(editedTree.value) : toOutlineTreeData(outline.value),
+)
+
+const sideSelectedKeys = computed(() => {
+  if (awaitingOutlineConfirm.value) return activeNodeKey.value ? [activeNodeKey.value] : []
+  return selectedChapter.value ? [`ch-${selectedChapter.value}`] : []
+})
+
+const onSideTreeSelect = (keys: string[]) => {
+  const key = keys[0]
+  if (!key) return
+  if (awaitingOutlineConfirm.value) {
+    activeNodeKey.value = key
+    document
+      .querySelector(`[data-node-key="${key}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    return
+  }
+  if (key.startsWith('ch-')) selectedChapter.value = key.slice(3)
+  else if (key.startsWith('sub-')) selectedChapter.value = key.slice(4).split('.')[0]
+}
+
+const onEditSelect = (key: string) => {
+  activeNodeKey.value = key
+}
+
+/* ---------------- 大纲二次编辑草稿（防抖自动保存 + 手动 + 恢复 + 确认清除） ---------------- */
+
+const draftStatusText = computed(() => {
+  switch (draftState.value) {
+    case 'dirty':
+      return '未保存'
+    case 'saving':
+      return '保存中'
+    case 'saved':
+      return '已自动保存'
+    case 'error':
+      return '保存失败'
+    default:
+      return ''
+  }
+})
+
+const draftTagColor = computed(() => {
+  switch (draftState.value) {
+    case 'dirty':
+      return 'warning'
+    case 'saving':
+      return 'processing'
+    case 'saved':
+      return 'green'
+    case 'error':
+      return 'red'
+    default:
+      return 'default'
+  }
+})
+
+/** 编辑变化 → 防抖 2s 落库（仅确认态；重建树等程序变更被 suppressDraftWatch 抑制） */
+const scheduleDraftSave = () => {
+  if (!awaitingOutlineConfirm.value) return
+  if (draftTimer !== null) clearTimeout(draftTimer)
+  draftState.value = 'dirty'
+  draftTimer = window.setTimeout(saveDraftNow, DRAFT_DEBOUNCE_MS)
+}
+
+const saveDraftNow = async () => {
+  if (!awaitingOutlineConfirm.value) return
+  if (draftTimer !== null) {
+    clearTimeout(draftTimer)
+    draftTimer = null
+  }
+  draftState.value = 'saving'
+  try {
+    await api.put(`/projects/${projectId}/workflow/outline-draft`, {
+      outline: treeToOutline(editedTree.value),
+      mounted_doc_ids: resolveMountedDocIds(),
+    })
+    draftState.value = 'saved'
+  } catch {
+    draftState.value = 'error'
+  }
+}
+
+/** 清除草稿（确认成功/重新生成/丢弃恢复时调用；幂等） */
+const clearDraft = async () => {
+  try {
+    await api.delete(`/projects/${projectId}/workflow/outline-draft`)
+  } catch {
+    // 幂等清除失败不影响主流程
+  }
+  draftState.value = 'idle'
+}
+
+/** 进入编辑态时读取历史草稿，有则弹窗询问恢复 */
+const loadDraftIfAny = async () => {
+  try {
+    const res = await api.get(`/projects/${projectId}/workflow/outline-draft`)
+    const d = res.data?.data
+    if (d?.outline?.length) {
+      pendingDraft.value = d
+      pendingDraftUpdatedAt.value = d.updated_at
+        ? new Date(d.updated_at).toLocaleString('zh-CN')
+        : ''
+      draftRestoreVisible.value = true
+    }
+  } catch {
+    // 草稿读取失败不打扰编辑
+  }
+}
+
+const applyDraft = () => {
+  const d = pendingDraft.value
+  if (!d) return
+  suppressDraftWatch = true
+  editedTree.value = outlineToTree(d.outline)
+  if (Array.isArray(d.mounted_doc_ids)) {
+    mountedIds.value = d.mounted_doc_ids
+  }
+  nextTick(() => {
+    suppressDraftWatch = false
+  })
+  draftRestoreVisible.value = false
+  pendingDraft.value = null
+  draftState.value = 'saved'
+  message.success('已恢复上次未保存的编辑草稿')
+}
+
+const discardDraft = () => {
+  draftRestoreVisible.value = false
+  pendingDraft.value = null
+  clearDraft()
+}
+
+/** 用户编辑（deep）→ 防抖保存草稿 */
+watch(
+  editedTree,
+  () => {
+    if (!suppressDraftWatch) scheduleDraftSave()
+  },
+  { deep: true },
+)
+
+/** 进入编辑态：读取草稿提示恢复；离开编辑态：停止未落库的防抖定时器 */
+watch(awaitingOutlineConfirm, (v) => {
+  if (v) {
+    loadDraftIfAny()
+  } else if (draftTimer !== null) {
+    clearTimeout(draftTimer)
+    draftTimer = null
+  }
+})
+
+/** 大纲后台生成中：每 2s 轮询 status，直到大纲就绪/异常（上限 4 分钟） */
+const startOutlinePolling = () => {
+  if (outlinePollTimer !== null) return
+  outlinePolling.value = true
+  outlinePollTimer = window.setInterval(async () => {
+    outlinePollCount += 1
+    if (outlinePollCount > 120) {
+      stopOutlinePolling()
+      loadError.value = '大纲生成超时，请刷新页面后重试'
+      return
+    }
+    await loadInitial()
+  }, 2000)
+}
+
+/* ---------------- 资料库挂载配置（生成前选择参与 RAG 检索的文档） ---------------- */
+const kbDocs = ref<KbDocument[]>([])
+const mountedIds = ref<string[]>([])
+const kbLoading = ref(false)
+const kbError = ref('')
+
+const mountedCount = computed(() => mountedIds.value.length)
+const mountAllChecked = computed(
+  () => kbDocs.value.length > 0 && mountedIds.value.length === kbDocs.value.length,
+)
+
+/** 挂载配置 → 草稿/提交载荷：全选或空资料库 → null（项目全量），否则勾选清单 */
+const resolveMountedDocIds = (): string[] | null => {
+  const mountAll = kbDocs.value.length > 0 && mountedIds.value.length === kbDocs.value.length
+  return kbDocs.value.length === 0 || mountAll ? null : [...mountedIds.value]
+}
+
+/** 挂载配置变化（编辑态）→ 防抖保存草稿 */
+watch(mountedIds, () => {
+  if (!suppressDraftWatch && awaitingOutlineConfirm.value && kbDocs.value.length > 0) {
+    scheduleDraftSave()
+  }
+})
+
+const loadKbDocs = async () => {
+  kbLoading.value = true
+  kbError.value = ''
+  try {
+    // 全局资料库（独立管理）：方案生成时选择挂载
+    const res = await api.get('/kb/materials', {
+      params: { page_size: 100 },
+    })
+    const items = res.data?.data?.items ?? []
+    kbDocs.value = items
+    mountedIds.value = items.map((d: KbDocument) => d.id) // 默认全选
+  } catch {
+    kbError.value = '资料库加载失败，生成将按项目全量文档检索'
+  } finally {
+    kbLoading.value = false
+  }
+}
+
+/** 全选/取消全选 */
+const onToggleMountAll = (e: { target: { checked: boolean } }) => {
+  mountedIds.value = e.target.checked ? kbDocs.value.map((d) => d.id) : []
+}
 
 const progressStatus = computed(() => {
   if (progress.value >= 1) return 'success'
@@ -115,16 +894,28 @@ const progressStatus = computed(() => {
   return 'normal'
 })
 
-const renderedContent = computed(() => {
-  const content = chapters.value[selectedChapter.value] || ''
-  // Simple markdown to HTML conversion
-  return content
-    .replace(/### (.*)/g, '<h3>$1</h3>')
-    .replace(/## (.*)/g, '<h2>$1</h2>')
-    .replace(/\n\n/g, '<br/><br/>')
+/* ---------------- 章节展示（三期 S4：真流式，section_token 增量追加，去假打字机） ---------------- */
+/** 每章展示内容：直接渲染 WS 增量累积的文本（section_done 全量兜底对齐） */
+const displayChapters = computed(() => chapters.value)
+
+// 当前生成章节切换 → 自动选中查看
+watch(currentChapter, (no) => {
+  if (no && generating.value && !selectedChapter.value) {
+    selectedChapter.value = no
+  }
 })
 
+/* ---------------- WebSocket 流式（三期 S4：section_token 增量 + section_done 全量兜底） ---------------- */
 let ws: WebSocket | null = null
+let reconnectTimer: number | null = null
+let reconnectAttempts = 0
+
+const clearReconnect = () => {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+}
 
 const connectWebSocket = () => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -139,34 +930,149 @@ const connectWebSocket = () => {
       if (data.chapters) {
         chapters.value = data.chapters
       }
+      if (data.current_chapter && generating.value && !selectedChapter.value) {
+        selectedChapter.value = data.current_chapter
+      }
+      if (wsError.value) wsError.value = ''
+    } else if (data.type === 'section_token') {
+      // 真流式增量：逐块追加（展示随内容增长自然呈现，无需假打字机）
+      const no = data.chapter_no
+      if (no) {
+        chapters.value[no] = (chapters.value[no] ?? '') + (data.delta ?? '')
+        if (generating.value && !selectedChapter.value) selectedChapter.value = no
+      }
+    } else if (data.type === 'section_done') {
+      // 全量兜底：覆盖为全文（断线重连/丢块后对齐）
+      const no = data.chapter_no
+      if (no && typeof data.content === 'string') {
+        chapters.value[no] = data.content
+      }
     } else if (data.type === 'done') {
-      generated.value = true
-      generating.value = false
-      progress.value = 1
+      markGenerated()
     }
   }
   ws.onclose = (event) => {
     if (event.code === 4001) {
       // 未认证：清除失效 token 并跳转登录
+      clearReconnect()
       localStorage.removeItem('access_token')
       message.warning('登录已过期，请重新登录')
       router.push({ name: 'Login' })
     } else if (event.code === 4003) {
       // 非项目成员
+      clearReconnect()
       generating.value = false
       message.error('无权限访问该项目')
-    } else { /* reconnect logic */ }
+    } else {
+      // 断线自动重连（最多 3 次），并在顶部给出规范化提示
+      reconnectAttempts += 1
+      if (reconnectAttempts <= 3) {
+        wsError.value = '连接已断开，正在自动重连...'
+        reconnectTimer = window.setTimeout(() => {
+          wsError.value = ''
+          connectWebSocket()
+        }, 3000)
+      } else {
+        wsError.value = '连接已断开，请刷新页面重试'
+      }
+    }
+  }
+}
+
+/* ---------------- 生成完成兜底（WS done 事件可能丢失：连接晚于后台任务完成/断线） ---------------- */
+let genPollTimer: number | null = null
+let genPollCount = 0
+
+const markGenerated = () => {
+  generated.value = true
+  generating.value = false
+  progress.value = 1
+  wsError.value = ''
+  stopGenPolling()
+}
+
+const stopGenPolling = () => {
+  if (genPollTimer !== null) {
+    clearInterval(genPollTimer)
+    genPollTimer = null
+  }
+}
+
+/** 生成中每 3s 轮询 status 兜底：progress≥0.75 或 phase=review/done 即视为完成（上限 5 分钟） */
+const startGenPolling = () => {
+  if (genPollTimer !== null) return
+  genPollTimer = window.setInterval(async () => {
+    genPollCount += 1
+    if (genPollCount > 100) {
+      stopGenPolling()
+      generating.value = false
+      wsError.value = '生成状态同步超时，请刷新页面查看结果'
+      return
+    }
+    try {
+      const res = await api.get(`/projects/${projectId}/workflow/status`)
+      const data = res.data?.data
+      if (data?.progress >= 0.75 || ['review', 'done'].includes(data?.phase)) {
+        if (data?.chapters) chapters.value = data.chapters
+        markGenerated()
+      }
+    } catch {
+      // 单次轮询失败忽略，下轮重试
+    }
+  }, 3000)
+}
+
+const handleRegenerateOutline = async () => {
+  regeneratingOutline.value = true
+  try {
+    await api.post(`/projects/${projectId}/workflow/regenerate-outline`)
+    message.success('大纲已重新生成')
+    // 重新生成后旧编辑草稿作废：清除，防止下次误恢复
+    await clearDraft()
+    await loadInitial()
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '重新生成大纲失败')
+  } finally {
+    regeneratingOutline.value = false
   }
 }
 
 const handleStartGenerate = async () => {
+  // 确认态提交前校验编辑树（至少 1 章、章节标题非空）
+  if (awaitingOutlineConfirm.value) {
+    if (editedTree.value.length === 0) {
+      message.warning('大纲不能为空，请至少保留一个章节')
+      return
+    }
+    for (const c of editedTree.value) {
+      if (!c.title.trim()) {
+        message.warning('章节存在空标题，请补充后再确认')
+        return
+      }
+    }
+  }
   generating.value = true
   try {
-    await api.post(`/projects/${projectId}/workflow/confirm-outline`)
+    // 挂载配置：全选或空资料库 → null（后端按项目全量检索）；否则传勾选清单（[] = 不挂载）
+    const body: Record<string, unknown> = {
+      mounted_doc_ids: resolveMountedDocIds(),
+    }
+    // 二次编辑产物：仅确认态提交（后端 resume payload 传递，不经 update_state）
+    if (awaitingOutlineConfirm.value) {
+      body.outline = treeToOutline(editedTree.value)
+    }
+    await api.post(`/projects/${projectId}/workflow/confirm-outline`, body)
+    // 确认成功：清除草稿（后端 confirm 节点同步清除，此处幂等兜底）
+    clearDraft()
+    reconnectAttempts = 0
+    genPollCount = 0
+    startGenPolling()
     connectWebSocket()
     message.info('开始生成方案...')
-  } catch {
-    message.error('启动生成失败')
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '启动生成失败')
     generating.value = false
   }
 }
@@ -175,30 +1081,153 @@ const goToReview = () => {
   router.push({ name: 'Review', params: { projectId } })
 }
 
-onMounted(async () => {
-  // 获取大纲
+const loadInitial = async () => {
+  loadError.value = ''
   try {
     const res = await api.get(`/projects/${projectId}/workflow/status`)
     const data = res.data?.data
-    if (data?.outline) {
+    phase.value = data?.phase || 'init'
+    interruptType.value = data?.interrupt?.type || ''
+    if (data?.outline?.length) {
       outline.value = data.outline
       chapters.value = data.chapters || {}
       progress.value = data.progress || 0
       generated.value = progress.value >= 0.75
+      stopOutlinePolling()
+      // 默认选中第一个章节
+      if (!selectedChapter.value && outline.value.length > 0) {
+        selectedChapter.value = outline.value[0].chapter_no
+      }
+    } else if (
+      !generated.value &&
+      phase.value !== 'init' &&
+      interruptType.value !== 'confirm_score_points'
+    ) {
+      // 工作流已启动但大纲未就绪（后台生成中）→ 轮询等待
+      startOutlinePolling()
     }
   } catch {
-    // ignore
+    loadError.value = '方案状态加载失败'
   }
+}
+
+onMounted(() => {
+  loadInitial()
+  loadKbDocs()
 })
 
 onUnmounted(() => {
+  clearReconnect()
+  stopOutlinePolling()
+  stopGenPolling()
+  if (draftTimer !== null) {
+    clearTimeout(draftTimer)
+    draftTimer = null
+  }
   ws?.close()
 })
 </script>
 
 <style scoped>
-.generate-view { max-width: 1000px; }
+.generate-view { max-width: 1200px; }
 .mb-4 { margin-bottom: 16px; }
+
+.gen-layout {
+  background: transparent;
+}
+
+.gen-sider {
+  background: var(--card-bg);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-right: 16px;
+}
+
+.gen-sider__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color, #e8e8e8);
+}
+
+.gen-sider__collapsed-tip {
+  padding: 12px;
+}
+
+.gen-outline {
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.gen-content {
+  background: transparent;
+  min-width: 0;
+}
+
+.gen-header {
+  margin-bottom: 12px;
+  padding: 4px 2px;
+}
+
+.chapter-card {
+  background: var(--card-bg);
+  min-height: 320px;
+}
+
 .actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px; }
-.chapter-content { max-height: 500px; overflow-y: auto; line-height: 1.8; }
+
+.kb-mount-card {
+  background: var(--card-bg);
+}
+
+.outline-polling-card {
+  background: var(--card-bg);
+}
+
+.outline-polling-skeleton {
+  margin-top: 16px;
+}
+
+.kb-mount__title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.kb-mount__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.kb-mount__hint {
+  font-size: 12px;
+  color: var(--text-secondary, #999);
+}
+
+.kb-mount__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.kb-mount__item {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outline-edit-card {
+  background: var(--card-bg);
+}
+
+.mt-4 {
+  margin-top: 16px;
+}
 </style>

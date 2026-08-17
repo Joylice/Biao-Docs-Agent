@@ -2,7 +2,7 @@
 
 import uuid
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 class RegisterRequest(BaseModel):
@@ -40,5 +40,12 @@ class UserOut(BaseModel):
     id: uuid.UUID
     email: str
     display_name: str
+    role: str = "member"  # 三期：前端按角色渲染管理入口
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def _role_default(cls, v: str | None) -> str:
+        # INSERT default 在 flush 后才生效，未持久化对象 role 为 None → 按默认 member
+        return v or "member"
 
     model_config = {"from_attributes": True}

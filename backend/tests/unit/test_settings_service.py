@@ -359,6 +359,11 @@ class TestRuntimeLlmConfig:
         cfg = RuntimeLlmConfig(deepseek_api_key="sk-ds", dashscope_api_key="sk-qw")
         assert cfg.api_key_for("qwen/qwen-plus") == "sk-qw"
 
+    def test_api_key_for_dashscope_prefix(self) -> None:
+        """dashscope 前缀（云端 embedding 模型）→ DashScope key，与 qwen 共用."""
+        cfg = RuntimeLlmConfig(deepseek_api_key="sk-ds", dashscope_api_key="sk-qw")
+        assert cfg.api_key_for("dashscope/text-embedding-v3") == "sk-qw"
+
     def test_api_key_for_unknown_prefix(self) -> None:
         cfg = RuntimeLlmConfig(deepseek_api_key="sk-ds")
         assert cfg.api_key_for("gpt-4o") is None
@@ -515,6 +520,38 @@ class TestConnection:
         assert "auth failed" in result["error"]
 
     async def test_embedding_success(self, fake_litellm, monkeypatch) -> None:
+        """DashScope 云端 embedding：库内 dashscope key 作为 api_key 传入."""
+        monkeypatch.setattr(settings, "llm_mock", False)
+        monkeypatch.setattr(settings, "embedding_model", "dashscope/text-embedding-v3")
+        fake_litellm.aembedding = AsyncMock(
+            return_value=SimpleNamespace(data=[{"embedding": [0.1, 0.2, 0.3, 0.4]}])
+        )
+
+        async def fake_cfg():
+            return RuntimeLlmConfig(
+                embedding_api_base="http://emb:1/v1", dashscope_api_key="sk-emb"
+            )
+
+        monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
+
+        result = await run_connection_test("embedding")
+
+        assert result == {"ok": True, "dimension": 4}
+        kwargs = fake_litellm.aembedding.call_args.kwargs
+        assert kwargs["api_base"] == "http://emb:1/v1"
+        assert kwargs["input"] == ["测试"]
+        assert kwargs["api_key"] == "sk-emb"
+
+    async def test_embedding_mock_mode_returns_not_configured(
+        self, fake_litellm, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(settings, "llm_mock", True)
+        result = await run_connection_test("embedding")
+        assert result == {"ok": False, "error": "未配置密钥或处于 mock 模式"}
+        fake_litellm.aembedding.assert_not_called()
+
+    async def test_embedding_without_key_not_passed(self, fake_litellm, monkeypatch) -> None:
+        """库内无 key：不传 api_key（回退 env，Ollama 本地无密钥场景不回归）."""
         monkeypatch.setattr(settings, "llm_mock", False)
         fake_litellm.aembedding = AsyncMock(
             return_value=SimpleNamespace(data=[{"embedding": [0.1, 0.2, 0.3, 0.4]}])
@@ -527,18 +564,9 @@ class TestConnection:
 
         result = await run_connection_test("embedding")
 
-        assert result == {"ok": True, "dimension": 4}
+        assert result["ok"] is True
         kwargs = fake_litellm.aembedding.call_args.kwargs
-        assert kwargs["api_base"] == "http://emb:1/v1"
-        assert kwargs["input"] == ["测试"]
-
-    async def test_embedding_mock_mode_returns_not_configured(
-        self, fake_litellm, monkeypatch
-    ) -> None:
-        monkeypatch.setattr(settings, "llm_mock", True)
-        result = await run_connection_test("embedding")
-        assert result == {"ok": False, "error": "未配置密钥或处于 mock 模式"}
-        fake_litellm.aembedding.assert_not_called()
+        assert "api_key" not in kwargs
 
     async def test_embedding_failure_returns_ok_false(self, fake_litellm, monkeypatch) -> None:
         monkeypatch.setattr(settings, "llm_mock", False)

@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from app.services.chapter_service import generate_chapter
+from app.services.chapter_service import flatten_sections, generate_chapter
 
 CHAPTER = {"chapter_no": "1", "title": "项目概述", "sections": ["背景"]}
 PROJECT_ID = uuid.uuid4()
@@ -45,6 +45,87 @@ async def test_fallback_retrieve_receives_caller_db(monkeypatch) -> None:
     assert "db" in captured
     assert captured["db"] is not None
     assert captured["db"] is sentinel_db
+
+
+def test_flatten_sections_keeps_string_list_as_is() -> None:
+    """LLM 输出的 string[] 子节原样返回（不追加编号，保持既有提示词形态）."""
+    sections = ["设计思路", "安全架构"]
+    assert flatten_sections(sections) == sections
+
+
+def test_flatten_sections_numbers_nested_tree() -> None:
+    """二次编辑产物的嵌套树递归推导编号（1 / 1.1 / 1.1.1）."""
+    sections = [
+        {
+            "title": "一张图模块",
+            "children": [{"title": "系统概述"}, "界面设计"],
+        },
+        "对接方案",
+    ]
+    assert flatten_sections(sections) == [
+        "1 一张图模块",
+        "1.1 系统概述",
+        "1.2 界面设计",
+        "2 对接方案",
+    ]
+
+
+def test_flatten_sections_deep_nesting() -> None:
+    """任意深度嵌套（模版 5 级形态）编号正确推导."""
+    sections = [
+        {
+            "title": "应急安全管理模块",
+            "children": [
+                {
+                    "title": "全流程协同",
+                    "children": [{"title": "功能说明"}],
+                }
+            ],
+        }
+    ]
+    assert flatten_sections(sections) == ["1 应急安全管理模块", "1.1 全流程协同", "1.1.1 功能说明"]
+
+
+@pytest.mark.asyncio
+async def test_generate_chapter_accepts_nested_sections(monkeypatch) -> None:
+    """章节生成兼容二次编辑的嵌套子节树：拍平编号后传入章节提示词."""
+    captured = {}
+
+    async def fake_retrieve(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    async def fake_embedding(text):
+        return [0.1]
+
+    async def fake_llm(**kwargs):
+        return "章节内容"
+
+    def fake_load_chapter_prompt(**kwargs):
+        captured.update(kwargs)
+        return "系统提示词", "用户提示词"
+
+    monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
+    monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
+    monkeypatch.setattr("app.services.chapter_service.call_llm_text", fake_llm)
+    monkeypatch.setattr(
+        "app.services.chapter_service.load_chapter_prompt", fake_load_chapter_prompt
+    )
+
+    chapter = {
+        "chapter_no": "4",
+        "title": "详细功能说明",
+        "sections": [{"title": "一张图模块", "children": [{"title": "系统概述"}]}],
+    }
+    await generate_chapter(
+        chapter=chapter,
+        score_points=[],
+        tech_requirements=[],
+        project_id=PROJECT_ID,
+        context="",
+        db=object(),
+    )
+    assert captured["sections"] == ["1 一张图模块", "1.1 系统概述"]
 
 
 @pytest.mark.asyncio
@@ -105,3 +186,54 @@ async def test_no_internal_retrieval_when_context_provided(monkeypatch) -> None:
         context="retrieve 节点传入的素材",
     )
     assert content == "章节内容"
+
+
+@pytest.mark.asyncio
+async def test_on_delta_streams_deltas_and_returns_full_text(monkeypatch) -> None:
+    """三期 S4：传入 on_delta 时走流式，逐块回调且返回全文."""
+    deltas = ["第一段", "第二段", "第三段"]
+
+    async def fake_stream(**kwargs):
+        for d in deltas:
+            yield d
+
+    monkeypatch.setattr("app.services.chapter_service.call_llm_stream", fake_stream)
+
+    received: list[str] = []
+
+    async def on_delta(delta: str) -> None:
+        received.append(delta)
+
+    content = await generate_chapter(
+        chapter=CHAPTER,
+        score_points=[],
+        tech_requirements=[],
+        project_id=PROJECT_ID,
+        context="素材",
+        on_delta=on_delta,
+    )
+    assert received == deltas
+    assert content == "第一段第二段第三段"
+
+
+@pytest.mark.asyncio
+async def test_no_on_delta_keeps_non_stream_path(monkeypatch) -> None:
+    """未传 on_delta 时保持非流式调用（向后兼容）."""
+    called = {"stream": False}
+
+    async def fake_stream(**kwargs):
+        called["stream"] = True
+        yield "x"
+
+    _patch_llm(monkeypatch)
+    monkeypatch.setattr("app.services.chapter_service.call_llm_stream", fake_stream)
+
+    content = await generate_chapter(
+        chapter=CHAPTER,
+        score_points=[],
+        tech_requirements=[],
+        project_id=PROJECT_ID,
+        context="素材",
+    )
+    assert content == "章节内容"
+    assert called["stream"] is False

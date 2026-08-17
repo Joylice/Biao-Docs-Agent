@@ -49,8 +49,13 @@ class ProposalSkeleton(Base):
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
     )
-    # [{chapter_no,title,sections}]
+    # [{chapter_no,title,sections}]  （sections 可为 string[] 或二次编辑的嵌套树 {title,children}）
     tree: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # 大纲二次编辑草稿（确认前防丢失；确认成功后清空）：{"outline": [...], "mounted_doc_ids": [...]}
+    draft: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+    draft_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

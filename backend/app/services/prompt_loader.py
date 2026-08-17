@@ -85,3 +85,12 @@ def load_review_prompt(
         score_points=score_points,
     )
     return system_prompt, user_prompt
+
+
+def load_requirements_prompt(score_points_json: str) -> tuple[str, str]:
+    """加载技术需求梳理提示词模板（基于已确认评分点梳理应答需求）."""
+    config = _load_template("requirements")
+    system_prompt = config.get("system_prompt", "")
+    user_prompt_template = config.get("user_prompt", "{score_points_json}")
+    user_prompt = user_prompt_template.format(score_points_json=score_points_json)
+    return system_prompt, user_prompt

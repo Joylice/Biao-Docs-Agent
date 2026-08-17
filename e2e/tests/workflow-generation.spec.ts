@@ -131,7 +131,231 @@ test.describe('方案生成闭环', () => {
     expect(body.data.status).toBe('started');
   });
 
-  test('无待处理中断时 confirm 被拒（interrupt 校验，BizError 4009）', async ({ api: apiCtx }) => {
+  test('大纲确认前可重新生成（regenerate-outline 返回新大纲）', async ({ api: apiCtx }) => {
+    test.skip(!llmMockEnabled(), '前置条件：需后端以 BID_LLM_MOCK=true 启动。');
+
+    const user = await registerAndLogin(apiCtx, 'wf-regen');
+    const project = await createProject(apiCtx, user);
+    await uploadParsedTender(apiCtx, user, project.id);
+
+    await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
+    await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'confirm_score_points',
+      30_000,
+    );
+    await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-score-points`), {
+      headers: bearer(user),
+    });
+    await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'confirm_outline',
+      30_000,
+    );
+
+    const resp = await apiCtx.post(api(`/projects/${project.id}/workflow/regenerate-outline`), {
+      headers: bearer(user),
+    });
+    expect(resp.status()).toBe(200);
+    const body = (await resp.json()) as BizResponse<{
+      status: string;
+      outline: Array<{ chapter_no: string; covered_clauses?: string[] }>;
+    }>;
+    expect(body.data.status).toBe('regenerated');
+    expect(body.data.outline.length).toBeGreaterThan(0);
+    expect(body.data.outline[0].covered_clauses).toBeDefined();
+  });
+
+  test('大纲可二次编辑：编辑后确认按新结构生成章节', async ({ api: apiCtx }) => {
+    test.skip(!llmMockEnabled(), '前置条件：需后端以 BID_LLM_MOCK=true 启动。');
+
+    const user = await registerAndLogin(apiCtx, 'wf-edit');
+    const project = await createProject(apiCtx, user);
+    await uploadParsedTender(apiCtx, user, project.id);
+
+    await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
+    await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'confirm_score_points',
+      30_000,
+    );
+    await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-score-points`), {
+      headers: bearer(user),
+    });
+    const outlineStatus = await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'confirm_outline',
+      30_000,
+    );
+
+    // 二次编辑：追加章节（mock 大纲为单章 chapter_no="mock"，追加后可稳定断言）
+    const edited = [
+      ...outlineStatus.outline,
+      {
+        chapter_no: '9',
+        title: '编辑新增章节',
+        sections: ['补充说明'],
+        covered_clauses: ['1'],
+      },
+    ];
+    const resp = await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
+      headers: bearer(user),
+      data: { outline: edited, mounted_doc_ids: [] },
+    });
+    expect(resp.status(), `确认编辑后大纲失败: ${await resp.text()}`).toBe(200);
+
+    // 章节按编辑后大纲生成：新增章节 9 应有内容、state.outline 同步为新结构
+    const review = await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'review_request',
+      90_000,
+    );
+    expect(Object.keys(review.chapters)).toContain('9');
+    expect(review.outline.length).toBe(outlineStatus.outline.length + 1);
+    expect(review.outline.some((c) => c.chapter_no === '9')).toBe(true);
+  });
+
+  test('大纲草稿：保存/读取/清除全链路（嵌套树形 sections 保留层级）', async ({
+    api: apiCtx,
+  }) => {
+    test.skip(!llmMockEnabled(), '前置条件：需后端以 BID_LLM_MOCK=true 启动。');
+
+    const user = await registerAndLogin(apiCtx, 'wf-draft');
+    const project = await createProject(apiCtx, user);
+    await uploadParsedTender(apiCtx, user, project.id);
+
+    await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
+    await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'confirm_score_points',
+      30_000,
+    );
+    await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-score-points`), {
+      headers: bearer(user),
+    });
+    await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'confirm_outline',
+      30_000,
+    );
+
+    // 保存草稿：树形嵌套 sections（二次编辑产物，含层级）
+    const draftOutline = [
+      {
+        chapter_no: '1',
+        title: '技术方案概述',
+        sections: [{ title: '项目背景', children: [{ title: '建设目标' }] }],
+        covered_clauses: ['1'],
+      },
+    ];
+    const saveResp = await apiCtx.put(
+      api(`/projects/${project.id}/workflow/outline-draft`),
+      {
+        headers: bearer(user),
+        data: { outline: draftOutline, mounted_doc_ids: null },
+      },
+    );
+    expect(saveResp.status(), `草稿保存失败: ${await saveResp.text()}`).toBe(200);
+
+    // 读取草稿：结构与保存一致（嵌套层级保留）
+    const getResp = await apiCtx.get(
+      api(`/projects/${project.id}/workflow/outline-draft`),
+      { headers: bearer(user) },
+    );
+    const draftBody = (await getResp.json()) as BizResponse<{
+      outline: Array<{
+        chapter_no: string;
+        title: string;
+        sections: Array<{ title: string; children?: Array<{ title: string }> }>;
+      }>;
+      updated_at: string | null;
+    }>;
+    expect(draftBody.data.outline).toEqual(draftOutline);
+    expect(draftBody.data.updated_at).toBeTruthy();
+
+    // 清除草稿：幂等，清除后读回为空
+    const delResp = await apiCtx.delete(
+      api(`/projects/${project.id}/workflow/outline-draft`),
+      { headers: bearer(user) },
+    );
+    expect(delResp.status()).toBe(200);
+    const emptyResp = await apiCtx.get(
+      api(`/projects/${project.id}/workflow/outline-draft`),
+      { headers: bearer(user) },
+    );
+    const emptyBody = (await emptyResp.json()) as BizResponse<{ outline: unknown[] }>;
+    expect(emptyBody.data.outline).toEqual([]);
+  });
+
+  test('确认大纲成功后自动清除草稿（防陈旧草稿下次误恢复）', async ({ api: apiCtx }) => {
+    test.skip(!llmMockEnabled(), '前置条件：需后端以 BID_LLM_MOCK=true 启动。');
+
+    const user = await registerAndLogin(apiCtx, 'wf-draft-clear');
+    const project = await createProject(apiCtx, user);
+    await uploadParsedTender(apiCtx, user, project.id);
+
+    await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
+    await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'confirm_score_points',
+      30_000,
+    );
+    await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-score-points`), {
+      headers: bearer(user),
+    });
+    const outlineStatus = await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'confirm_outline',
+      30_000,
+    );
+
+    // 确认前先留草稿
+    await apiCtx.put(api(`/projects/${project.id}/workflow/outline-draft`), {
+      headers: bearer(user),
+      data: { outline: outlineStatus.outline, mounted_doc_ids: null },
+    });
+
+    // 确认大纲 → 章节生成 → review 挂起
+    await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
+      headers: bearer(user),
+    });
+    await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'review_request',
+      90_000,
+    );
+
+    // 草稿已被 confirm 节点清除
+    const resp = await apiCtx.get(api(`/projects/${project.id}/workflow/outline-draft`), {
+      headers: bearer(user),
+    });
+    const body = (await resp.json()) as BizResponse<{ outline: unknown[] }>;
+    expect(body.data.outline).toEqual([]);
+  });
+
+  test('无待处理中断时 confirm 被拒（interrupt 校验，BizError 4009）', async ({
+    api: apiCtx,
+  }) => {
     const user = await registerAndLogin(apiCtx, 'wf-noint');
     const project = await createProject(apiCtx, user);
 
@@ -181,6 +405,15 @@ test.describe('方案生成闭环', () => {
       (s) => s.interrupt?.type === 'confirm_outline',
       30_000,
     );
+    // 大纲契约：每章携带 covered_clauses（覆盖评分点条款号）
+    const outlineStatus = await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.outline.length > 0,
+      10_000,
+    );
+    expect(outlineStatus.outline[0].covered_clauses).toBeDefined();
     const outline = await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
       headers: bearer(user),
     });

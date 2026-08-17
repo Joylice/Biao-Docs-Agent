@@ -58,10 +58,10 @@ class RuntimeLlmConfig:
     llm_mock: bool = False
 
     def api_key_for(self, model: str) -> str | None:
-        """按模型前缀匹配库内密钥：deepseek → DeepSeek key，qwen → DashScope key."""
+        """按模型前缀匹配库内密钥：deepseek → DeepSeek key，qwen/dashscope → DashScope key."""
         if model.startswith("deepseek"):
             return self.deepseek_api_key
-        if model.startswith("qwen"):
+        if model.startswith("qwen") or model.startswith("dashscope"):
             return self.dashscope_api_key
         return None
 
@@ -294,15 +294,19 @@ async def _test_embedding() -> dict[str, Any]:
     if settings.llm_mock or (cfg is not None and cfg.llm_mock):
         return {"ok": False, "error": _NOT_CONFIGURED_ERROR}
     api_base = (cfg.embedding_api_base if cfg else None) or settings.embedding_api_base
+    api_key = cfg.api_key_for(settings.embedding_model) if cfg else None
     try:
         from litellm import aembedding
 
+        kwargs: dict[str, Any] = {
+            "model": settings.embedding_model,
+            "input": ["测试"],
+            "api_base": api_base,
+        }
+        if api_key:
+            kwargs["api_key"] = api_key
         async with asyncio.timeout(TEST_TIMEOUT_SECONDS):
-            response = await aembedding(
-                model=settings.embedding_model,
-                input=["测试"],
-                api_base=api_base,
-            )
+            response = await aembedding(**kwargs)
         return {"ok": True, "dimension": len(response.data[0]["embedding"])}
     except Exception as e:
         return {"ok": False, "error": f"调用失败: {e}"[:200]}

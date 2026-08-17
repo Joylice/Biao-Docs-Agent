@@ -174,4 +174,108 @@ test.describe('文档上传解析', () => {
     expect(updBody.data.strategy).toBe('E2E 应答策略');
     expect(updBody.data.confirmed).toBe(true);
   });
+
+  test('重新解析：清除旧结果并重新入库', async ({ api: apiCtx }) => {
+    test.skip(
+      !llmMockEnabled(),
+      '前置条件：需 BID_LLM_MOCK=true 让后端走 LLM mock。',
+    );
+
+    const user = await registerAndLogin(apiCtx, 'reparse');
+    const project = await createProject(apiCtx, user);
+
+    const upload = await apiCtx.post(
+      api(`/projects/${project.id}/documents?doc_type=tender_file`),
+      {
+        headers: bearer(user),
+        multipart: {
+          file: {
+            name: 'tender-reparse.pdf',
+            mimeType: 'application/pdf',
+            buffer: buildMinimalPdf(TENDER_TEXT),
+          },
+        },
+      },
+    );
+    expect(upload.status(), `上传失败: ${await upload.text()}`).toBe(200);
+    const docId = ((await upload.json()) as BizResponse<{ id: string }>).data.id;
+
+    const first = await waitForDocumentStatus(
+      apiCtx,
+      user,
+      project.id,
+      docId,
+      ['parsed', 'failed'],
+      60_000,
+      'tender_file',
+    );
+    test.skip(
+      first !== 'parsed',
+      `首次解析未推进到 parsed（停留 ${first}），worker 未就绪属前置条件缺失。`,
+    );
+
+    // 首次解析结果入库
+    const spFirst = await apiCtx.get(api(`/projects/${project.id}/score-points`), {
+      headers: bearer(user),
+    });
+    expect(
+      ((await spFirst.json()) as BizResponse<unknown[]>).data.length,
+      '首次解析应有评分点',
+    ).toBeGreaterThan(0);
+
+    // 首次解析的技术需求（重新解析不得清除、不得重复提取）
+    const trFirst = await apiCtx.get(api(`/projects/${project.id}/tech-requirements`), {
+      headers: bearer(user),
+    });
+    const trFirstCount = ((await trFirst.json()) as BizResponse<unknown[]>).data.length;
+
+    // 发起重新解析
+    const reparse = await apiCtx.post(
+      api(`/projects/${project.id}/documents/${docId}/reparse`),
+      { headers: bearer(user) },
+    );
+    expect(reparse.status(), `重新解析失败: ${await reparse.text()}`).toBe(200);
+    const reparseBody = (await reparse.json()) as BizResponse<{ status: string }>;
+    expect(reparseBody.data.status).toBe('uploaded');
+
+    // 解析中重复提交被拒（4010）
+    const dup = await apiCtx.post(
+      api(`/projects/${project.id}/documents/${docId}/reparse`),
+      { headers: bearer(user) },
+    );
+    const dupStatus = dup.status();
+    const dupCode = ((await dup.json()) as BizResponse).code;
+    expect([400, 409]).toContain(dupStatus);
+    expect(dupCode).toBe(4010);
+
+    // 二次解析完成：状态回到 parsed，评分点重新入库
+    const second = await waitForDocumentStatus(
+      apiCtx,
+      user,
+      project.id,
+      docId,
+      ['parsed', 'failed'],
+      60_000,
+      'tender_file',
+    );
+    expect(second, '重新解析应再次推进到 parsed').toBe('parsed');
+    const spSecond = await apiCtx.get(api(`/projects/${project.id}/score-points`), {
+      headers: bearer(user),
+    });
+    expect(
+      ((await spSecond.json()) as BizResponse<unknown[]>).data.length,
+      '重新解析后评分点应重新入库',
+    ).toBeGreaterThan(0);
+
+    // 重新解析只负责评分点提取：技术需求不被清除也不重复提取
+    if (trFirstCount > 0) {
+      const trSecond = await apiCtx.get(api(`/projects/${project.id}/tech-requirements`), {
+        headers: bearer(user),
+      });
+      expect(
+        ((await trSecond.json()) as BizResponse<unknown[]>).data.length,
+        '重新解析后技术需求应保持不变（不清除、不重复提取）',
+      ).toBe(trFirstCount);
+    }
+  });
 });

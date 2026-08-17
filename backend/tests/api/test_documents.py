@@ -239,3 +239,139 @@ async def test_update_score_point_commits_before_response(client: AsyncClient) -
         session.commit.assert_awaited()
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+# ── 重新解析（reparse）──
+
+
+def _make_tender_doc(project_id: uuid.UUID, status: str = "parsed", doc_type: str = "tender_file"):
+    from app.models.document import Document
+
+    return Document(
+        id=uuid.uuid4(),
+        project_id=project_id,
+        doc_type=doc_type,
+        title="招标文件.docx",
+        storage_key=f"{project_id}/tender.docx",
+        status=status,
+        created_at=datetime.now(UTC),
+    )
+
+
+@pytest.fixture
+def reparse_env(monkeypatch):
+    """reparse 端点环境：mock 会话/审计/入队，真实 JWT 鉴权."""
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    doc = _make_tender_doc(project_id, status="parsed")
+
+    session = AsyncMock()
+    # execute 序列：成员校验 → 文档查询 → 删评分点 → 删衍生需求
+    # （招标原文技术需求保留：重新解析只负责评分点提取）
+    session.execute.side_effect = [
+        _result(project),
+        _result(doc),
+        _result(None),
+        _result(None),
+    ]
+    app.dependency_overrides[get_db] = lambda: session
+
+    enqueue_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.services.task_service.enqueue_parse_tender", enqueue_mock)
+    monkeypatch.setattr("app.core.audit.record", AsyncMock())
+
+    yield {
+        "owner_id": owner_id,
+        "project_id": project_id,
+        "doc": doc,
+        "session": session,
+        "enqueue": enqueue_mock,
+        "headers": {"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+    }
+    app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_reparse_no_auth(client: AsyncClient) -> None:
+    """未认证重新解析返回 401."""
+    response = await client.post(
+        "/api/v1/projects/00000000-0000-0000-0000-000000000001/"
+        "documents/00000000-0000-0000-0000-000000000002/reparse"
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_reparse_clears_old_results_and_reenqueues(client: AsyncClient, reparse_env) -> None:
+    """重新解析：清除旧评分点/衍生需求 → 状态重置 → 仅评分点模式入队 → 显式提交."""
+    doc = reparse_env["doc"]
+    response = await client.post(
+        f"/api/v1/projects/{reparse_env['project_id']}/documents/{doc.id}/reparse",
+        headers=reparse_env["headers"],
+    )
+    assert response.status_code == 200, response.text
+    assert doc.status == "uploaded", "文档状态应重置为 uploaded 等待 worker 重新推进"
+    assert response.json()["data"]["status"] == "uploaded"
+    # 重新解析只负责评分点提取：入队带 score_points_only=True（跳过技术需求提取）
+    reparse_env["enqueue"].assert_awaited_once_with(
+        reparse_env["project_id"], doc.id, score_points_only=True
+    )
+    reparse_env["session"].commit.assert_awaited()
+    # 旧解析结果删除：两条 DELETE（score_points 按 doc_id + 项目级 sp_derived 衍生需求）；
+    # 招标原文技术需求（source=NULL/tender）不被清除
+    deletes = [
+        c
+        for c in reparse_env["session"].execute.call_args_list
+        if str(c.args[0]).lstrip().upper().startswith("DELETE")
+    ]
+    assert len(deletes) == 2, "应删除旧评分点与基于旧评分点的衍生需求，保留招标原文技术需求"
+    delete_params = [str(c.args[0].compile().params) for c in deletes]
+    assert any("sp_derived" in p for p in delete_params), "应清除项目级 sp_derived 衍生需求"
+    assert all(
+        "score_points" in str(c.args[0]) or "sp_derived" in str(c.args[0].compile().params)
+        for c in deletes
+    ), "不得出现按 doc_id 删除招标原文技术需求的语句"
+
+
+@pytest.mark.asyncio
+async def test_reparse_rejects_parsing_doc(client: AsyncClient, reparse_env) -> None:
+    """解析中的文档不允许重复提交重新解析."""
+    reparse_env["doc"].status = "parsing"
+    response = await client.post(
+        f"/api/v1/projects/{reparse_env['project_id']}/documents/{reparse_env['doc'].id}/reparse",
+        headers=reparse_env["headers"],
+    )
+    assert response.status_code == 400
+    assert response.json()["code"] == 4010
+    reparse_env["enqueue"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reparse_rejects_kb_material(client: AsyncClient, reparse_env) -> None:
+    """资料库文档不支持重新解析（仅招标文件）."""
+    reparse_env["doc"].doc_type = "kb_material"
+    response = await client.post(
+        f"/api/v1/projects/{reparse_env['project_id']}/documents/{reparse_env['doc'].id}/reparse",
+        headers=reparse_env["headers"],
+    )
+    assert response.status_code == 400
+    assert response.json()["code"] == 4010
+    reparse_env["enqueue"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reparse_missing_doc(client: AsyncClient, reparse_env) -> None:
+    """文档不存在返回 4004."""
+    project = Project(
+        id=reparse_env["project_id"], name="测试项目", owner_id=reparse_env["owner_id"]
+    )
+    missing_session = AsyncMock()
+    missing_session.execute.side_effect = [_result(project), _result(None)]
+    app.dependency_overrides[get_db] = lambda: missing_session
+    response = await client.post(
+        f"/api/v1/projects/{reparse_env['project_id']}/documents/{uuid.uuid4()}/reparse",
+        headers=reparse_env["headers"],
+    )
+    assert response.status_code == 404
+    assert response.json()["code"] == 4004

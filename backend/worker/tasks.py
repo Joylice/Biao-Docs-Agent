@@ -6,8 +6,13 @@ import uuid
 logger = logging.getLogger(__name__)
 
 
-async def task_parse_tender(ctx: dict, project_id: str, doc_id: str) -> dict:
-    """异步任务：解析招标文件."""
+async def task_parse_tender(
+    ctx: dict, project_id: str, doc_id: str, score_points_only: bool = False
+) -> dict:
+    """异步任务：解析招标文件.
+
+    score_points_only=True（重新解析入队）：只提取评分点，跳过技术需求提取。
+    """
     from app.core.database import async_session_factory
     from app.models.document import Document
     from app.services.parse_service import (
@@ -39,8 +44,10 @@ async def task_parse_tender(ctx: dict, project_id: str, doc_id: str) -> dict:
             # 提取文本
             text = await extract_tender_text(file_content, doc.title)
 
-            # LLM 解析
-            parsed = await parse_tender_with_llm(text)
+            # LLM 解析（重新解析场景跳过技术需求提取）
+            parsed = await parse_tender_with_llm(
+                text, include_tech_requirements=not score_points_only
+            )
 
             # 保存结果
             sp_count, tr_count = await save_parse_result(

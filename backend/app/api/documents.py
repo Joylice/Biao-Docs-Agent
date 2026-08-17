@@ -4,7 +4,7 @@ import io
 import uuid
 
 from fastapi import APIRouter, Depends, Query, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
@@ -90,6 +90,65 @@ async def upload_document(
         await task_service.enqueue_parse_tender(project_id, doc.id)
     elif doc_type == "kb_material":
         await task_service.enqueue_index_document(project_id, doc.id)
+
+    return success(data=DocumentUploadOut.model_validate(doc).model_dump(mode="json"))
+
+
+@router.post("/{project_id}/documents/{document_id}/reparse")
+async def reparse_document(
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """重新解析招标文件：清除旧评分点 → 状态重置 → 重新入队（仅评分点提取）.
+
+    适用场景：解析结果不理想（评分点缺失/不准确）时重新提取。
+    只负责评分点提取，不做技术需求提取：招标原文技术需求保留，
+    基于旧评分点的 sp_derived 衍生需求一并清除（重新梳理即可重建）。
+    """
+    await _check_project_member(db, project_id, user_id)
+
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    doc = result.scalar_one_or_none()
+    if not doc or doc.project_id != project_id:
+        raise BizError(code=4004, message="文档不存在")
+    if doc.doc_type != "tender_file":
+        raise BizError(code=4010, message="仅招标文件支持重新解析")
+    if doc.status == "parsing":
+        raise BizError(code=4010, message="文档正在解析中，请稍后重试")
+    if doc.status == "uploaded":
+        raise BizError(code=4010, message="解析任务已排队，请等待完成")
+
+    # 清除该文档的旧评分点（按 doc_id，不影响同项目其他文档）；
+    # 招标原文技术需求保留（重新解析只做评分点提取）；
+    # 衍生技术需求（sp_derived）基于旧评分点梳理，一并清除
+    await db.execute(delete(ScorePoint).where(ScorePoint.doc_id == document_id))
+    await db.execute(
+        delete(TechRequirement).where(
+            TechRequirement.project_id == project_id,
+            TechRequirement.source == "sp_derived",
+        )
+    )
+    doc.status = "uploaded"
+    await db.flush()
+
+    # 审计埋点：重新解析（security.md §4）
+    await audit.record(
+        db,
+        user_id,
+        "document.reparse",
+        project_id=project_id,
+        target_type="document",
+        target_id=str(doc.id),
+        detail={"title": doc.title},
+    )
+
+    # 事务约定（BUG-1）：状态重置 + 清理在入队前显式提交，
+    # 确保 worker 领取任务时旧结果已删除、文档行已可见
+    await db.commit()
+
+    await task_service.enqueue_parse_tender(project_id, doc.id, score_points_only=True)
 
     return success(data=DocumentUploadOut.model_validate(doc).model_dump(mode="json"))
 

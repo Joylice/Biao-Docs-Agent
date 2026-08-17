@@ -19,9 +19,21 @@ router = APIRouter()
 
 
 class ConfirmOutlineBody(BaseModel):
-    """确认大纲请求体 — outline 为前端修改后的大纲（可选）."""
+    """确认大纲请求体 — outline 为前端修改后的大纲（可选）；
+
+    mounted_doc_ids 为资料库挂载配置（可选）：非 None（含空列表）时写入工作流
+    state，缺省 None 保持项目全量检索。
+    """
 
     outline: list[dict] | None = None
+    mounted_doc_ids: list[uuid.UUID] | None = None
+
+
+class OutlineDraftBody(BaseModel):
+    """大纲二次编辑草稿请求体 — outline 为树形嵌套编辑产物."""
+
+    outline: list[dict]
+    mounted_doc_ids: list[uuid.UUID] | None = None
 
 
 class ConfirmReviewBody(BaseModel):
@@ -90,15 +102,88 @@ async def confirm_outline(
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """人工确认/修改大纲（修改后大纲先写回 state，再 resume confirm_outline interrupt）."""
+    """人工确认/修改大纲（编辑后大纲与挂载配置经 resume payload 传递，
+    不经 update_state — 避免清除 checkpoint pending interrupt）."""
     await _check_project_member(db, project_id, user_id)
     await workflow_runtime.ensure_pending_interrupt(project_id, "confirm_outline")
 
-    outline = body.outline if body else None
-    if outline:
-        await workflow_runtime.update_state(project_id, {"outline": outline})
-    workflow_runtime.resume_workflow_in_background(project_id, {"confirmed": True})
+    decision: dict = {"confirmed": True}
+    if body is not None:
+        if body.outline is not None:
+            decision["outline"] = body.outline
+        if body.mounted_doc_ids is not None:
+            decision["mounted_doc_ids"] = [str(x) for x in body.mounted_doc_ids]
+    workflow_runtime.resume_workflow_in_background(project_id, decision)
     return success(data={"status": "confirmed", "next_phase": "generate"})
+
+
+@router.post("/{project_id}/workflow/regenerate-outline")
+async def regenerate_outline(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """重新生成大纲 — 仅限 confirm_outline 挂起时（覆盖旧大纲，新提示词含 covered_clauses）."""
+    await _check_project_member(db, project_id, user_id)
+    try:
+        outline = await workflow_runtime.regenerate_outline(project_id)
+    except BizError:
+        raise
+    except Exception as e:
+        raise BizError(code=5011, message=f"重新生成大纲失败: {e}") from None
+    return success(data={"status": "regenerated", "outline": outline})
+
+
+@router.put("/{project_id}/workflow/outline-draft")
+async def save_outline_draft(
+    project_id: uuid.UUID,
+    body: OutlineDraftBody,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """保存大纲二次编辑草稿（成员可写；留审计）."""
+    await _check_project_member(db, project_id, user_id)
+    await workflow_runtime.save_outline_draft(
+        db,
+        project_id,
+        body.outline,
+        [str(x) for x in body.mounted_doc_ids] if body.mounted_doc_ids is not None else None,
+    )
+    # 审计埋点：草稿保存（security.md §4）
+    await audit.record(db, user_id, "workflow.outline_draft_save", project_id=project_id)
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"saved": True})
+
+
+@router.get("/{project_id}/workflow/outline-draft")
+async def get_outline_draft(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """读取大纲二次编辑草稿（成员可读；无草稿返回 outline=[]）."""
+    await _check_project_member(db, project_id, user_id)
+    draft = await workflow_runtime.get_outline_draft(db, project_id)
+    if draft is None:
+        return success(data={"outline": [], "mounted_doc_ids": None, "updated_at": None})
+    return success(data=draft)
+
+
+@router.delete("/{project_id}/workflow/outline-draft")
+async def clear_outline_draft(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """清除大纲二次编辑草稿（确认成功后前端调用；幂等；留审计）."""
+    await _check_project_member(db, project_id, user_id)
+    await workflow_runtime.clear_outline_draft(db, project_id)
+    # 审计埋点：草稿清除（security.md §4）
+    await audit.record(db, user_id, "workflow.outline_draft_clear", project_id=project_id)
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"cleared": True})
 
 
 @router.post("/{project_id}/workflow/confirm-review")

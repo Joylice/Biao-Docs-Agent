@@ -10,6 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from app.agents import nodes
 from app.core.config import settings
 from app.core.exceptions import BizError
+from app.models.proposal import ProposalSkeleton
 from app.services import workflow_runtime
 from tests.agents.test_graph import make_fake_db
 
@@ -47,8 +48,18 @@ def mock_node_deps(monkeypatch):
     async def fake_call_llm_with_schema(**kwargs) -> dict:
         return {
             "chapters": [
-                {"chapter_no": "1", "title": "项目概述", "sections": ["背景", "目标"]},
-                {"chapter_no": "2", "title": "技术方案", "sections": ["架构", "实现"]},
+                {
+                    "chapter_no": "1",
+                    "title": "项目概述",
+                    "sections": ["背景", "目标"],
+                    "covered_clauses": ["1", "2"],
+                },
+                {
+                    "chapter_no": "2",
+                    "title": "技术方案",
+                    "sections": ["架构", "实现"],
+                    "covered_clauses": ["3"],
+                },
             ]
         }
 
@@ -118,6 +129,199 @@ class TestRunAndResume:
         status = await workflow_runtime.get_status_dict(PROJECT_ID)
         assert status["interrupt"]["type"] == "confirm_outline"
         assert status["outline"], "mock LLM 应产出大纲"
+
+
+class TestRegenerateOutline:
+    """重新生成大纲（仅 confirm_outline interrupt 挂起时允许）."""
+
+    async def _advance_to_outline_interrupt(self) -> None:
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+
+    @pytest.mark.asyncio
+    async def test_regenerate_outline_updates_state_with_covered_clauses(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """重新生成后 outline 更新且携带 covered_clauses（新提示词产物）."""
+        await self._advance_to_outline_interrupt()
+
+        outline = await workflow_runtime.regenerate_outline(PROJECT_ID)
+        assert len(outline) == 2
+        assert outline[0]["covered_clauses"] == ["1", "2"], "新大纲应携带 covered_clauses"
+
+        status = await workflow_runtime.get_status_dict(PROJECT_ID)
+        assert status["outline"][0]["covered_clauses"] == ["1", "2"], (
+            "checkpointer state 应同步更新"
+        )
+
+    @pytest.mark.asyncio
+    async def test_regenerate_outline_preserves_pending_interrupt(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """重新生成后 confirm_outline interrupt 必须保留，否则工作流无法 resume（4009 卡死）."""
+        await self._advance_to_outline_interrupt()
+
+        await workflow_runtime.regenerate_outline(PROJECT_ID)
+
+        status = await workflow_runtime.get_status_dict(PROJECT_ID)
+        assert status["interrupt"] is not None, "regenerate 不得清除 pending interrupt"
+        assert status["interrupt"]["type"] == "confirm_outline"
+
+    @pytest.mark.asyncio
+    async def test_regenerate_outline_syncs_state_with_new_llm_output(
+        self, memory_runtime, mock_node_deps, monkeypatch
+    ) -> None:
+        """regenerate 后 checkpointer/status 必须同步 LLM 新产物，章节按新大纲生成.
+
+        曾因 confirm_outline_node 内联调用 generate_outline_node（普通函数调用
+        不经图写入 checkpoint），导致 DB 落库新大纲而 state 仍旧大纲、确认后
+        章节按旧大纲生成的 DB/state 不一致缺陷。
+        """
+        outline_calls = {"n": 0}
+
+        async def _call_llm_with_schema(**kwargs) -> dict:
+            schema = (kwargs.get("response_format") or {}).get("json_schema", {})
+            schema_name = schema.get("name", "")
+            if schema_name == "outline":
+                outline_calls["n"] += 1
+                if outline_calls["n"] >= 2:  # 第二次（regenerate）返回全新大纲
+                    return {
+                        "chapters": [
+                            {
+                                "chapter_no": "9",
+                                "title": "新生成章",
+                                "sections": ["新子节"],
+                                "covered_clauses": ["4.2"],
+                            }
+                        ]
+                    }
+                return {
+                    "chapters": [
+                        {
+                            "chapter_no": "1",
+                            "title": "初始章",
+                            "sections": ["旧子节"],
+                            "covered_clauses": ["1"],
+                        }
+                    ]
+                }
+            return {
+                "chapters": [
+                    {
+                        "chapter_no": "1",
+                        "title": "项目概述",
+                        "sections": ["背景"],
+                        "covered_clauses": ["1"],
+                    }
+                ]
+            }
+
+        monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", _call_llm_with_schema)
+        await self._advance_to_outline_interrupt()
+        assert outline_calls["n"] == 1, "初始大纲应已生成一次"
+
+        outline = await workflow_runtime.regenerate_outline(PROJECT_ID)
+        assert outline[0]["title"] == "新生成章", "regenerate 应返回 LLM 新产物"
+
+        status = await workflow_runtime.get_status_dict(PROJECT_ID)
+        assert status["outline"][0]["title"] == "新生成章", "checkpointer state 应同步新大纲"
+
+        # 确认大纲 → 章节必须按新大纲生成（防 DB/state 不一致导致下游错乱）
+        result = await workflow_runtime.resume_workflow(PROJECT_ID, True)
+        assert set(result["chapters"].keys()) == {"9"}, "章节应按新大纲章节号生成"
+
+    @pytest.mark.asyncio
+    async def test_regenerate_outline_rejected_when_no_pending_interrupt(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """非 confirm_outline 挂起态重新生成被拒绝（4009）."""
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        # 当前挂起的是 confirm_score_points，重新生成大纲应被拒绝
+        with pytest.raises(BizError) as ei:
+            await workflow_runtime.regenerate_outline(PROJECT_ID)
+        assert ei.value.code == 4009
+
+
+class TestConfirmOutlineEdited:
+    """大纲二次编辑：resume 携带编辑后 outline / mounted_doc_ids，章节按新大纲生成."""
+
+    async def _advance_to_outline_interrupt(self) -> None:
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+
+    @pytest.mark.asyncio
+    async def test_confirm_with_edited_outline_generates_new_chapters(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """编辑后大纲（改标题+增章）确认 → state.outline 替换、章节按新大纲生成."""
+        edited = [
+            {
+                "chapter_no": "1",
+                "title": "编辑后第一章",
+                "sections": ["子节A"],
+                "covered_clauses": ["1", "2"],
+            },
+            {
+                "chapter_no": "2",
+                "title": "编辑后第二章",
+                "sections": ["子节B"],
+                "covered_clauses": ["3"],
+            },
+            {
+                "chapter_no": "3",
+                "title": "新增第三章",
+                "sections": ["子节C"],
+                "covered_clauses": ["4"],
+            },
+        ]
+        await self._advance_to_outline_interrupt()
+
+        result = await workflow_runtime.resume_workflow(
+            PROJECT_ID, {"confirmed": True, "outline": edited}
+        )
+        assert result["__interrupt__"][0].value["type"] == "review_request"
+        assert result["outline"] == edited, "state.outline 应替换为编辑后大纲"
+        assert set(result["chapters"].keys()) == {"1", "2", "3"}, "章节应按编辑后大纲生成"
+
+    @pytest.mark.asyncio
+    async def test_confirm_edited_outline_persists_skeleton(
+        self, memory_runtime, mock_node_deps, monkeypatch
+    ) -> None:
+        """编辑后大纲确认时落库 proposal_skeletons（DB 与 state 一致）."""
+        from app.models.proposal import ProposalSkeleton
+
+        db = make_fake_db()
+        monkeypatch.setattr(nodes, "async_session_factory", lambda: db)
+        edited = [
+            {
+                "chapter_no": "1",
+                "title": "编辑后标题",
+                "sections": ["子节"],
+                "covered_clauses": ["1"],
+            }
+        ]
+        await self._advance_to_outline_interrupt()
+
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True, "outline": edited})
+
+        skeletons = [o for o in db.added if isinstance(o, ProposalSkeleton)]
+        assert skeletons, "编辑后大纲应落库 proposal_skeletons"
+        assert skeletons[-1].tree == edited
+
+    @pytest.mark.asyncio
+    async def test_confirm_with_mounted_doc_ids_updates_state(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """resume 携带 mounted_doc_ids → 写入 state（RAG 挂载配置生效）."""
+        doc_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        await self._advance_to_outline_interrupt()
+
+        await workflow_runtime.resume_workflow(
+            PROJECT_ID, {"confirmed": True, "mounted_doc_ids": doc_ids}
+        )
+
+        snapshot = await workflow_runtime.get_state(PROJECT_ID)
+        assert snapshot.values.get("mounted_doc_ids") == doc_ids
 
 
 class TestRewriteAndExport:
@@ -241,3 +445,59 @@ class TestGuardAndInit:
         pool.close.assert_awaited_once()
         assert workflow_runtime._saver is None
         assert workflow_runtime._pool is None
+
+
+class TestOutlineDraftClear:
+    """确认大纲后自动清除草稿（防陈旧草稿下次误恢复）."""
+
+    @pytest.mark.asyncio
+    async def test_confirm_outline_clears_draft(self, memory_runtime, monkeypatch) -> None:
+        """confirm_outline 确认（resume confirmed）后，proposal_skeletons.draft 置空."""
+        skeleton = ProposalSkeleton(project_id=PROJECT_ID, tree=[])
+        skeleton.draft = [{"chapter_no": "1", "title": "旧草稿"}]
+
+        async def fake_publish_event(_project_id: str, _event: dict) -> None:
+            pass
+
+        def fake_session_factory():
+            db = make_fake_db()
+            db.rows_by_table[ProposalSkeleton] = [skeleton]
+            return db
+
+        async def fake_call_llm_with_schema(**kwargs) -> dict:
+            return {
+                "chapters": [
+                    {
+                        "chapter_no": "1",
+                        "title": "项目概述",
+                        "sections": ["背景"],
+                        "covered_clauses": ["1"],
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(settings, "llm_mock", True)
+        monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
+        monkeypatch.setattr(nodes, "publish_event", fake_publish_event)
+        monkeypatch.setattr(
+            "app.services.llm_service.call_llm_with_schema", fake_call_llm_with_schema
+        )
+
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        # 确认评分点 → 推进到 confirm_outline interrupt
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+        status = await workflow_runtime.get_status_dict(PROJECT_ID)
+        assert (status.get("interrupt") or {}).get("type") == "confirm_outline"
+
+        # 确认（携带编辑后的大纲）→ 草稿被清除
+        await workflow_runtime.resume_workflow_in_background(
+            PROJECT_ID,
+            {
+                "confirmed": True,
+                "outline": [{"chapter_no": "1", "title": "确认后大纲", "sections": []}],
+            },
+        )
+        status = await workflow_runtime.get_status_dict(PROJECT_ID)
+        assert (status.get("interrupt") or {}).get("type") == "review_request"
+        assert skeleton.draft is None, "确认大纲后应清除草稿"
+        assert skeleton.tree[0]["title"] == "确认后大纲"

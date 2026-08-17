@@ -87,7 +87,7 @@ def parse_env(monkeypatch):
 
 
 def _fake_llm(parsed: ParsedTender):
-    async def fake_parse(_text: str) -> ParsedTender:
+    async def fake_parse(_text: str, include_tech_requirements: bool = True) -> ParsedTender:
         return parsed
 
     return fake_parse
@@ -156,3 +156,52 @@ class TestTaskParseTenderProjectNameGuard:
         assert project.name == "解析出的项目名称"
         assert project.tender_no == "TN-2026-888"
         assert db.committed
+
+
+class TestTaskParseTenderScorePointsOnly:
+    """重新解析（score_points_only=True）跳过技术需求提取."""
+
+    @pytest.mark.asyncio
+    async def test_score_points_only_disables_tech_requirements(
+        self, parse_env, monkeypatch
+    ) -> None:
+        """score_points_only=True 时 LLM 解析应收到 include_tech_requirements=False."""
+        from app.services import parse_service
+
+        parse_env["patch_db"](_make_db(_make_project()))
+
+        calls: list[bool] = []
+
+        async def fake_parse(_text: str, include_tech_requirements: bool = True):
+            calls.append(include_tech_requirements)
+            return ParsedTender(
+                score_points=[{"clause_no": "1", "item": "方案完整性"}],
+                tech_requirements=[],
+                project_name=None,
+                tender_no=None,
+            )
+
+        monkeypatch.setattr(parse_service, "parse_tender_with_llm", fake_parse)
+
+        result = await task_parse_tender({}, str(PROJECT_ID), str(DOC_ID), score_points_only=True)
+        assert result["status"] == "success"
+        assert calls == [False], "重新解析应跳过技术需求提取"
+
+    @pytest.mark.asyncio
+    async def test_default_keeps_tech_requirements(self, parse_env, monkeypatch) -> None:
+        """首次解析（默认）仍提取技术需求."""
+        from app.services import parse_service
+
+        parse_env["patch_db"](_make_db(_make_project()))
+
+        calls: list[bool] = []
+
+        async def fake_parse(_text: str, include_tech_requirements: bool = True):
+            calls.append(include_tech_requirements)
+            return ParsedTender(score_points=[], tech_requirements=[])
+
+        monkeypatch.setattr(parse_service, "parse_tender_with_llm", fake_parse)
+
+        result = await task_parse_tender({}, str(PROJECT_ID), str(DOC_ID))
+        assert result["status"] == "success"
+        assert calls == [True]

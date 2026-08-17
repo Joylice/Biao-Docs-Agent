@@ -67,6 +67,96 @@ async def test_export_no_auth(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_regenerate_outline_no_auth(client: AsyncClient) -> None:
+    """未认证重新生成大纲返回 401."""
+    response = await client.post(
+        "/api/v1/projects/00000000-0000-0000-0000-000000000001/workflow/regenerate-outline"
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_confirm_outline_passes_edited_outline_to_resume(client, monkeypatch) -> None:
+    """确认大纲携带编辑后 outline → resume payload 原样传递（不再 update_state 清 interrupt）."""
+    from app.services import workflow_runtime
+
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = project
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    app.dependency_overrides[get_db] = lambda: session
+
+    captured: dict = {}
+
+    async def fake_ensure(pid, expected_type) -> None:
+        captured["ensure"] = (pid, expected_type)
+
+    def fake_resume(pid, resume_value) -> None:
+        captured["resume"] = (pid, resume_value)
+
+    monkeypatch.setattr(workflow_runtime, "ensure_pending_interrupt", fake_ensure)
+    monkeypatch.setattr(workflow_runtime, "resume_workflow_in_background", fake_resume)
+
+    edited = [{"chapter_no": "1", "title": "编辑后标题", "covered_clauses": ["1"]}]
+    try:
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/workflow/confirm-outline",
+            headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+            json={"outline": edited},
+        )
+        assert response.status_code == 200
+        assert captured["ensure"][1] == "confirm_outline"
+        _pid, resume_value = captured["resume"]
+        assert resume_value["confirmed"] is True
+        assert resume_value["outline"] == edited
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_confirm_outline_passes_mounted_doc_ids_to_resume(client, monkeypatch) -> None:
+    """mounted_doc_ids 经 resume payload 传递（字符串化 UUID 列表）."""
+    from app.services import workflow_runtime
+
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = project
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    app.dependency_overrides[get_db] = lambda: session
+
+    captured: dict = {}
+
+    async def fake_ensure(pid, expected_type) -> None:
+        captured["ensure"] = (pid, expected_type)
+
+    def fake_resume(pid, resume_value) -> None:
+        captured["resume"] = (pid, resume_value)
+
+    monkeypatch.setattr(workflow_runtime, "ensure_pending_interrupt", fake_ensure)
+    monkeypatch.setattr(workflow_runtime, "resume_workflow_in_background", fake_resume)
+
+    doc_id = uuid.uuid4()
+    try:
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/workflow/confirm-outline",
+            headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+            json={"mounted_doc_ids": [str(doc_id)]},
+        )
+        assert response.status_code == 200
+        _pid, resume_value = captured["resume"]
+        assert resume_value["mounted_doc_ids"] == [str(doc_id)]
+        assert "outline" not in resume_value, "未提交 outline 时不得注入空大纲"
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
 async def test_start_workflow_commits_audit(client: AsyncClient, monkeypatch) -> None:
     """BUG-1：启动工作流的审计写入在响应前显式 commit."""
     from app.services import workflow_runtime

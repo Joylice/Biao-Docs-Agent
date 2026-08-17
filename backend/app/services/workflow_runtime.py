@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.types import Command
@@ -177,6 +178,22 @@ async def update_state(project_id: uuid.UUID | str, values: dict) -> None:
     await _graph().aupdate_state(_config(project_id), values)
 
 
+async def regenerate_outline(project_id: uuid.UUID | str) -> list[dict]:
+    """重新生成大纲 — resume confirm_outline 节点（action=regenerate）.
+
+    仅允许 confirm_outline interrupt 挂起时调用（大纲尚未确认）；节点内复用
+    generate_outline_node 以最新提示词重新生成并落库，随后再次 interrupt 挂起
+    （保留 pending interrupt，前端可继续确认），返回新大纲。
+    """
+    await ensure_pending_interrupt(project_id, "confirm_outline")
+
+    result = await resume_workflow(project_id, {"action": "regenerate"})
+    outline = result.get("outline", [])
+    if not outline:
+        raise BizError(code=5011, message=result.get("error") or "重新生成大纲失败")
+    return outline
+
+
 async def rewrite_chapter(project_id: uuid.UUID | str, chapter_no: str, comment: str) -> str:
     """取 state 中的章节原文重写，并经 checkpointer 回写 chapters.
 
@@ -218,6 +235,71 @@ async def export_workflow(project_id: uuid.UUID | str) -> dict:
         "export_status": updates.get("export_status", "done"),
         "export_storage_key": updates.get("export_storage_key", ""),
     }
+
+
+# ───────────────────────── 大纲二次编辑草稿 ─────────────────────────
+
+
+async def save_outline_draft(
+    db,
+    project_id: uuid.UUID,
+    outline: list[dict],
+    mounted_doc_ids: list[str] | None = None,
+) -> None:
+    """保存大纲二次编辑草稿到 proposal_skeletons.draft（行不存在则创建，upsert）.
+
+    draft 结构：{"outline": [...], "mounted_doc_ids": [...]}；mounted_doc_ids 为
+    字符串列表（None=未设置挂载，保持项目全量检索语义）。
+    """
+    from sqlalchemy import select
+
+    from app.models.proposal import ProposalSkeleton
+
+    result = await db.execute(
+        select(ProposalSkeleton).where(ProposalSkeleton.project_id == project_id)
+    )
+    skeleton = result.scalar_one_or_none()
+    if not skeleton:
+        skeleton = ProposalSkeleton(project_id=project_id, tree=[])
+        db.add(skeleton)
+    skeleton.draft = {"outline": outline, "mounted_doc_ids": mounted_doc_ids}
+    skeleton.draft_updated_at = datetime.now(UTC)
+    await db.flush()
+
+
+async def get_outline_draft(db, project_id: uuid.UUID) -> dict | None:
+    """读取大纲二次编辑草稿；无草稿（或行不存在）返回 None."""
+    from sqlalchemy import select
+
+    from app.models.proposal import ProposalSkeleton
+
+    result = await db.execute(
+        select(ProposalSkeleton).where(ProposalSkeleton.project_id == project_id)
+    )
+    skeleton = result.scalar_one_or_none()
+    if not skeleton or not skeleton.draft:
+        return None
+    return {
+        "outline": skeleton.draft.get("outline", []),
+        "mounted_doc_ids": skeleton.draft.get("mounted_doc_ids"),
+        "updated_at": skeleton.draft_updated_at,
+    }
+
+
+async def clear_outline_draft(db, project_id: uuid.UUID) -> None:
+    """清除大纲二次编辑草稿（确认成功后调用，幂等）."""
+    from sqlalchemy import select
+
+    from app.models.proposal import ProposalSkeleton
+
+    result = await db.execute(
+        select(ProposalSkeleton).where(ProposalSkeleton.project_id == project_id)
+    )
+    skeleton = result.scalar_one_or_none()
+    if skeleton:
+        skeleton.draft = None
+        skeleton.draft_updated_at = None
+        await db.flush()
 
 
 # ───────────────────────── 后台执行 ─────────────────────────
