@@ -15,6 +15,7 @@ from app.core import audit
 from app.core.database import get_db
 from app.core.deps import ROLE_ADMIN, get_current_admin_id, get_current_user_id
 from app.core.exceptions import BizError
+from app.core.rbac import invalidate_rbac_cache
 from app.core.response import paginated, success
 from app.models.user import User
 from app.schemas.user import RoleUpdateIn, UserListOut
@@ -87,4 +88,6 @@ async def update_user_role(
         detail={"from": old_role, "to": req.role},
     )
     await db.commit()
+    # RBAC 缓存失效：角色映射变更后下次判定重新加载
+    invalidate_rbac_cache()
     return success(data=UserListOut.model_validate(target).model_dump(mode="json"))

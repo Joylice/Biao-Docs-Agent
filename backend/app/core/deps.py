@@ -9,8 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.exceptions import ForbiddenError, UnauthorizedError
+from app.core.exceptions import ForbiddenError, NotFoundError, UnauthorizedError
 from app.core.security import decode_token
+from app.models.project import Project
 from app.models.user import User
 
 bearer_scheme = HTTPBearer()
@@ -52,14 +53,18 @@ async def _load_user_or_forbid(db: AsyncSession, user_id: uuid.UUID) -> User:
     return user
 
 
-def _is_admin(user: User) -> bool:
-    """系统管理员：role=admin 或邮箱命中白名单（过渡期兼容，避免迁移遗漏锁死管理员）."""
-    return user.role == ROLE_ADMIN or user.email.lower() in _whitelist_emails()
+async def _is_admin(db: AsyncSession, user: User) -> bool:
+    """系统管理员：具备 system:manage 权限点（RBAC 迁移 0011；白名单兼容在 has_permission 内）."""
+    from app.core.rbac import has_permission  # 延迟导入：rbac 顶层依赖本模块，避免循环
+
+    return await has_permission(db, user, "system:manage")
 
 
-def _is_kb_admin(user: User) -> bool:
-    """资料库管理员：role 为 kb_admin/admin，或白名单兼容."""
-    return user.role in (ROLE_KB_ADMIN, ROLE_ADMIN) or user.email.lower() in _whitelist_emails()
+async def _is_kb_admin(db: AsyncSession, user: User) -> bool:
+    """资料库管理员：具备 kb:manage 权限点（RBAC 迁移 0011）."""
+    from app.core.rbac import has_permission  # 延迟导入：rbac 顶层依赖本模块，避免循环
+
+    return await has_permission(db, user, "kb:manage")
 
 
 async def get_current_admin_id(
@@ -72,7 +77,7 @@ async def get_current_admin_id(
     users.role 后以 role=admin 为准，白名单命中视为 admin（OR 判定）。
     """
     user = await _load_user_or_forbid(db, user_id)
-    if not _is_admin(user):
+    if not await _is_admin(db, user):
         raise ForbiddenError("无权操作：该操作仅限管理员")
     return user_id
 
@@ -83,6 +88,25 @@ async def get_current_kb_admin_id(
 ) -> uuid.UUID:
     """资料库管理员校验：全局资料删除/编辑等（三期 S1）."""
     user = await _load_user_or_forbid(db, user_id)
-    if not _is_kb_admin(user):
+    if not await _is_kb_admin(db, user):
         raise ForbiddenError("无权操作：该操作仅限资料库管理员")
+    return user_id
+
+
+async def get_current_owner_id(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> uuid.UUID:
+    """项目所有者校验（owner 数据属性，阶段二成员管理端点）.
+
+    项目内数据范围校验走 service（_check_project_member / owner 判定）；
+    本依赖供 API 层快速拦截非 owner，避免进入业务逻辑。
+    """
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise NotFoundError("项目")
+    if project.owner_id != user_id:
+        raise ForbiddenError("仅项目创建者可执行该操作")
     return user_id
