@@ -11,6 +11,9 @@ export type UserRole = 'member' | 'kb_admin' | 'admin'
 
 export const currentRole = ref<UserRole>('member')
 
+/** 当前登录用户 ID（/auth/me 写入；项目 owner 标记 / 成员管理用） */
+export const currentUserId = ref('')
+
 /** 系统管理员：用户管理 / 审计日志 / 模型设置 */
 export const isAdmin = computed(() => currentRole.value === 'admin')
 
@@ -21,12 +24,18 @@ export function setRole(role: string | undefined | null) {
   currentRole.value = (role as UserRole) || 'member'
 }
 
+/** 写入当前用户 ID（/auth/me 成功时调用） */
+export function setCurrentUser(id: string | undefined | null) {
+  currentUserId.value = id || ''
+}
+
 /** 刷新角色（角色变更后调用；失败静默，401 由 client 拦截器统一处理） */
 export async function fetchCurrentUserRole(): Promise<void> {
   try {
     const { data } = await api.get('/auth/me')
     if (data.code === 0) {
       setRole(data.data?.role)
+      currentUserId.value = data.data?.id || ''
     }
   } catch {
     // ignore

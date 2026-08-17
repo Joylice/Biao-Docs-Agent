@@ -72,6 +72,85 @@
       <router-view />
     </a-layout-content>
   </a-layout>
+
+  <!-- 成员管理抽屉：列表 + 移除（仅 owner）+ 添加协作者 -->
+  <a-drawer
+    v-model:open="showMembersDrawer"
+    title="成员管理"
+    :width="420"
+  >
+    <a-spin :spinning="membersLoading">
+      <a-list
+        :data-source="members"
+        :locale="{ emptyText: '暂无成员' }"
+      >
+        <template #renderItem="{ item }">
+          <a-list-item>
+            <a-list-item-meta>
+              <template #title>
+                <span class="member-name">{{ item.display_name }}</span>
+                <a-tag
+                  v-if="item.is_owner"
+                  color="gold"
+                  class="member-tag"
+                >
+                  所有者
+                </a-tag>
+                <a-tag
+                  v-if="item.user_id === currentUserId"
+                  color="blue"
+                  class="member-tag"
+                >
+                  我
+                </a-tag>
+              </template>
+              <template #description>
+                <div>{{ item.email }}</div>
+                <div class="member-joined">
+                  {{ formatTime(item.joined_at) }} 加入
+                </div>
+              </template>
+            </a-list-item-meta>
+            <a-popconfirm
+              v-if="isOwner && !item.is_owner"
+              title="确定移除该成员？"
+              ok-text="移除"
+              cancel-text="取消"
+              @confirm="handleRemoveMember(item.user_id)"
+            >
+              <a-button
+                type="text"
+                danger
+                size="small"
+              >
+                移除
+              </a-button>
+            </a-popconfirm>
+          </a-list-item>
+        </template>
+      </a-list>
+    </a-spin>
+    <template #footer>
+      <div
+        v-if="isOwner"
+        class="member-add"
+      >
+        <a-input
+          v-model:value="addEmail"
+          placeholder="协作者邮箱"
+          allow-clear
+          @press-enter="handleAddMember"
+        />
+        <a-button
+          type="primary"
+          :loading="addingMember"
+          @click="handleAddMember"
+        >
+          添加
+        </a-button>
+      </div>
+    </template>
+  </a-drawer>
 </template>
 
 <script setup lang="ts">
@@ -83,12 +162,24 @@ import {
   FolderOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  TeamOutlined,
 } from '@ant-design/icons-vue'
+import { message } from 'ant-design-vue'
 import api from '@/api/client'
+import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
 
 interface ProjectDetail {
   id: string
   name: string
+  owner_id: string
+}
+
+interface MemberItem {
+  user_id: string
+  email: string
+  display_name: string
+  is_owner: boolean
+  joined_at: string
 }
 
 const router = useRouter()
@@ -96,6 +187,14 @@ const route = useRoute()
 const projectId = route.params.projectId as string
 
 const projectName = ref('')
+const projectOwnerId = ref('')
+
+// 成员管理抽屉状态
+const showMembersDrawer = ref(false)
+const members = ref<MemberItem[]>([])
+const membersLoading = ref(false)
+const addEmail = ref('')
+const addingMember = ref(false)
 
 // 侧栏折叠态持久化（localStorage）
 const SIDER_KEY = 'bid.workspace.sider.collapsed'
@@ -135,6 +234,11 @@ const menuItems: MenuProps['items'] = [
     icon: () => h('span', { class: 'workspace__step' }, '3'),
     label: '审阅',
   },
+  {
+    key: 'members',
+    icon: () => h(TeamOutlined),
+    label: '成员管理',
+  },
 ]
 
 const selectedKeys = computed(() => {
@@ -148,6 +252,7 @@ const fetchProject = async () => {
     if (data.code === 0) {
       const project = data.data as ProjectDetail
       projectName.value = project.name
+      projectOwnerId.value = project.owner_id
     } else {
       projectName.value = '加载失败'
     }
@@ -157,7 +262,80 @@ const fetchProject = async () => {
   }
 }
 
+// 当前用户是否为项目所有者（决定移除/添加入口可见性）
+const isOwner = computed(() => projectOwnerId.value === currentUserId.value)
+
+const fetchMembers = async () => {
+  membersLoading.value = true
+  try {
+    const { data } = await api.get(`/projects/${projectId}/members`)
+    if (data.code === 0) {
+      members.value = data.data.items
+    } else {
+      message.error(data.message || '成员列表加载失败')
+    }
+  } catch {
+    message.error('成员列表加载失败')
+  } finally {
+    membersLoading.value = false
+  }
+}
+
+const getErrorMessage = (err: unknown, fallback: string): string => {
+  const body = (err as { response?: { data?: { message?: string } } })?.response?.data
+  return body?.message || fallback
+}
+
+const formatTime = (time?: string): string => {
+  if (!time) return '—'
+  const d = new Date(time)
+  if (Number.isNaN(d.getTime())) return time
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+const handleRemoveMember = async (userId: string) => {
+  try {
+    const { data } = await api.delete(`/projects/${projectId}/members/${userId}`)
+    if (data.code === 0) {
+      message.success('成员移除成功')
+      fetchMembers()
+    } else {
+      message.error(data.message || '成员移除失败')
+    }
+  } catch (err) {
+    message.error(getErrorMessage(err, '成员移除失败'))
+  }
+}
+
+const handleAddMember = async () => {
+  const email = addEmail.value.trim()
+  if (!email) {
+    message.warning('请输入协作者邮箱')
+    return
+  }
+  addingMember.value = true
+  try {
+    const { data } = await api.post(`/projects/${projectId}/members`, { email })
+    if (data.code === 0) {
+      message.success('成员添加成功')
+      addEmail.value = ''
+      fetchMembers()
+    } else {
+      message.error(data.message || '成员添加失败')
+    }
+  } catch (err) {
+    message.error(getErrorMessage(err, '成员添加失败'))
+  } finally {
+    addingMember.value = false
+  }
+}
+
 const handleMenuClick = ({ key }: { key: string }) => {
+  if (key === 'members') {
+    showMembersDrawer.value = true
+    fetchMembers()
+    return
+  }
   const name = menuRoutes[key]
   if (!name) return
   router.push({ name, params: { projectId } })
@@ -167,7 +345,11 @@ const goBackToProjects = () => {
   router.push({ name: 'Projects' })
 }
 
-onMounted(fetchProject)
+onMounted(() => {
+  fetchProject()
+  // 工作台不使用 AppLayout，自行同步当前用户身份（owner 判定依赖）
+  fetchCurrentUserRole()
+})
 </script>
 
 <style scoped>
@@ -270,5 +452,25 @@ onMounted(fetchProject)
   font-size: 12px;
   font-weight: 600;
   line-height: 1;
+}
+
+/* 成员管理抽屉 */
+.member-name {
+  font-weight: 500;
+}
+
+.member-tag {
+  margin-left: 8px;
+}
+
+.member-joined {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+}
+
+.member-add {
+  display: flex;
+  gap: 8px;
 }
 </style>

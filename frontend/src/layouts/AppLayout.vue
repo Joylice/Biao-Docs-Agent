@@ -24,7 +24,10 @@
               <DatabaseOutlined />
               资料库
             </a-menu-item>
-            <a-menu-item key="settings">
+            <a-menu-item
+              v-if="isAdmin"
+              key="settings"
+            >
               <SettingOutlined />
               模型设置
             </a-menu-item>
@@ -76,7 +79,7 @@ import {
   TeamOutlined,
 } from '@ant-design/icons-vue'
 import api from '@/api/client'
-import { isAdmin, setRole } from '@/stores/currentUser'
+import { isAdmin, setCurrentUser, setRole } from '@/stores/currentUser'
 
 interface CurrentUser {
   id: string
@@ -100,6 +103,9 @@ const fetchCurrentUser = async () => {
       displayName.value = user.display_name || user.email
       email.value = user.email
       setRole(user.role)  // 三期：角色写入全局状态，控制管理入口展示
+      if (user.id) {
+        setCurrentUser(user.id)
+      }
     }
   } catch {
     // 401 由 client 拦截器统一清 token 并跳转登录

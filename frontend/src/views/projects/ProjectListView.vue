@@ -131,6 +131,12 @@
                 {{ item.name }}
               </div>
               <a-tag
+                v-if="item.owner_id === currentUserId"
+                color="blue"
+              >
+                我创建
+              </a-tag>
+              <a-tag
                 v-if="item.status"
                 :color="statusTagColor(item.status)"
               >
@@ -213,6 +219,7 @@ import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
+import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
 
 interface ProjectItem {
   id: string
@@ -222,6 +229,7 @@ interface ProjectItem {
   industry?: string
   status?: string
   created_at?: string
+  owner_id?: string
 }
 
 const router = useRouter()
@@ -434,7 +442,11 @@ const getErrorMessage = (err: unknown, fallback: string): string => {
   return body?.message || fallback
 }
 
-onMounted(fetchProjects)
+onMounted(() => {
+  fetchProjects()
+  // 同步当前用户 ID（「我创建」标记比对 owner_id）
+  fetchCurrentUserRole()
+})
 </script>
 
 <style scoped>
