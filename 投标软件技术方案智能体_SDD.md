@@ -18,7 +18,7 @@
 ### 1.2 设计范围（MVP 边界）
 
 **范围内**：
-- 简单账号登录 + 项目级隔离（不做 RBAC）；
+- 简单账号登录 + 项目级隔离（权限模型：RBAC 功能权限 + 项目成员表数据范围，双维正交，2026-08-17 完整落地，见 §九）；
 - 真实资料批量入库与向量检索（RAG 底座，含云端 rerank 精排与离线评测框架）；
 - 招标文件解析（PDF/Word → 评分点/★条款/资格要求结构化提取）；
 - 评分点对标分析；
@@ -26,7 +26,7 @@
 - 章节级人工审阅反馈与局部重写（不做行内批注/diff）；
 - 流式输出；Word 文档导出（固定模板）。
 
-**范围外（二期）**：版本管理与 diff、RBAC 角色权限、多模型路由降级、OCR 扫描件、商务/报价标生成、私有化部署。（Reranker 精排与离线评测框架已提前落地，见 §7.2 / §10.3）
+**范围外（二期）**：版本管理与 diff、多模型路由降级、OCR 扫描件、商务/报价标生成、私有化部署。（Reranker 精排、离线评测框架与完整 RBAC 已提前落地，见 §7.2 / §10.3 / §九）
 
 ### 1.3 读者
 
@@ -101,10 +101,11 @@ docker-compose.yml
 **设计要点**：
 - 密码哈希：bcrypt；JWT（access 2h / refresh 7d）；
 - 项目表含 `owner_id`，所有业务数据（文档/方案/批注）携带 `project_id`，查询强制过滤；
-- 不做角色表，登录用户即项目成员（创建者为 owner，可添加协作者 email 列表）；
-- 中间件统一校验 JWT 与项目权限。
+- 双维正交权限模型：**功能权限**（RBAC：`users.role` → `roles`/`permissions`/`role_permissions` → 6 权限点 system:manage/kb:manage/kb:read/kb:upload/settings:read，全局，`require_permission` 依赖判定）＋ **数据范围**（`project_members` 表 / `owner` 属性，项目内，`_check_project_member` 先行校验，再按需走权限点/owner 校验）；
+- 项目成员两级（owner/协作者）：创建者为 owner 自动入成员表，owner 可添加/移除协作者（仅 email 加入，MVP 不做项目内角色细分）；
+- 中间件统一校验 JWT 与项目权限（WebSocket 握手同样强制，close code 4001/4003）。
 
-**核心流程**：注册/登录 → 创建项目 → 邀请协作者（MVP 仅按 email 加入）→ 进入项目工作台。
+**核心流程**：注册/登录 → 创建项目 → 邀请协作者（MVP 仅按 email 加入）→ 进入项目工作台。**成员管理（2026-08-17）**：工作台「成员管理」抽屉展示成员列表（email/display_name/加入时间/owner 标记，owner 恒在首位，项目成员即可见）；「移除」popconfirm 仅 owner 可见（移除 owner 本人 4000「不能移除项目所有者」、自移 4000、目标非成员 4004）；「添加协作者」表单并入同一抽屉（仅 owner 可操作）。
 
 ### 3.2 资料库管理模块（RAG 底座）
 
@@ -269,10 +270,11 @@ CREATE TABLE projects (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 项目成员（MVP：owner + 协作者，无角色）
+-- 项目成员（owner + 协作者，无角色细分）
 CREATE TABLE project_members (
   project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   user_id     UUID NOT NULL REFERENCES users(id),
+  joined_at   TIMESTAMPTZ NOT NULL DEFAULT now(),  -- 2026-08-17：加入时间（迁移 0012，成员列表按此排序）
   PRIMARY KEY (project_id, user_id)
 );
 
@@ -419,7 +421,9 @@ CREATE TABLE llm_settings (
 | DELETE | /kb/materials/{doc_id} | 全局资料删除（三期：**仅资料库管理员** get_current_kb_admin_id（role ∈ kb_admin/admin 或白名单兼容），非管理角色 403；限 project_id IS NULL，项目级文档 4004 隔离；MinIO 文件 + 记录 + 分块 CASCADE；审计 kb.material_delete） |
 | GET | /kb/materials/search | 全局资料库检索测试（q 必填，top_k∈[1,20]；仅检索全局资料 doc_ids 范围；返回 {items:[{chunk_id,doc_id,title,content,page_no,score}],total}） |
 | GET | /projects, POST /projects | 项目列表、创建 |
-| POST | /projects/{pid}/members | 添加协作者 |
+| POST | /projects/{pid}/members | 添加协作者（仅 owner；审计 project.member_add 记 email） |
+| GET | /projects/{pid}/members | 成员列表（2026-08-17：项目成员可见；LEFT JOIN users 返回 user_id/email/display_name/is_owner/joined_at，owner 恒在首位；只读不记审计） |
+| DELETE | /projects/{pid}/members/{user_id} | 移除成员（2026-08-17：**仅 owner** get_current_owner_id；移除 owner 本人 4000、自移 4000、目标非成员 4004；审计 project.member_remove 记 target_id；显式 commit） |
 | POST | /projects/{pid}/documents | 上传文件（tender/kb） |
 | GET | /projects/{pid}/kb/search | 资料库相似度检索（RAG；query 参数 q 必填，top_k∈[1,20] 默认 5，按相似度倒序返回 {items,total}，仅项目成员可调） |
 | GET | /projects/{pid}/documents | 文档列表与状态 |
@@ -609,6 +613,7 @@ graph.add_edge("export", END)
 ## 九、安全设计
 
 - JWT 认证 + 项目级权限中间件（非成员请求一律 403）；WebSocket 同样强制握手鉴权（query token + 成员校验，close code 4001/4003）；
+- RBAC 权限点体系（2026-08-17 落地，迁移 0011_rbac）：`roles`/`permissions`/`role_permissions` 三表 + 幂等种子（member/kb_admin/admin 三角色）；6 权限点收敛（system:manage/kb:manage/kb:read/kb:upload/settings:read 落角色表；project:member_manage 为 owner 数据属性不落表）；`require_permission(code)` 依赖以 `users.role` → `role_permissions` 判定（模块级缓存，PUT /users/{id}/role 后失效重载），`BID_ADMIN_USER_IDS` 白名单命中恒放行；现有管理端点行为等价收敛（deps `_is_admin`/`_is_kb_admin` 改基于权限点）；前端仅按角色收敛菜单/路由，后端 403 兜底；
 - 密码 bcrypt 哈希；HTTPS 全链路（网关 TLS）；
 - 上传文件白名单（pdf/docx/jpg/png）、大小限制、病毒扫描（MVP 可选 ClamAV）；
 - LLM 外发内容脱敏（铁律，默认开启不可关闭）：`app/core/redact.py` 的 `redact()` 正则替换手机号/身份证/银行卡/邮箱，在 parse/chapter/review 三个拼接点前置脱敏，并在 `llm_service` 出口兜底；
@@ -703,7 +708,7 @@ deploy/
 - `kb_chunks.embedding` 维度与 pgvector 索引 → 迁移 Milvus；
 - 模型层通过 LiteLLM 路由 → 扩展多模型；
 - reviews 表已有完整记录 → 扩展版本表与 diff；
-- 权限模型 project_members → 扩展 roles。
+- 权限模型 project_members → 扩展项目内角色细分（当前 RBAC 仅覆盖全局功能权限，项目内仍为 owner/协作者两级，已落地部分见 §九）。
 
 ### 11.3 待确认项
 
