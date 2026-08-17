@@ -49,6 +49,18 @@ class SectionEditBody(BaseModel):
     content: str
 
 
+class OutlineSuggestApplyBody(BaseModel):
+    """采纳大纲建议请求体 — adopted 为勾选的 suggestion_id 列表."""
+
+    adopted: list[str]
+
+
+class SectionSuggestBody(BaseModel):
+    """内容改进建议请求体 — chapter_no 可选，限定分析章节."""
+
+    chapter_no: str | None = None
+
+
 @router.post("/{project_id}/workflow/start")
 async def start_workflow(
     project_id: uuid.UUID,
@@ -266,6 +278,83 @@ async def save_section_edit(
     # 事务约定（BUG-1）：审计写入响应前显式提交
     await db.commit()
     return success(data={"chapter_no": chapter_no, "saved": True})
+
+
+@router.post("/{project_id}/workflow/outline-suggest")
+async def outline_suggest(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """生成大纲优化建议（仅 confirm_outline 挂起时可用；建议为瞬态数据不落库）."""
+    from app.services.outline_suggest_service import build_outline_suggestions
+
+    await _check_project_member(db, project_id, user_id)
+    await workflow_runtime.ensure_pending_interrupt(project_id, "confirm_outline")
+
+    status = await workflow_runtime.get_status_dict(project_id)
+    suggestions = await build_outline_suggestions(status["score_points"], status["outline"])
+
+    # 审计埋点：大纲建议生成（security.md §4）
+    await audit.record(db, user_id, "workflow.outline_suggest", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"suggestions": suggestions})
+
+
+@router.post("/{project_id}/workflow/outline-suggest/apply")
+async def outline_suggest_apply(
+    project_id: uuid.UUID,
+    body: OutlineSuggestApplyBody,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """应用已采纳的大纲建议 — 仅返回调整后大纲供人工核对，不写 state.
+
+    最终执行仍由 confirm-outline 人工确认完成（确认后才生成章节）。
+    """
+    from app.services.outline_suggest_service import apply_outline_suggestions
+
+    await _check_project_member(db, project_id, user_id)
+    await workflow_runtime.ensure_pending_interrupt(project_id, "confirm_outline")
+
+    status = await workflow_runtime.get_status_dict(project_id)
+    outline = apply_outline_suggestions(status["outline"], body.adopted)
+
+    # 审计埋点：大纲建议采纳（security.md §4）
+    await audit.record(db, user_id, "workflow.outline_suggest_apply", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"outline": outline})
+
+
+@router.post("/{project_id}/workflow/section-suggest")
+async def section_suggest(
+    project_id: uuid.UUID,
+    body: SectionSuggestBody | None = None,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """生成内容改进建议（建议为瞬态数据不落库；采纳执行复用 rewrite-chapter）."""
+    from app.services.section_suggest_service import build_section_suggestions
+
+    await _check_project_member(db, project_id, user_id)
+
+    status = await workflow_runtime.get_status_dict(project_id)
+    suggestions = await build_section_suggestions(
+        status["chapters"],
+        status["score_points"],
+        chapter_no=body.chapter_no if body else None,
+    )
+
+    # 审计埋点：内容建议生成（security.md §4）
+    await audit.record(db, user_id, "workflow.section_suggest", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"suggestions": suggestions})
 
 
 @router.get("/{project_id}/workflow/export")

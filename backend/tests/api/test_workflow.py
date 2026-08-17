@@ -268,6 +268,198 @@ async def test_save_section_edit_non_member_forbidden(client: AsyncClient) -> No
 
 
 @pytest.mark.asyncio
+async def test_outline_suggest_no_auth(client: AsyncClient) -> None:
+    """未认证生成大纲建议返回 401."""
+    response = await client.post(
+        "/api/v1/projects/00000000-0000-0000-0000-000000000001/workflow/outline-suggest"
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_outline_suggest_requires_pending_interrupt(client: AsyncClient, monkeypatch) -> None:
+    """非 confirm_outline 挂起态生成建议 → 4009."""
+    from app.core.exceptions import BizError
+    from app.services import workflow_runtime
+
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = project
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    session.add = MagicMock()
+    app.dependency_overrides[get_db] = lambda: session
+
+    async def fake_ensure(pid, expected_type) -> None:
+        raise BizError(code=4009, message="当前没有待处理的工作流中断，操作无效")
+
+    monkeypatch.setattr(workflow_runtime, "ensure_pending_interrupt", fake_ensure)
+    try:
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/workflow/outline-suggest",
+            headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+        )
+        assert response.status_code == 400
+        assert response.json()["code"] == 4009
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_outline_suggest_returns_suggestions(client: AsyncClient, monkeypatch) -> None:
+    """生成建议：读 state 的 score_points/outline → build 建议 → 返回."""
+    from app.services import workflow_runtime
+
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = project
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    session.add = MagicMock()
+    app.dependency_overrides[get_db] = lambda: session
+
+    captured: dict = {}
+
+    async def fake_ensure(pid, expected_type) -> None:
+        captured["ensure"] = expected_type
+
+    async def fake_status(pid) -> dict:
+        return {"score_points": [{"clause_no": "4.2"}], "outline": [{"chapter_no": "2"}]}
+
+    async def fake_build(score_points, outline) -> list:
+        captured["build"] = (score_points, outline)
+        return [{"suggestion_id": "add_section:2:4.2:x", "suggestion_type": "add_section"}]
+
+    monkeypatch.setattr(workflow_runtime, "ensure_pending_interrupt", fake_ensure)
+    monkeypatch.setattr(workflow_runtime, "get_status_dict", fake_status)
+    monkeypatch.setattr(
+        "app.services.outline_suggest_service.build_outline_suggestions", fake_build
+    )
+    try:
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/workflow/outline-suggest",
+            headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["suggestions"][0]["suggestion_type"] == "add_section"
+        assert captured["ensure"] == "confirm_outline"
+        assert captured["build"][0] == [{"clause_no": "4.2"}]
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_outline_suggest_apply_returns_adjusted_outline(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """采纳建议：adopted 传递 → apply 返回调整后大纲（不写 state）."""
+    from app.services import workflow_runtime
+
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = project
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    session.add = MagicMock()
+    app.dependency_overrides[get_db] = lambda: session
+
+    captured: dict = {}
+
+    async def fake_ensure(pid, expected_type) -> None:
+        captured["ensure"] = expected_type
+
+    async def fake_status(pid) -> dict:
+        return {"outline": [{"chapter_no": "2", "title": "技术方案"}]}
+
+    def fake_apply(outline, adopted) -> list:
+        captured["apply"] = (outline, adopted)
+        return [{"chapter_no": "2", "title": "技术方案", "sections": ["进度计划"]}]
+
+    monkeypatch.setattr(workflow_runtime, "ensure_pending_interrupt", fake_ensure)
+    monkeypatch.setattr(workflow_runtime, "get_status_dict", fake_status)
+    monkeypatch.setattr(
+        "app.services.outline_suggest_service.apply_outline_suggestions", fake_apply
+    )
+    try:
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/workflow/outline-suggest/apply",
+            headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+            json={"adopted": ["add_section:2:4.2:progress"]},
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["outline"][0]["sections"] == ["进度计划"]
+        assert captured["ensure"] == "confirm_outline"
+        assert captured["apply"][1] == ["add_section:2:4.2:progress"]
+        assert captured["apply"][0][0]["title"] == "技术方案", "应读 state 大纲应用"
+        actions = [c.args[0].action for c in session.add.call_args_list]
+        assert "workflow.outline_suggest_apply" in actions
+        session.commit.assert_awaited()
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_section_suggest_no_auth(client: AsyncClient) -> None:
+    """未认证生成内容建议返回 401."""
+    response = await client.post(
+        "/api/v1/projects/00000000-0000-0000-0000-000000000001/workflow/section-suggest"
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_section_suggest_returns_suggestions(client: AsyncClient, monkeypatch) -> None:
+    """内容建议：读 state chapters/score_points → build → 返回（含指定章节）."""
+    from app.services import workflow_runtime
+
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = project
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    session.add = MagicMock()
+    app.dependency_overrides[get_db] = lambda: session
+
+    captured: dict = {}
+
+    async def fake_status(pid) -> dict:
+        return {"chapters": {"1": "内容"}, "score_points": [{"clause_no": "1"}]}
+
+    async def fake_build(chapters, score_points, chapter_no=None) -> list:
+        captured["build"] = (chapters, score_points, chapter_no)
+        return [{"chapter_no": "1", "issue": "缺少验收标准", "severity": "high"}]
+
+    monkeypatch.setattr(workflow_runtime, "get_status_dict", fake_status)
+    monkeypatch.setattr(
+        "app.services.section_suggest_service.build_section_suggestions", fake_build
+    )
+    try:
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/workflow/section-suggest",
+            headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+            json={"chapter_no": "1"},
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["suggestions"][0]["issue"] == "缺少验收标准"
+        assert captured["build"][0] == {"1": "内容"}
+        assert captured["build"][2] == "1", "body.chapter_no 应传递"
+        actions = [c.args[0].action for c in session.add.call_args_list]
+        assert "workflow.section_suggest" in actions
+        session.commit.assert_awaited()
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
 async def test_start_workflow_commits_audit(client: AsyncClient, monkeypatch) -> None:
     """BUG-1：启动工作流的审计写入在响应前显式 commit."""
     from app.services import workflow_runtime
