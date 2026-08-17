@@ -267,6 +267,71 @@
               </a-button>
             </a-card>
 
+            <!-- AI 优化建议（仅确认态）：规则/LLM 建议 → 勾选 → 应用重建编辑树 → 最终仍走 confirm-outline -->
+            <a-card
+              v-if="awaitingOutlineConfirm"
+              class="mb-4 outline-suggest-card"
+              title="AI 优化建议"
+            >
+              <template #extra>
+                <a-space size="middle">
+                  <a-button
+                    size="small"
+                    :loading="outlineSuggestLoading"
+                    @click="loadOutlineSuggestions"
+                  >
+                    <template #icon>
+                      <BulbOutlined />
+                    </template>
+                    获取建议
+                  </a-button>
+                  <a-button
+                    size="small"
+                    type="primary"
+                    :loading="applyingSuggestions"
+                    :disabled="adoptedSuggestionIds.length === 0"
+                    @click="handleApplyOutlineSuggestions"
+                  >
+                    应用建议
+                  </a-button>
+                </a-space>
+              </template>
+              <a-empty
+                v-if="outlineSuggestLoaded && outlineSuggestions.length === 0"
+                description="未发现可优化项"
+              />
+              <a-checkbox-group
+                v-else-if="outlineSuggestions.length > 0"
+                v-model:value="adoptedSuggestionIds"
+                class="outline-suggest__group"
+              >
+                <a-checkbox
+                  v-for="s in outlineSuggestions"
+                  :key="s.suggestion_id"
+                  :value="s.suggestion_id"
+                  class="outline-suggest__check"
+                >
+                  <div class="outline-suggest__body">
+                    <div class="outline-suggest__title">
+                      <a-tag :color="suggestTypeMeta[s.suggestion_type]?.color ?? 'default'">
+                        {{ suggestTypeMeta[s.suggestion_type]?.label ?? s.suggestion_type }}
+                      </a-tag>
+                      <span>{{ s.reason }}</span>
+                    </div>
+                    <div class="outline-suggest__action">
+                      {{ s.suggested_action }}
+                    </div>
+                  </div>
+                </a-checkbox>
+              </a-checkbox-group>
+              <div
+                v-else
+                class="outline-suggest__hint"
+              >
+                点击「获取建议」，AI 将对照评分点覆盖矩阵分析大纲，给出补充/调整建议
+              </div>
+            </a-card>
+
             <!-- 草稿恢复确认（进入大纲编辑时发现未保存草稿） -->
             <a-modal
               v-model:open="draftRestoreVisible"
@@ -321,15 +386,45 @@
               class="chapter-card"
             >
               <template #extra>
-                <a-button
-                  size="small"
-                  @click="selectedChapter = ''"
-                >
-                  关闭
-                </a-button>
+                <a-space size="small">
+                  <a-segmented
+                    v-model:value="sectionMode"
+                    :options="sectionModeOptions"
+                    :disabled="generating"
+                    size="small"
+                  />
+                  <a-button
+                    v-if="sectionMode === 'edit' && !generating"
+                    size="small"
+                    type="primary"
+                    :loading="savingSection"
+                    @click="handleSaveSection"
+                  >
+                    保存
+                  </a-button>
+                  <a-button
+                    v-if="sectionMode === 'edit' && !generating"
+                    size="small"
+                    @click="resetSectionDraft"
+                  >
+                    重置
+                  </a-button>
+                  <a-button
+                    size="small"
+                    @click="selectedChapter = ''"
+                  >
+                    关闭
+                  </a-button>
+                </a-space>
               </template>
+              <a-textarea
+                v-if="sectionMode === 'edit'"
+                v-model:value="sectionDrafts[selectedChapter]"
+                :rows="18"
+                class="chapter-editor"
+              />
               <MarkdownRenderer
-                v-if="displayChapters[selectedChapter]"
+                v-else-if="displayChapters[selectedChapter]"
                 :source="displayChapters[selectedChapter]"
               />
               <LoadingSkeleton
@@ -342,6 +437,74 @@
               class="chapter-card"
             >
               <EmptyState description="从左侧大纲选择章节查看内容" />
+            </a-card>
+
+            <!-- AI 改进建议（内容阶段）：建议 → 采纳重写（复用 rewrite-chapter，人工确认门禁） -->
+            <a-card
+              v-if="!awaitingOutlineConfirm && selectedChapter && generated"
+              class="mt-4 section-suggest-card"
+              size="small"
+              title="AI 改进建议"
+            >
+              <template #extra>
+                <a-button
+                  size="small"
+                  :loading="sectionSuggestLoading"
+                  @click="loadSectionSuggestions"
+                >
+                  <template #icon>
+                    <BulbOutlined />
+                  </template>
+                  获取建议
+                </a-button>
+              </template>
+              <a-empty
+                v-if="sectionSuggestLoaded && sectionSuggestions.length === 0"
+                description="未发现可优化项"
+              />
+              <a-list
+                v-else-if="sectionSuggestions.length > 0"
+                size="small"
+                :data-source="sectionSuggestions"
+              >
+                <template #renderItem="{ item }">
+                  <a-list-item>
+                    <a-list-item-meta>
+                      <template #title>
+                        <a-space size="small">
+                          <a-tag :color="item.severity === 'high' ? 'red' : 'orange'">
+                            {{ item.severity === 'high' ? '高优先级' : '中优先级' }}
+                          </a-tag>
+                          <span>章节 {{ item.chapter_no }}：{{ item.issue }}</span>
+                        </a-space>
+                      </template>
+                      <template #description>
+                        {{ item.suggestion }}
+                      </template>
+                    </a-list-item-meta>
+                    <a-popconfirm
+                      title="确认采纳该建议？将触发 AI 重写章节"
+                      :ok-text="'确认重写'"
+                      cancel-text="取消"
+                      @confirm="handleAdoptSectionSuggestion(item)"
+                    >
+                      <a-button
+                        size="small"
+                        type="link"
+                        :disabled="rewritingChapter"
+                      >
+                        采纳重写
+                      </a-button>
+                    </a-popconfirm>
+                  </a-list-item>
+                </template>
+              </a-list>
+              <div
+                v-else
+                class="section-suggest__hint"
+              >
+                点击「获取建议」，AI 将对照评分点分析章节内容，给出改进方向
+              </div>
             </a-card>
 
             <!-- 操作按钮 -->
@@ -387,7 +550,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { DatabaseOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { BulbOutlined, DatabaseOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import api from '@/api/client'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -898,6 +1061,166 @@ const progressStatus = computed(() => {
 /** 每章展示内容：直接渲染 WS 增量累积的文本（section_done 全量兜底对齐） */
 const displayChapters = computed(() => chapters.value)
 
+/* ---------------- 章节人工编辑（预览/编辑切换 + 保存落库 PUT sections） ---------------- */
+const sectionMode = ref<'edit' | 'preview'>('preview')
+const sectionModeOptions = [
+  { label: '预览', value: 'preview' },
+  { label: '编辑', value: 'edit' },
+]
+const sectionDrafts = ref<Record<string, string>>({})
+const savingSection = ref(false)
+
+/** 选中章节变化 → 初始化编辑草稿（保留已输入内容；生成中由 disabled 禁止编辑） */
+watch(selectedChapter, (no) => {
+  if (!no) return
+  if (sectionDrafts.value[no] === undefined) {
+    sectionDrafts.value[no] = chapters.value[no] || ''
+  }
+})
+
+/** 保存章节编辑：PUT sections/{chapter_no} 直接落库（state + proposal_sections 双写） */
+const handleSaveSection = async () => {
+  const no = selectedChapter.value
+  const content = sectionDrafts.value[no]?.trim() ?? ''
+  if (!no) return
+  if (!content) {
+    message.warning('章节内容不能为空')
+    return
+  }
+  if (savingSection.value) return
+  savingSection.value = true
+  try {
+    await api.put(`/projects/${projectId}/workflow/sections/${no}`, { content })
+    chapters.value[no] = content
+    sectionDrafts.value[no] = content
+    sectionMode.value = 'preview'
+    message.success(`章节 ${no} 已保存到正式方案`)
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '章节保存失败')
+  } finally {
+    savingSection.value = false
+  }
+}
+
+/** 重置当前章节编辑草稿为已保存内容 */
+const resetSectionDraft = () => {
+  const no = selectedChapter.value
+  if (no) sectionDrafts.value[no] = chapters.value[no] || ''
+}
+
+/* ---------------- AI 优化建议（大纲确认态：规则/LLM → 勾选应用 → 重建编辑树） ---------------- */
+interface OutlineSuggestion {
+  suggestion_id: string
+  suggestion_type: 'add_section' | 'add_chapter' | 'rename' | 'merge'
+  target: Record<string, string>
+  reason: string
+  suggested_action: string
+}
+
+const outlineSuggestions = ref<OutlineSuggestion[]>([])
+const adoptedSuggestionIds = ref<string[]>([])
+const outlineSuggestLoading = ref(false)
+const outlineSuggestLoaded = ref(false)
+const applyingSuggestions = ref(false)
+
+const suggestTypeMeta: Record<string, { color: string; label: string }> = {
+  add_section: { color: 'blue', label: '补充小节' },
+  add_chapter: { color: 'green', label: '新增章节' },
+  rename: { color: 'orange', label: '修改标题' },
+  merge: { color: 'purple', label: '合并章节' },
+}
+
+/** 获取大纲优化建议（瞬态数据；最终执行仍由 confirm-outline 人工确认） */
+const loadOutlineSuggestions = async () => {
+  outlineSuggestLoading.value = true
+  try {
+    const res = await api.post(`/projects/${projectId}/workflow/outline-suggest`)
+    outlineSuggestions.value = res.data?.data?.suggestions ?? []
+    outlineSuggestLoaded.value = true
+    adoptedSuggestionIds.value = []
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '获取大纲优化建议失败')
+  } finally {
+    outlineSuggestLoading.value = false
+  }
+}
+
+/** 应用建议：返回调整后大纲 → 重建编辑树（不写 state，仍需人工确认后生成） */
+const handleApplyOutlineSuggestions = async () => {
+  if (adoptedSuggestionIds.value.length === 0) return
+  applyingSuggestions.value = true
+  try {
+    const res = await api.post(`/projects/${projectId}/workflow/outline-suggest/apply`, {
+      adopted: adoptedSuggestionIds.value,
+    })
+    const newOutline = res.data?.data?.outline
+    if (Array.isArray(newOutline)) {
+      outline.value = newOutline // watch(outline) → syncTreeFromOutline 重建编辑树
+      outlineSuggestions.value = []
+      adoptedSuggestionIds.value = []
+      outlineSuggestLoaded.value = false
+      message.success('已生成调整后大纲，请核对后确认')
+    }
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '应用建议失败')
+  } finally {
+    applyingSuggestions.value = false
+  }
+}
+
+/* ---------------- AI 改进建议（内容阶段：规则/LLM → 采纳重写复用 rewrite-chapter） ---------------- */
+interface SectionSuggestion {
+  chapter_no: string
+  issue: string
+  suggestion: string
+  severity: string
+}
+
+const sectionSuggestions = ref<SectionSuggestion[]>([])
+const sectionSuggestLoading = ref(false)
+const sectionSuggestLoaded = ref(false)
+const rewritingChapter = ref(false)
+
+/** 获取当前章节内容改进建议 */
+const loadSectionSuggestions = async () => {
+  sectionSuggestLoading.value = true
+  try {
+    const res = await api.post(`/projects/${projectId}/workflow/section-suggest`, {
+      chapter_no: selectedChapter.value || undefined,
+    })
+    sectionSuggestions.value = res.data?.data?.suggestions ?? []
+    sectionSuggestLoaded.value = true
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '获取内容改进建议失败')
+  } finally {
+    sectionSuggestLoading.value = false
+  }
+}
+
+/** 采纳建议 → 触发单章 AI 重写（复用既有 rewrite-chapter 端点，同步返回新内容） */
+const handleAdoptSectionSuggestion = async (item: SectionSuggestion) => {
+  if (rewritingChapter.value) return
+  rewritingChapter.value = true
+  try {
+    const res = await api.post(`/projects/${projectId}/workflow/rewrite-chapter`, null, {
+      params: { chapter_no: item.chapter_no, comment: item.suggestion },
+    })
+    const content = res.data?.data?.content
+    if (typeof content === 'string') chapters.value[item.chapter_no] = content
+    delete sectionDrafts.value[item.chapter_no]
+    message.success(`章节 ${item.chapter_no} 已按建议重写`)
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '章节重写失败')
+  } finally {
+    rewritingChapter.value = false
+  }
+}
+
 // 当前生成章节切换 → 自动选中查看
 watch(currentChapter, (no) => {
   if (no && generating.value && !selectedChapter.value) {
@@ -1225,6 +1548,57 @@ onUnmounted(() => {
 
 .outline-edit-card {
   background: var(--card-bg);
+}
+
+.chapter-editor {
+  font-family: 'Consolas', 'Microsoft YaHei', monospace;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.outline-suggest-card,
+.section-suggest-card {
+  background: var(--card-bg);
+}
+
+.outline-suggest__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.outline-suggest__check {
+  display: flex;
+  align-items: flex-start;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color, #f0f0f0);
+  border-radius: 6px;
+  width: 100%;
+}
+
+.outline-suggest__body {
+  margin-left: 4px;
+  min-width: 0;
+}
+
+.outline-suggest__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.outline-suggest__action,
+.section-suggest__hint {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary, #999);
+}
+
+.section-suggest__hint {
+  padding: 4px 0;
 }
 
 .mt-4 {

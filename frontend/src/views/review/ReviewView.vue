@@ -117,6 +117,16 @@
               <a-button
                 v-if="mode === 'edit'"
                 size="small"
+                type="primary"
+                :loading="savingSection"
+                :disabled="!hasEditDraft(activeChapter)"
+                @click="handleSaveEditDraft"
+              >
+                保存
+              </a-button>
+              <a-button
+                v-if="mode === 'edit'"
+                size="small"
                 @click="resetEditDraft"
               >
                 重置
@@ -140,7 +150,7 @@
               />
             </a-card>
             <div class="feedback-hint">
-              <InfoCircleOutlined /> 编辑内容仅保存在本地，提交「反馈重写」后将触发 AI 重写章节
+              <InfoCircleOutlined /> 编辑保存后写入正式方案内容；或提交「反馈重写」触发 AI 重写
             </div>
           </a-layout-content>
         </a-layout>
@@ -290,14 +300,22 @@ const displayContent = computed(
   () => editDrafts.value[activeChapter.value] ?? chapters.value[activeChapter.value] ?? '',
 )
 
-/** 章节状态（展示层语义）：曾提交过反馈=待重写，否则=待审 */
+/** 本地草稿是否与已保存内容不同（未保存标记：提醒保存） */
+const hasEditDraft = (chapterNo: string): boolean => {
+  const draft = editDrafts.value[chapterNo]
+  return draft !== undefined && draft !== chapters.value[chapterNo]
+}
+
+/** 章节状态（展示层语义）：待重写（曾提交反馈）> 已修改（未保存草稿）> 待审 */
 const chapterStateText = (chapterNo: string): string => {
   if (reviewFeedback.value[chapterNo]) return '待重写'
+  if (hasEditDraft(chapterNo)) return '已修改'
   return '待审'
 }
 
 const chapterStateColor = (chapterNo: string): string => {
   if (reviewFeedback.value[chapterNo]) return 'orange'
+  if (hasEditDraft(chapterNo)) return 'blue'
   return 'default'
 }
 
@@ -310,6 +328,32 @@ const selectChapter = (chapterNo: string) => {
 
 const resetEditDraft = () => {
   editDrafts.value[activeChapter.value] = chapters.value[activeChapter.value] || ''
+}
+
+const savingSection = ref(false)
+
+/** 保存章节编辑：PUT sections/{chapter_no} 直接落库，成功后清除本地草稿 */
+const handleSaveEditDraft = async () => {
+  const no = activeChapter.value
+  const content = editDrafts.value[no]?.trim() ?? ''
+  if (!no) return
+  if (!content) {
+    message.warning('章节内容不能为空')
+    return
+  }
+  if (savingSection.value) return
+  savingSection.value = true
+  try {
+    await api.put(`/projects/${projectId}/workflow/sections/${no}`, { content })
+    chapters.value[no] = content
+    delete editDrafts.value[no]
+    message.success(`章节 ${no} 已保存到正式方案`)
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '章节保存失败')
+  } finally {
+    savingSection.value = false
+  }
 }
 
 let pollTimer: number | null = null
