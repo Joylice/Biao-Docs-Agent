@@ -356,9 +356,9 @@ async def _clear_outline_draft(db, project_id: str) -> None:
 
 
 async def retrieve_node(state: dict) -> dict:
-    """节点：RAG 检索当前章节素材（检索失败降级为空素材）."""
+    """节点：RAG 检索当前章节素材（召回+rerank 精排；检索失败降级为空素材）."""
     from app.services.chapter_service import flatten_sections
-    from app.services.rag_service import get_embedding, retrieve_similar
+    from app.services.rag_service import get_embedding, retrieve_with_rerank
 
     project_id = state.get("project_id", "")
     outline = state.get("outline", [])
@@ -377,9 +377,10 @@ async def retrieve_node(state: dict) -> dict:
         query = f"{next_chapter.get('title', '')} {sec_text}"
         query_embedding = await get_embedding(query)
         async with async_session_factory() as db:  # 只读块，无需 commit
-            results = await retrieve_similar(
+            results = await retrieve_with_rerank(
                 db=db,
                 project_id=uuid.UUID(project_id),
+                query=query,
                 query_embedding=query_embedding,
                 top_k=8,
                 doc_ids=(

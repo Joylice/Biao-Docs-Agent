@@ -128,7 +128,10 @@ class TestRetrieveNode:
             return [0.1, 0.2]
 
         async def fake_retrieve(**kwargs):
-            assert kwargs["top_k"] == 8
+            # 接入 rerank 后召回池放宽到 RERANK_RECALL_K（精排后截断到 top_k=8）
+            from app.services import rag_service
+
+            assert kwargs["top_k"] == rag_service.RERANK_RECALL_K
             return [
                 type("Chunk", (), {"content": "素材A"})(),
                 type("Chunk", (), {"content": "素材B"})(),

@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     embedding_dimension: int = 1024
     embedding_api_base: str = "http://localhost:11434/v1"
 
+    # ── Rerank 精排（云端 API，DashScope gte-rerank 兼容协议）──
+    # 默认关闭（opt-in）：未启用/未配置密钥/mock 模式下检索保持原向量序。
+    # api_key 仅经环境变量注入，禁止写入日志与明文文档。
+    rerank_enabled: bool = False
+    rerank_api_base: str = (
+        "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    )
+    rerank_api_key: str = ""
+    rerank_model: str = "gte-rerank"
+
     # ── 上传限制 ──
     max_upload_size_mb: int = 50
     allowed_upload_types: list[str] = [

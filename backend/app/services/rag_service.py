@@ -134,7 +134,7 @@ async def search_materials(
     min_score: float = 0.0,
     doc_ids: list[uuid.UUID] | None = None,
 ) -> list[dict]:
-    """资料库检索（API 层入口）：查询文本 → embedding → 相似度检索 → 补文档标题.
+    """资料库检索（API 层入口）：查询文本 → embedding → 召回+精排 → 补文档标题.
 
     doc_ids: 显式指定检索范围（全局资料库等跨项目场景传 doc_ids 过滤）；
     None 时按 project_id 检索项目文档。
@@ -147,9 +147,10 @@ async def search_materials(
 
     mock_enabled = await settings_service.is_mock_enabled()
     query_embedding = await get_embedding(query)
-    results = await retrieve_similar(
+    results = await retrieve_with_rerank(
         db=db,
         project_id=project_id,
+        query=query,
         query_embedding=query_embedding,
         top_k=top_k,
         threshold=-1.0 if mock_enabled else min_score,
@@ -176,6 +177,38 @@ async def search_materials(
         }
         for r in results
     ]
+
+
+# rerank 精排召回候选池（向量召回放宽到该数量，精排后截断到请求 top_k）
+RERANK_RECALL_K = 30
+
+
+async def retrieve_with_rerank(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    query: str,
+    query_embedding: np.ndarray,
+    top_k: int = 8,
+    threshold: float = 0.3,
+    doc_ids: list[uuid.UUID] | None = None,
+) -> list[ChunkResult]:
+    """向量召回（候选池放宽）→ rerank 精排 → 取前 top_k.
+
+    rerank 直通/降级语义由 rerank_service 保证（mock/未启用/失败 → 原向量序），
+    本函数不感知精排是否真实发生。
+    """
+    # 延迟 import 避免循环依赖（rerank_service 引用本模块 ChunkResult）
+    from app.services import rerank_service
+
+    candidates = await retrieve_similar(
+        db=db,
+        project_id=project_id,
+        query_embedding=query_embedding,
+        top_k=max(top_k, RERANK_RECALL_K),
+        threshold=threshold,
+        doc_ids=doc_ids,
+    )
+    return await rerank_service.rerank(query, candidates, top_n=top_k)
 
 
 def _mock_embedding(text: str) -> np.ndarray:

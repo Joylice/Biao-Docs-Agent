@@ -67,23 +67,25 @@ async def generate_chapter(
     if not context:
         try:
             from app.core.database import async_session_factory
-            from app.services.rag_service import get_embedding, retrieve_similar
+            from app.services.rag_service import get_embedding, retrieve_with_rerank
 
             query = f"{chapter_title} {' '.join(sections)}"
             query_embedding = await get_embedding(query)
             if db is not None:
-                similar_chunks = await retrieve_similar(
+                similar_chunks = await retrieve_with_rerank(
                     db=db,
                     project_id=project_id,
+                    query=query,
                     query_embedding=query_embedding,
                     top_k=10,
                     doc_ids=doc_ids,
                 )
             else:
                 async with async_session_factory() as session:
-                    similar_chunks = await retrieve_similar(
+                    similar_chunks = await retrieve_with_rerank(
                         db=session,
                         project_id=project_id,
+                        query=query,
                         query_embedding=query_embedding,
                         top_k=10,
                         doc_ids=doc_ids,

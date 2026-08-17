@@ -551,16 +551,29 @@ graph.add_edge("export", END)
 ```
 用户查询（章节主题 + 评分点描述）
   → bge-m3 Embedding（query）
-  → pgvector cosine 检索 Top-K=20（限定该用户可见 doc 集合）
-  → 去重 + 按 doc_type 加权（case_study 优先）
-  → 返回 Top-8 素材给撰写节点
+  → pgvector cosine 召回 Top-K=30（RERANK_RECALL_K，限定该用户可见 doc 集合）
+  → 云端 Rerank 精排（DashScope gte-rerank 兼容协议，按 relevance_score 降序）
+  → 截断返回 Top-8 素材给撰写节点
 ```
+
+接入点：`rag_service.retrieve_with_rerank()` 统一入口，`retrieve_node`（章节撰写检索）、`search_materials`（资料检索端点）、`chapter_service` 兜底检索均已接入；纯向量 `retrieve_similar` 保留作为召回层。
+
+**Rerank 降级矩阵**（`rerank_service.rerank`，一律返回原向量序、不抛异常、不阻塞检索）：
+
+| 场景 | 行为 |
+|---|---|
+| LLM mock 模式 | 直通原序（保持 E2E 确定性） |
+| `BID_RERANK_ENABLED=false` 或未配置 `BID_RERANK_API_KEY` | 直通原序（不外发） |
+| 空候选 | 直通空列表 |
+| API 超时（10s）/HTTP 错误/响应结构非法/index 越界 | 降级原序；越界 index 忽略，未覆盖候选按原序补尾 |
+
+配置项（env）：`BID_RERANK_ENABLED`、`BID_RERANK_API_BASE`（默认 DashScope text-rerank 端点）、`BID_RERANK_API_KEY`、`BID_RERANK_MODEL`（默认 `gte-rerank`）。安全：查询与候选文本外发前经 `redact()` 脱敏；api_key 仅入请求头，不入日志/明文。
 
 ### 7.3 质量兜底
 
 - 检索为空 → 提示"资料库无相关内容"，撰写节点降级为基于通用知识撰写并标记"待人工补充"；
 - 引用溯源：写入 `proposal_sections.citations`，导出时标注 `【来源：XX P12】`；
-- MVP 不引入 Reranker/评测集（P2），用人工确认页兜底。
+- Reranker 已引入（云端 API，见 7.2 降级矩阵）；评测集仍留待后续（用人工确认页兜底）。
 
 ---
 

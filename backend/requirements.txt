@@ -50,5 +50,8 @@ websockets>=12.0,<14.0
 # --- Embedding ---
 numpy>=1.26,<3.0
 
+# --- Rerank 精排（云端 API HTTP 客户端）---
+httpx>=0.27,<1.0
+
 # --- Prompt Templates ---
 pyyaml>=6.0,<7.0

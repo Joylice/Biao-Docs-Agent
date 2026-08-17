@@ -152,6 +152,65 @@ class TestRetrieveSimilarDocFilter:
         db.execute.assert_not_called()
 
 
+class TestRetrieveWithRerank:
+    """retrieve_with_rerank — 向量召回(扩池) → rerank 精排 → 截断 top_k."""
+
+    @pytest.mark.asyncio
+    async def test_recall_expanded_and_rerank_applied(self, monkeypatch) -> None:
+        """召回候选池放宽到 RERANK_RECALL_K，精排后截断到 top_k."""
+        captured: dict = {}
+        chunks = [
+            ChunkResult(uuid.uuid4(), uuid.uuid4(), f"c{i}", 1, 0.9 - i * 0.1) for i in range(5)
+        ]
+
+        async def fake_retrieve(**kwargs):
+            captured.update(kwargs)
+            return chunks
+
+        async def fake_rerank(query, candidates, *, top_n=None):
+            captured["rerank_query"] = query
+            captured["top_n"] = top_n
+            # 模拟精排：倒序
+            return list(reversed(candidates))[:top_n] if top_n else list(reversed(candidates))
+
+        monkeypatch.setattr(rag_service, "retrieve_similar", fake_retrieve)
+        monkeypatch.setattr("app.services.rerank_service.rerank", fake_rerank)
+
+        results = await rag_service.retrieve_with_rerank(
+            db=MagicMock(),
+            project_id=uuid.uuid4(),
+            query="高可用架构",
+            query_embedding=np.array([0.1, 0.2]),
+            top_k=2,
+        )
+        # 召回池放宽
+        assert captured["top_k"] == rag_service.RERANK_RECALL_K
+        # 精排收到原查询与 top_n 截断参数
+        assert captured["rerank_query"] == "高可用架构"
+        assert captured["top_n"] == 2
+        # 精排结果生效（倒序后取前 2）
+        assert [c.content for c in results] == ["c4", "c3"]
+
+    @pytest.mark.asyncio
+    async def test_top_k_larger_than_recall_keeps_top_k(self, monkeypatch) -> None:
+        """top_k 大于召回池时召回量不小于 top_k（不缩小召回）."""
+        captured: dict = {}
+
+        async def fake_retrieve(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr(rag_service, "retrieve_similar", fake_retrieve)
+        await rag_service.retrieve_with_rerank(
+            db=MagicMock(),
+            project_id=uuid.uuid4(),
+            query="q",
+            query_embedding=np.array([0.1]),
+            top_k=50,
+        )
+        assert captured["top_k"] == 50
+
+
 class TestSearchMaterials:
     """search_materials — 检索端点服务层（E2E-03 缺口补齐）."""
 
@@ -169,7 +228,8 @@ class TestSearchMaterials:
             db, project_id, query_embedding, top_k=20, threshold=0.3, doc_ids=None
         ):
             assert project_id == expected_project_id
-            assert top_k == 5
+            # 接入 rerank 后召回池放宽到 RERANK_RECALL_K，精排后截断到请求 top_k
+            assert top_k == rag_service.RERANK_RECALL_K
             return [
                 ChunkResult(
                     chunk_id=chunk_id,
