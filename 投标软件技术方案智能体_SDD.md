@@ -207,6 +207,7 @@ class BidState(TypedDict):
 - 审阅页：左侧章节树 + 右侧 Markdown 渲染（预览）；
 - 每章操作：通过 / 编辑（直接改正文）/ 反馈重写（输入修改意见）；
 - 编辑与反馈均写入 `reviews` 表 → 触发 `rewrite` 节点仅重写该章（携带原文 + 反馈 + 检索素材）；
+- 人工编辑保存（2026-08-17）：编辑态「保存」调 PUT workflow/sections/{chapter_no} 直接落库（state 与 proposal_sections 双写、摘要重算），成功清除本地草稿；章节列表 tag 区分「已修改」（本地草稿未保存）/「待审」/「待重写」，提醒保存；与「反馈重写」并存互不覆盖；
 - 版本：MVP 不做版本表，重写即覆盖 + `updated_at` 留痕；批注历史保留在 reviews 表（可追溯）。
 
 ### 3.7 文档导出模块
@@ -439,6 +440,10 @@ CREATE TABLE llm_settings (
 | POST | /projects/{pid}/workflow/confirm-review | 审阅确认：approved → 导出；feedback → 章节重写后复审 |
 | POST | /projects/{pid}/workflow/rewrite-chapter | 按审阅意见重写指定章节（query 参数 chapter_no、comment） |
 | GET | /projects/{pid}/workflow/export | 导出 Word（返回导出状态与存储 key） |
+| PUT | /projects/{pid}/workflow/sections/{chapter_no} | 章节人工编辑保存（2026-08-17：body.content；章节不存在于 state chapters 返回 4004；update_state 回写 chapters/chapter_summaries（摘要重算保章间上下文链路）+ proposal_sections upsert（content_md/status=review/updated_at，对齐 write_node 的 _upsert_section 口径）；仅项目成员；审计 workflow.section_edit） |
+| POST | /projects/{pid}/workflow/outline-suggest | 大纲优化建议（2026-08-17：仅 confirm_outline 挂起时可用；mock 模式确定性规则建议（覆盖矩阵缺口→add_section/add_chapter），生产模式 LLM schema 建议（外发前 redact，失败降级规则建议）；建议为瞬态数据不落库） |
+| POST | /projects/{pid}/workflow/outline-suggest/apply | 应用大纲建议（2026-08-17：body.adopted 为 suggestion_id 列表；纯函数应用返回调整后大纲供人工核对，不写 state——最终执行仍由 confirm-outline 人工确认） |
+| POST | /projects/{pid}/workflow/section-suggest | 内容改进建议（2026-08-17：body.chapter_no 可选；mock 规则建议/生产 LLM schema（redact，失败降级空列表）；采纳执行复用 rewrite-chapter） |
 | GET | /projects/{pid}/skeleton | 方案骨架 |
 | GET | /projects/{pid}/sections | 章节列表（含状态/内容） |
 | PUT | /projects/{pid}/sections/{sid} | 章节编辑（人工直接改） |
@@ -451,7 +456,7 @@ CREATE TABLE llm_settings (
 
 **前端 HITL 交互契约**（2026-08-16 补）：所有 confirm 端点均校验 pending interrupt，前端不得直接调用，须先确保工作流停在对应 interrupt：
 - 招标解析页（ParseView 内嵌 ParseConfirmView）：「确认并生成大纲」先 GET workflow/status，无挂起 interrupt 则 POST workflow/start，轮询（1s×60）直到 interrupt.type=confirm_score_points 再调 confirm-score-points；state.error 非空时展示解析失败原因。**短路引导（2026-08-16）**：status 已挂起其他类型 interrupt（大纲确认/章节审阅）或 phase 已推进到 outline 之后（generate/review/done）时，不重复 start（在途重复启动被后端 4009 拒绝）也不盲等，立即提示「工作流已进入后续阶段，请前往方案生成页继续操作」；phase=confirm 无 interrupt 时（parse 节点刚完成、interrupt 即将挂起）仅轮询等待不 start。页面存在 uploaded/parsing 状态招标文件时每 5s 自动轮询解析状态。
-- 方案生成页（GenerateView）按 workflow/status 三态呈现：① phase=init 或停在 confirm_score_points → 引导回招标解析页；② 已启动但 outline 为空 → 大纲后台生成中，每 2s 轮询 status（上限 4 分钟）；③ interrupt=confirm_outline → 展示大纲（每章标注覆盖评分点条款号 covered_clauses）、资料库挂载配置与「大纲编辑」卡片（**树形编辑**：递归树形结构，章节编号 1/1.1/1.1.1 按位置自动重算，支持增删子节/上下移/升降级（≤4 层）/改标题与覆盖评分点；**左侧大纲树** a-tree 与编辑区实时同步，生成态展示大纲章节+子节），**草稿保存**（防抖 2s 自动 PUT outline-draft + 手动保存 + 刷新后 GET 拉取弹恢复弹窗，confirm-outline 确认成功后自动清除），操作按钮：「重新生成大纲」（popconfirm 确认后调 regenerate-outline，完成后自动刷新）与「确认并生成」（primary，即 confirm-outline，携带编辑后 outline + mounted_doc_ids；前端先校验至少 1 章且标题非空）。章节生成期间除 WS 流式事件外，每 3s 轮询 status 兜底（progress≥0.75 或 phase=review/done 视为完成，防 WS done 事件丢失后页面永久停留在生成中）。前端失败提示透出后端 BizError message。
+- 方案生成页（GenerateView）按 workflow/status 三态呈现：① phase=init 或停在 confirm_score_points → 引导回招标解析页；② 已启动但 outline 为空 → 大纲后台生成中，每 2s 轮询 status（上限 4 分钟）；③ interrupt=confirm_outline → 展示大纲（每章标注覆盖评分点条款号 covered_clauses）、资料库挂载配置与「大纲编辑」卡片（**树形编辑**：递归树形结构，章节编号 1/1.1/1.1.1 按位置自动重算，支持增删子节/上下移/升降级（≤4 层）/改标题与覆盖评分点；**左侧大纲树** a-tree 与编辑区实时同步，生成态展示大纲章节+子节），**草稿保存**（防抖 2s 自动 PUT outline-draft + 手动保存 + 刷新后 GET 拉取弹恢复弹窗，confirm-outline 确认成功后自动清除），操作按钮：「重新生成大纲」（popconfirm 确认后调 regenerate-outline，完成后自动刷新）与「确认并生成」（primary，即 confirm-outline，携带编辑后 outline + mounted_doc_ids；前端先校验至少 1 章且标题非空）。章节生成期间除 WS 流式事件外，每 3s 轮询 status 兜底（progress≥0.75 或 phase=review/done 视为完成，防 WS done 事件丢失后页面永久停留在生成中）。前端失败提示透出后端 BizError message。章节卡片支持预览/编辑切换（a-segmented + textarea，生成中禁用），编辑态「保存」调 PUT workflow/sections/{chapter_no} 直接落库（成功刷新章节内容、重置草稿）；大纲确认态新增「AI 优化建议」卡片（获取建议 → 勾选 → 应用建议 → 返回调整后大纲重建编辑树并提示「已生成调整后大纲，请核对后确认」，最终仍走 confirm-outline 人工确认）；内容阶段章节卡片新增「AI 改进建议」（对当前章或全部已生成章，每条「采纳重写」popconfirm 确认后复用 rewrite-chapter）；无建议时展示「未发现可优化项」。
 
 ### 5.2 WebSocket
 
@@ -510,6 +515,8 @@ graph.add_edge("export", END)
 **草稿联动与嵌套 sections**（2026-08-16）：① `confirm_outline` 确认成功后调用 `_clear_outline_draft` 清除 `proposal_skeletons.draft`（防陈旧草稿下次进入编辑态误恢复）；② `retrieve_node`/`generate_chapter` 经 `flatten_sections` 兼容大纲 sections 两种形态——字符串数组（`["背景","政策"]`）与嵌套树（`[{title,children}]`），递归推导编号 1/1.1/1.1.1 并扁平化为子节列表，前端树形编辑（嵌套 children）与后端扁平消费（string[]）解耦；③ 草稿三函数（save/get/clear）实于 `workflow_runtime`，API 三端点（PUT/GET/DELETE outline-draft）含审计埋点，前端防抖 2s 自动保存 + mounted_doc_ids 随草稿一并存取。
 
 **重新生成大纲**：`workflow_runtime.regenerate_outline` 仅允许 confirm_outline interrupt 挂起时调用（先经 ensure_pending_interrupt 校验，否则 4009）；实现为 resume confirm_outline 节点（resume 值 `{"action": "regenerate"}`）返回图边标记 `regenerate_requested`，经 `outline_route` 条件边（confirm_outline → generate_outline → confirm_outline 回边）重新生成并落库 `proposal_skeletons`，**节点返回值正常写入 checkpoint**（state.outline 与 DB 一致），随后再次 interrupt 挂起（保留 pending interrupt，前端可继续确认，支持多次重新生成）；确认（True/confirmed）后清除标记返回进入章节生成。历史缺陷：曾内联调用 generate_outline_node（普通函数返回不经图，checkpoint 仍旧大纲、DB 已新大纲），确认后章节按旧大纲生成——2026-08-16 已改图边路由根治（回归样本验证）。异常经 BizError 5011 透出。
+
+**人工编辑保存与两阶段建议闭环（2026-08-17）**：① 人工编辑保存 `workflow_runtime.save_section_edit`——校验章节存在于 state chapters（否则 4004）→ `update_state` 回写 `chapters`/`chapter_summaries`（`extract_chapter_summary` 摘要重算，保全文一致性链路）→ `proposal_sections` upsert（content_md/status=review/updated_at，对齐 write_node 的 `_upsert_section` 口径）；② 大纲建议 `outline_suggest_service`——`build_outline_suggestions`（mock 模式规则建议：覆盖矩阵缺口→add_section/add_chapter，评分点含 LLM 占位数据时触发确定性兜底建议保证 mock 下 E2E 可断言；生产模式 LLM schema 建议，外发前 redact，失败降级规则建议）+ `apply_outline_suggestions` 纯函数按 suggestion_id 应用（suggestion_id 服务端编码 `{type}:{参数}:{b64(标题)}`，应用幂等去重）；建议为瞬态数据不落库，apply 仅返回调整后大纲供人工核对，最终执行仍由 confirm-outline 人工确认；③ 内容建议 `section_suggest_service`——mock 模式规则建议（未覆盖评分点 → 最相关已生成章节，severity 随星标）/生产模式 LLM schema（redact，失败降级空列表）；采纳执行复用 rewrite-chapter 既有链路（人工确认门禁）。
 
 ### 6.2 HITL 与中断恢复
 

@@ -511,6 +511,167 @@ test.describe('方案生成闭环', () => {
     expect(((await rwMissing.json()) as BizResponse).code).toBe(4004);
   });
 
+  test('章节人工编辑保存：PUT sections 落库，刷新状态仍为编辑内容', async ({ api: apiCtx }) => {
+    test.skip(!llmMockEnabled(), '前置条件：需后端以 BID_LLM_MOCK=true 启动。');
+
+    const user = await registerAndLogin(apiCtx, 'wf-save-edit');
+    const project = await createProject(apiCtx, user);
+    await uploadParsedTender(apiCtx, user, project.id);
+
+    const review = await driveToReview(apiCtx, user, project.id);
+    const chapterNo = Object.keys(review.chapters)[0];
+    const edited = `# 章节 ${chapterNo}（人工编辑保存）\n\n这是通过生成页编辑并保存的正式内容。`;
+
+    const resp = await apiCtx.put(
+      api(`/projects/${project.id}/workflow/sections/${encodeURIComponent(chapterNo)}`),
+      { headers: bearer(user), data: { content: edited } },
+    );
+    expect(resp.status(), `保存失败: ${await resp.text()}`).toBe(200);
+
+    // 重新拉取状态（刷新）仍显示编辑内容
+    const statusResp = await apiCtx.get(api(`/projects/${project.id}/workflow/status`), {
+      headers: bearer(user),
+    });
+    const statusBody = (await statusResp.json()) as BizResponse<WorkflowStatus>;
+    expect(statusBody.data.chapters[chapterNo]).toBe(edited);
+
+    // 未生成章节保存被拒（4004 → HTTP 404）
+    const missing = await apiCtx.put(api(`/projects/${project.id}/workflow/sections/99`), {
+      headers: bearer(user),
+      data: { content: 'x' },
+    });
+    expect(missing.status()).toBe(404);
+    expect(((await missing.json()) as BizResponse).code).toBe(4004);
+  });
+
+  test('大纲优化建议：建议 → 应用 → 大纲更新 → 人工确认后生成', async ({ api: apiCtx }) => {
+    test.skip(!llmMockEnabled(), '前置条件：需后端以 BID_LLM_MOCK=true 启动。');
+
+    const user = await registerAndLogin(apiCtx, 'wf-outline-suggest');
+    const project = await createProject(apiCtx, user);
+    await uploadParsedTender(apiCtx, user, project.id);
+
+    await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
+    await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'confirm_score_points',
+      30_000,
+    );
+    await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-score-points`), {
+      headers: bearer(user),
+    });
+    const outlineStatus = await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'confirm_outline',
+      30_000,
+    );
+
+    // mock 模式：规则建议确定性可断言（占位数据兜底 → 非空建议）
+    const suggestResp = await apiCtx.post(
+      api(`/projects/${project.id}/workflow/outline-suggest`),
+      { headers: bearer(user) },
+    );
+    expect(suggestResp.status(), `建议失败: ${await suggestResp.text()}`).toBe(200);
+    const suggestBody = (await suggestResp.json()) as BizResponse<{
+      suggestions: Array<{
+        suggestion_id: string;
+        suggestion_type: string;
+        target: Record<string, string>;
+        reason: string;
+      }>;
+    }>;
+    expect(suggestBody.data.suggestions.length).toBeGreaterThan(0);
+    const s = suggestBody.data.suggestions[0];
+    expect(s.suggestion_id).toBeTruthy();
+    expect(['add_section', 'add_chapter', 'rename', 'merge']).toContain(s.suggestion_type);
+    expect(s.reason).toBeTruthy();
+
+    // 应用建议 → 返回调整后大纲（不写 state：status 仍为原大纲，等待人工确认）
+    const applyResp = await apiCtx.post(
+      api(`/projects/${project.id}/workflow/outline-suggest/apply`),
+      { headers: bearer(user), data: { adopted: [s.suggestion_id] } },
+    );
+    expect(applyResp.status(), `应用建议失败: ${await applyResp.text()}`).toBe(200);
+    const applyBody = (await applyResp.json()) as BizResponse<{
+      outline: Array<{ chapter_no: string; title: string }>;
+    }>;
+    expect(applyBody.data.outline.length).toBe(outlineStatus.outline.length + 1);
+    expect(applyBody.data.outline[applyBody.data.outline.length - 1].title).toBeTruthy();
+
+    const unchanged = await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'confirm_outline',
+      10_000,
+    );
+    expect(unchanged.outline.length).toBe(outlineStatus.outline.length);
+
+    // 人工确认调整后大纲 → 章节按新结构生成 → review 挂起
+    const confirmResp = await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
+      headers: bearer(user),
+      data: { outline: applyBody.data.outline, mounted_doc_ids: [] },
+    });
+    expect(confirmResp.status(), `确认调整后大纲失败: ${await confirmResp.text()}`).toBe(200);
+    const review = await waitForWorkflowStatus(
+      apiCtx,
+      user,
+      project.id,
+      (s) => s.interrupt?.type === 'review_request',
+      90_000,
+    );
+    expect(review.outline.length).toBe(outlineStatus.outline.length + 1);
+    expect(Object.keys(review.chapters).length).toBeGreaterThan(0);
+  });
+
+  test('内容改进建议：建议 → 采纳重写（复用 rewrite-chapter）', async ({ api: apiCtx }) => {
+    test.skip(!llmMockEnabled(), '前置条件：需后端以 BID_LLM_MOCK=true 启动。');
+
+    const user = await registerAndLogin(apiCtx, 'wf-section-suggest');
+    const project = await createProject(apiCtx, user);
+    await uploadParsedTender(apiCtx, user, project.id);
+
+    const review = await driveToReview(apiCtx, user, project.id);
+    const chapterNo = Object.keys(review.chapters)[0];
+
+    // mock 模式：规则建议确定性可断言（占位数据兜底 → 非空建议）
+    const suggestResp = await apiCtx.post(
+      api(`/projects/${project.id}/workflow/section-suggest`),
+      { headers: bearer(user), data: { chapter_no: chapterNo } },
+    );
+    expect(suggestResp.status(), `建议失败: ${await suggestResp.text()}`).toBe(200);
+    const suggestBody = (await suggestResp.json()) as BizResponse<{
+      suggestions: Array<{
+        chapter_no: string;
+        issue: string;
+        suggestion: string;
+        severity: string;
+      }>;
+    }>;
+    expect(suggestBody.data.suggestions.length).toBeGreaterThan(0);
+    const s = suggestBody.data.suggestions[0];
+    expect(s.chapter_no).toBe(chapterNo);
+    expect(s.issue).toBeTruthy();
+    expect(s.suggestion).toBeTruthy();
+    expect(['high', 'medium']).toContain(s.severity);
+
+    // 采纳 → 复用 rewrite-chapter 重写目标章
+    const rw = await apiCtx.post(
+      api(
+        `/projects/${project.id}/workflow/rewrite-chapter?chapter_no=${encodeURIComponent(chapterNo)}&comment=${encodeURIComponent(s.suggestion)}`,
+      ),
+      { headers: bearer(user) },
+    );
+    expect(rw.status(), `采纳重写失败: ${await rw.text()}`).toBe(200);
+    const rwBody = (await rw.json()) as BizResponse<{ chapter_no: string; content: string }>;
+    expect(rwBody.data.chapter_no).toBe(chapterNo);
+    expect(rwBody.data.content.length).toBeGreaterThan(0);
+  });
+
   test('E2E-06 审阅通过后导出 Word（export_status=done + storage_key）', async ({ api: apiCtx }) => {
     test.skip(!llmMockEnabled(), '前置条件：需后端以 BID_LLM_MOCK=true 启动。');
 
