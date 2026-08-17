@@ -40,3 +40,13 @@ class ProjectListOut(BaseModel):
 
     items: list[ProjectOut]
     total: int
+
+
+class ProjectMemberOut(BaseModel):
+    """项目成员输出（成员列表）."""
+
+    user_id: uuid.UUID
+    email: str
+    display_name: str
+    is_owner: bool
+    joined_at: datetime

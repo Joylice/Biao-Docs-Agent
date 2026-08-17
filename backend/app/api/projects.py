@@ -1,20 +1,23 @@
 """项目管理 API 路由."""
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
 from app.core.database import get_db
-from app.core.deps import get_current_user_id
+from app.core.deps import get_current_owner_id, get_current_user_id
 from app.core.response import paginated, success
 from app.schemas.project import ProjectCreate, ProjectMemberAdd, ProjectOut
 from app.services.project_service import (
     add_project_member,
     create_project,
     get_project,
+    list_project_members,
     list_projects,
+    remove_project_member,
 )
 
 router = APIRouter()
@@ -83,3 +86,40 @@ async def add_member_api(
     await db.commit()
 
     return success(message="成员添加成功")
+
+
+@router.get("/{project_id}/members")
+async def list_members_api(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """成员列表（项目成员可见；只读不记审计）."""
+    items = await list_project_members(db, project_id, user_id)
+    return success(data={"items": items})
+
+
+@router.delete("/{project_id}/members/{target_user_id}")
+async def remove_member_api(
+    project_id: uuid.UUID,
+    target_user_id: uuid.UUID,
+    owner_id: uuid.UUID = Depends(get_current_owner_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """移除成员（仅 owner）."""
+    await remove_project_member(db, project_id, target_user_id, owner_id)
+
+    # 审计埋点：项目成员变更（security.md §4）
+    await audit.record(
+        db,
+        owner_id,
+        "project.member_remove",
+        project_id=project_id,
+        target_type="member",
+        target_id=str(target_user_id),
+    )
+
+    # 事务约定（BUG-1）：成员删除 + 审计同事务，响应前显式提交
+    await db.commit()
+
+    return success(message="成员移除成功")

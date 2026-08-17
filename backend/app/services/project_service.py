@@ -1,6 +1,7 @@
 """项目服务层 — CRUD + 成员管理."""
 
 import uuid
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -120,3 +121,64 @@ async def _check_project_member(
     )
     if not member_result.scalar_one_or_none():
         raise ForbiddenError("您不是该项目成员")
+
+
+async def list_project_members(
+    db: AsyncSession, project_id: uuid.UUID, operator_id: uuid.UUID
+) -> list[dict[str, Any]]:
+    """成员列表（项目成员可见）：owner 恒在首位，含 email/display_name/is_owner/joined_at."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise NotFoundError("项目")
+    await _check_project_member(db, project_id, operator_id)
+
+    rows_result = await db.execute(
+        select(ProjectMember, User)
+        .join(User, User.id == ProjectMember.user_id)
+        .where(ProjectMember.project_id == project_id)
+    )
+    items = [
+        {
+            "user_id": member.user_id,
+            "email": user.email,
+            "display_name": user.display_name,
+            "is_owner": member.user_id == project.owner_id,
+            "joined_at": member.joined_at,
+        }
+        for member, user in rows_result.all()
+    ]
+    # owner 恒在首位，其余按加入时间
+    items.sort(key=lambda m: (not m["is_owner"], m["joined_at"]))
+    return items
+
+
+async def remove_project_member(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    target_user_id: uuid.UUID,
+    operator_id: uuid.UUID,
+) -> None:
+    """移除成员（仅 owner 可执行）."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise NotFoundError("项目")
+    if project.owner_id != operator_id:
+        raise ForbiddenError("仅项目创建者可移除成员")
+    if target_user_id == project.owner_id:
+        raise BizError(code=4000, message="不能移除项目所有者")
+    if target_user_id == operator_id:
+        raise BizError(code=4000, message="不能移除自己")
+
+    member_result = await db.execute(
+        select(ProjectMember).where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == target_user_id,
+        )
+    )
+    member = member_result.scalar_one_or_none()
+    if not member:
+        raise NotFoundError("项目成员")
+    await db.delete(member)
+    await db.flush()
