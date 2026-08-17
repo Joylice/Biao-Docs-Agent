@@ -56,11 +56,14 @@ services:
       BID_REDIS_URL: redis://redis:6379/0
       BID_MINIO_ENDPOINT: minio:9000
       BID_DEBUG: "true"
-      BID_LLM_MOCK: "true"
+      BID_LLM_MOCK: "false"
+      # Embedding 模型（litellm provider 前缀必带，否则报 "LLM Provider NOT provided"）；
+      # 默认 DashScope 云端 embedding，本地 Ollama 可覆盖为 ollama/bge-m3。
+      BID_EMBEDDING_MODEL: "dashscope/text-embedding-v3"
       # 管理员账号占位：逗号分隔的用户邮箱列表（项目唯一用户标识为 email）。
       # 仅列表内账号可 PUT /settings/llm 与 POST /settings/llm/test；
       # 为空则拒绝写入（403，提示配置）。生产请替换为真实管理员邮箱。
-      BID_ADMIN_USER_IDS: "admin"
+      BID_ADMIN_USER_IDS: "admin@bidagent.com"
     ports:
       - "8000:8000"
     volumes:
@@ -84,9 +87,11 @@ services:
       BID_REDIS_URL: redis://redis:6379/0
       BID_MINIO_ENDPOINT: minio:9000
       BID_DEBUG: "true"
-      BID_LLM_MOCK: "true"
+      BID_LLM_MOCK: "false"
+      # Embedding 模型（litellm provider 前缀必带；与 api 保持一致）
+      BID_EMBEDDING_MODEL: "dashscope/text-embedding-v3"
       # 与 api 保持一致（worker 侧读取同一配置的运行时视图）
-      BID_ADMIN_USER_IDS: "admin"
+      BID_ADMIN_USER_IDS: "admin@bidagent.com"
     volumes:
       - ../backend:/app
     depends_on:

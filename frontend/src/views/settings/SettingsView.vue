@@ -1,7 +1,9 @@
 <template>
-  <div class="settings-container">
+  <PageContainer
+    title="模型设置"
+    subtitle="配置大模型与向量服务（需管理员权限，密钥加密存储）"
+  >
     <a-card
-      title="模型设置"
       class="settings-card"
       :loading="fetching"
     >
@@ -73,7 +75,7 @@
         show-icon
       />
     </a-card>
-  </div>
+  </PageContainer>
 </template>
 
 <script setup lang="ts">
@@ -86,6 +88,7 @@ import {
   testLlmConnection,
 } from '@/api/settings'
 import type { ConnectionTestTarget, LlmSettingsPayload } from '@/api/settings'
+import PageContainer from '@/components/PageContainer.vue'
 
 interface ApiErrorBody {
   code?: number
@@ -224,13 +227,7 @@ onMounted(fetchSettings)
 </script>
 
 <style scoped>
-.settings-container {
-  padding: 24px;
-  background: #f0f2f5;
-  min-height: 100vh;
-}
 .settings-card {
   max-width: 640px;
-  margin: 0 auto;
 }
 </style>

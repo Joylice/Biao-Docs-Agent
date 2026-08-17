@@ -216,7 +216,7 @@ docker compose -f deploy/docker-compose.yml ps worker ; docker compose -f deploy
 | `BID_LLM_MODEL` | `deepseek/deepseek-chat` | 默认 LLM 模型（LiteLLM 格式） |
 | `BID_LLM_PRIMARY` | `deepseek/deepseek-chat` | 主模型 |
 | `BID_LLM_BACKUP` | `qwen/qwen-plus` | 备用模型 |
-| `BID_EMBEDDING_MODEL` | `bge-m3` | Embedding 模型名 |
+| `BID_EMBEDDING_MODEL` | `dashscope/text-embedding-v3` | Embedding 模型名（LiteLLM provider 前缀必带） |
 | `BID_EMBEDDING_DIMENSION` | `1024` | 向量维度（需与 pgvector 列维度一致） |
 | `BID_EMBEDDING_API_BASE` | `http://localhost:11434/v1` | Embedding 服务地址（如 Ollama） |
 | `BID_MAX_UPLOAD_SIZE_MB` | `50` | 单文件上传上限（MB） |
@@ -315,7 +315,7 @@ docker compose -f deploy/docker-compose.yml logs api --tail=50
 | `alembic upgrade head` 连接失败 | postgres 未 healthy / URL 错误 | `docker compose ps` 检查；核对 `BID_DATABASE_URL` |
 | 前端请求 404 | nginx 代理前缀与 `BID_API_PREFIX` 不一致 | 检查 `frontend/nginx.conf` 与 `.env` 的 `/api/v1` |
 | Worker 无任务执行 | redis 连接串错误 / worker 未启动 | `docker compose logs worker`；核对 `BID_REDIS_URL` |
-| 向量写入报维度错误 | `BID_EMBEDDING_DIMENSION` 与建表维度不符 | 保持 1024（bge-m3）一致 |
+| 向量写入报维度错误 | `BID_EMBEDDING_DIMENSION` 与建表维度不符 | 保持 1024（text-embedding-v3）一致 |
 | 端口占用（5432/6379/9000/8000） | 本机已有同名服务 | 停掉本机服务或调整 compose 端口映射 |
 
 ---

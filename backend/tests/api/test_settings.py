@@ -237,7 +237,7 @@ async def test_test_endpoint_by_non_admin_rejected_403(
 async def test_admin_list_empty_rejected_with_hint(
     client: AsyncClient, override_db, admin_headers: dict[str, str], monkeypatch
 ) -> None:
-    """admin 列表为空 → 一律拒绝写入并提示配置 BID_ADMIN_USER_IDS（不得放宽）."""
+    """白名单为空且 role≠admin → 拒绝写入（三期：role 判定优先，不放宽为任意登录用户）."""
     monkeypatch.setattr(settings, "admin_user_ids", "")
     session = _FakeSettingsSession(row=None, user=_admin_user())
     override_db(session)
@@ -251,7 +251,7 @@ async def test_admin_list_empty_rejected_with_hint(
     assert resp.status_code == 403
     body = resp.json()
     assert body["code"] == 4003
-    assert "BID_ADMIN_USER_IDS" in body["message"]
+    assert "仅限管理员" in body["message"]
 
 
 # ── GET /settings/llm（普通登录可读）──

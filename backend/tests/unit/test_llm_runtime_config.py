@@ -114,6 +114,46 @@ class TestEmbeddingDbConfigPriority:
         kwargs = fake_litellm.aembedding.call_args.kwargs
         assert kwargs["api_base"] == settings.embedding_api_base
 
+    async def test_dashscope_model_uses_db_dashscope_key(self, fake_litellm, monkeypatch) -> None:
+        """dashscope 前缀模型（云端 embedding）→ aembedding 收到库内 dashscope key."""
+        _patch_cfg(monkeypatch, RuntimeLlmConfig(dashscope_api_key="sk-db-dashscope"))
+        monkeypatch.setattr(settings, "embedding_model", "dashscope/text-embedding-v3")
+        fake_litellm.aembedding = AsyncMock(
+            return_value=SimpleNamespace(data=[{"embedding": [0.1, 0.2]}])
+        )
+
+        await get_embedding("真实路径", mock=False)
+
+        kwargs = fake_litellm.aembedding.call_args.kwargs
+        assert kwargs["api_key"] == "sk-db-dashscope"
+
+    async def test_batch_uses_db_dashscope_key(self, fake_litellm, monkeypatch) -> None:
+        """批量路径同样传 api_key."""
+        _patch_cfg(monkeypatch, RuntimeLlmConfig(dashscope_api_key="sk-db-dashscope"))
+        monkeypatch.setattr(settings, "embedding_model", "dashscope/text-embedding-v3")
+        fake_litellm.aembedding = AsyncMock(
+            return_value=SimpleNamespace(
+                data=[{"embedding": [0.1, 0.2]}, {"embedding": [0.3, 0.4]}]
+            )
+        )
+
+        await rag_service.get_embeddings_batch(["a", "b"], mock=False)
+
+        kwargs = fake_litellm.aembedding.call_args.kwargs
+        assert kwargs["api_key"] == "sk-db-dashscope"
+
+    async def test_no_db_config_does_not_pass_api_key(self, fake_litellm, monkeypatch) -> None:
+        """库内无配置：不传 api_key（litellm 回退 env，保持现状容错）."""
+        _patch_cfg(monkeypatch, None)
+        fake_litellm.aembedding = AsyncMock(
+            return_value=SimpleNamespace(data=[{"embedding": [0.1, 0.2]}])
+        )
+
+        await get_embedding("真实路径", mock=False)
+
+        kwargs = fake_litellm.aembedding.call_args.kwargs
+        assert "api_key" not in kwargs
+
     async def test_db_llm_mock_enables_embedding_mock(self, fake_litellm, monkeypatch) -> None:
         """库内 llm_mock=true → embedding 同样走 mock."""
         _patch_cfg(monkeypatch, RuntimeLlmConfig(llm_mock=True))
