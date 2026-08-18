@@ -162,15 +162,19 @@ async def call_llm_stream(
     user_prompt: str,
     temperature: float = 0.7,
     mock: bool | None = None,
+    stop_event: asyncio.Event | None = None,
 ) -> AsyncIterator[str]:
     """调用 LLM 获取流式文本响应（三期 S4）.
 
     mock 模式：把 _MOCK_TEXT 按 ~20 字切片 yield（含微小 sleep 模拟节奏）；
     真实模式：acompletion(stream=True)，逐 chunk yield delta（跳过空 delta）。
+    stop_event（阶段 2）：取消令牌，置位后停止 yield，已产出部分由调用方保留。
     """
     user_prompt = redact(user_prompt)  # 外发 LLM 脱敏（安全铁律，出口兜底，无开关）
     if await settings_service.is_mock_enabled(mock):
         for i in range(0, len(_MOCK_TEXT), _MOCK_STREAM_SLICE):
+            if stop_event is not None and stop_event.is_set():
+                return
             yield _MOCK_TEXT[i : i + _MOCK_STREAM_SLICE]
             await asyncio.sleep(0.01)
         return
@@ -190,6 +194,8 @@ async def call_llm_stream(
             **await _api_key_kwargs(settings.llm_model),
         )
         async for chunk in response:
+            if stop_event is not None and stop_event.is_set():
+                return
             delta = chunk.choices[0].delta.content if chunk.choices else None
             if delta:
                 yield delta

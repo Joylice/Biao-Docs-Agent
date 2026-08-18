@@ -1,5 +1,6 @@
 """章节生成服务 — RAG 增强 + LLM 生成."""
 
+import asyncio
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -68,6 +69,8 @@ async def generate_chapter(
     on_delta: Callable[[str], Awaitable[None]] | None = None,
     prior_summaries: list[dict] | None = None,
     supplement_points: list[dict] | None = None,
+    extra_instruction: str = "",
+    stop_event: asyncio.Event | None = None,
 ) -> str:
     """生成单个章节内容.
 
@@ -78,6 +81,8 @@ async def generate_chapter(
         None 时保持非流式调用（向后兼容）。
     prior_summaries: 已完成章节摘要 [{chapter_no, title, summary}]，注入提示词防重复保衔接。
     supplement_points: 大纲未覆盖的 confirmed 评分点，注入提示词要求本章补写。
+    extra_instruction（阶段 2）：用户自定义提示词，脱敏后追加到用户提示词末尾。
+    stop_event（阶段 2）：流式取消令牌，置位后中止并返回已累积部分。
     """
 
     chapter_title = chapter.get("title", "")
@@ -159,13 +164,18 @@ async def generate_chapter(
         supplement_points=supp_text,
     )
 
+    # 阶段 2：用户自定义提示词（辅助生成）——脱敏后追加，不外泄敏感信息
+    if extra_instruction.strip():
+        user_prompt += f"\n\n【用户补充要求】\n{redact(extra_instruction.strip())}"
+
     if on_delta is not None:
-        # 三期 S4：流式生成 — 逐块回调 delta，累积全文返回
+        # 三期 S4：流式生成 — 逐块回调 delta，累积全文返回（stop_event 置位后中止保留已累积部分）
         parts: list[str] = []
         async for delta in call_llm_stream(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.7,
+            stop_event=stop_event,
         ):
             parts.append(delta)
             await on_delta(delta)
