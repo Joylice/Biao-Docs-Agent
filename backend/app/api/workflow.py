@@ -1,10 +1,12 @@
 """工作流 API 路由 — LangGraph 编排控制（经 workflow_runtime 服务层）."""
 
 import uuid
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
@@ -12,7 +14,9 @@ from app.core.database import get_db
 from app.core.deps import get_current_user_id
 from app.core.exceptions import BizError, ForbiddenError
 from app.core.response import success
+from app.models.proposal import ChapterAssignment
 from app.services import division_service, workflow_runtime
+from app.services.event_service import publish_event
 from app.services.project_service import _check_project_member
 
 router = APIRouter()
@@ -22,11 +26,13 @@ class ConfirmOutlineBody(BaseModel):
     """确认大纲请求体 — outline 为前端修改后的大纲（可选）；
 
     mounted_doc_ids 为资料库挂载配置（可选）：非 None（含空列表）时写入工作流
-    state，缺省 None 保持项目全量检索。
+    state，缺省 None 保持项目全量检索；mounted_kb_ids 为知识库级挂载（2026-08-18，
+    与文档级并集生效）。
     """
 
     outline: list[dict] | None = None
     mounted_doc_ids: list[uuid.UUID] | None = None
+    mounted_kb_ids: list[uuid.UUID] | None = None
 
 
 class OutlineDraftBody(BaseModel):
@@ -34,6 +40,7 @@ class OutlineDraftBody(BaseModel):
 
     outline: list[dict]
     mounted_doc_ids: list[uuid.UUID] | None = None
+    mounted_kb_ids: list[uuid.UUID] | None = None
 
 
 class ConfirmReviewBody(BaseModel):
@@ -131,6 +138,8 @@ async def confirm_outline(
             decision["outline"] = body.outline
         if body.mounted_doc_ids is not None:
             decision["mounted_doc_ids"] = [str(x) for x in body.mounted_doc_ids]
+        if body.mounted_kb_ids is not None:
+            decision["mounted_kb_ids"] = [str(x) for x in body.mounted_kb_ids]
     workflow_runtime.resume_workflow_in_background(project_id, decision)
     return success(data={"status": "confirmed", "next_phase": "generate"})
 
@@ -166,6 +175,7 @@ async def save_outline_draft(
         project_id,
         body.outline,
         [str(x) for x in body.mounted_doc_ids] if body.mounted_doc_ids is not None else None,
+        [str(x) for x in body.mounted_kb_ids] if body.mounted_kb_ids is not None else None,
     )
     # 审计埋点：草稿保存（security.md §4）
     await audit.record(db, user_id, "workflow.outline_draft_save", project_id=project_id)
@@ -184,7 +194,14 @@ async def get_outline_draft(
     await _check_project_member(db, project_id, user_id)
     draft = await workflow_runtime.get_outline_draft(db, project_id)
     if draft is None:
-        return success(data={"outline": [], "mounted_doc_ids": None, "updated_at": None})
+        return success(
+            data={
+                "outline": [],
+                "mounted_doc_ids": None,
+                "mounted_kb_ids": None,
+                "updated_at": None,
+            }
+        )
     return success(data=draft)
 
 
@@ -204,6 +221,57 @@ async def clear_outline_draft(
     return success(data={"cleared": True})
 
 
+async def _redispatch_feedback(
+    db: AsyncSession, project_id: uuid.UUID, feedback: dict[str, str]
+) -> dict[str, str]:
+    """审阅意见回派章节负责人（阶段 5）.
+
+    feedback 键支持 chapter_no 或章节标题匹配：
+    - 命中分工 → assignment 置 rejected + 意见落库 + 推送 task_reviewed
+      （assignee 在分工页「我的任务」看到打回可重编）；
+    - 无分工章节 → 保留原 rewrite 链路。
+    返回未被回派的剩余 feedback（避免重复重写）。
+    """
+    if not feedback:
+        return {}
+    snapshot = await workflow_runtime.get_state(project_id)
+    outline = (snapshot.values or {}).get("outline", []) or []
+    nos = {str(c.get("chapter_no", "")) for c in outline}
+    title_to_no = {str(c.get("title", "")): str(c.get("chapter_no", "")) for c in outline}
+    remaining: dict[str, str] = {}
+    for key, comment in feedback.items():
+        chapter_no = key if key in nos else title_to_no.get(key, "")
+        if not chapter_no:
+            remaining[key] = comment
+            continue
+        result = await db.execute(
+            select(ChapterAssignment).where(
+                ChapterAssignment.project_id == project_id,
+                ChapterAssignment.chapter_no == chapter_no,
+            )
+        )
+        assignment = result.scalar_one_or_none()
+        if assignment is None:
+            remaining[key] = comment
+            continue
+        assignment.status = "rejected"
+        assignment.review_comment = comment
+        assignment.reviewed_at = datetime.now(UTC)
+        await publish_event(
+            str(project_id),
+            {
+                "type": "task_reviewed",
+                "chapter_no": chapter_no,
+                "assignee_id": str(assignment.assignee_id),
+                "action": "rejected",
+            },
+        )
+    await db.flush()
+    # 事务约定（BUG-1）：回派状态在 resume 前显式提交，assignee 立即可见打回
+    await db.commit()
+    return remaining
+
+
 @router.post("/{project_id}/workflow/confirm-review")
 async def confirm_review(
     project_id: uuid.UUID,
@@ -221,6 +289,13 @@ async def confirm_review(
         else {"action": "approved", "feedback": {}}
     )
 
+    # 意见回派：命中分工的章节退回负责人重编，不再走 rewrite；无分工保持原链路
+    if decision["action"] == "feedback" and decision["feedback"]:
+        decision["feedback"] = await _redispatch_feedback(db, project_id, decision["feedback"])
+        # 全部意见均已回派负责人 → 无需 AI 重写，保持审阅中等待重编后复审
+        if not decision["feedback"]:
+            decision["action"] = "redispatched"
+
     # 审计埋点：审阅确认（security.md §4）
     await audit.record(db, user_id, "workflow.confirm_review", project_id=project_id)
 
@@ -228,7 +303,12 @@ async def confirm_review(
     await db.commit()
 
     workflow_runtime.resume_workflow_in_background(project_id, decision)
-    next_phase = "export" if decision["action"] == "approved" else "rewrite"
+    if decision["action"] == "approved":
+        next_phase = "export"
+    elif decision["action"] == "redispatched":
+        next_phase = "redispatch"
+    else:
+        next_phase = "rewrite"
     return success(
         data={"status": "confirmed", "action": decision["action"], "next_phase": next_phase}
     )

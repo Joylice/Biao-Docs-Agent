@@ -98,13 +98,15 @@ def build_workflow() -> StateGraph:
     # integrate → review(HITL)
     workflow.add_edge("integrate", "review")
 
-    # review → [approved: export / feedback: rewrite → integrate → review]
+    # review → [approved: export / feedback: rewrite → integrate → review /
+    # redispatched: 意见全部回派负责人，重新挂起等待复审]
     workflow.add_conditional_edges(
         "review",
         review_route,
         {
             "export": "export",
             "rewrite": "rewrite",
+            "review": "review",
         },
     )
     workflow.add_edge("rewrite", "integrate")

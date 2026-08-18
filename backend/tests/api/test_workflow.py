@@ -157,6 +157,46 @@ async def test_confirm_outline_passes_mounted_doc_ids_to_resume(client, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_confirm_outline_passes_mounted_kb_ids_to_resume(client, monkeypatch) -> None:
+    """mounted_kb_ids 经 resume payload 传递（知识库级挂载，与文档级并存）."""
+    from app.services import workflow_runtime
+
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = project
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    app.dependency_overrides[get_db] = lambda: session
+
+    captured: dict = {}
+
+    async def fake_ensure(pid, expected_type) -> None:
+        captured["ensure"] = (pid, expected_type)
+
+    def fake_resume(pid, resume_value) -> None:
+        captured["resume"] = (pid, resume_value)
+
+    monkeypatch.setattr(workflow_runtime, "ensure_pending_interrupt", fake_ensure)
+    monkeypatch.setattr(workflow_runtime, "resume_workflow_in_background", fake_resume)
+
+    kb_id, doc_id = uuid.uuid4(), uuid.uuid4()
+    try:
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/workflow/confirm-outline",
+            headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+            json={"mounted_kb_ids": [str(kb_id)], "mounted_doc_ids": [str(doc_id)]},
+        )
+        assert response.status_code == 200
+        _pid, resume_value = captured["resume"]
+        assert resume_value["mounted_kb_ids"] == [str(kb_id)]
+        assert resume_value["mounted_doc_ids"] == [str(doc_id)]
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
 async def test_save_section_edit_no_auth(client: AsyncClient) -> None:
     """未认证保存章节返回 401."""
     response = await client.put(
@@ -536,3 +576,131 @@ async def test_start_workflow_commits_audit(client: AsyncClient, monkeypatch) ->
         session.commit.assert_awaited()
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+class TestRedispatchFeedback:
+    """confirm-review 意见回派（阶段 5）：命中分工 → 打回负责人；无分工 → 保留 rewrite."""
+
+    def _env(self, monkeypatch, assignment, outline):
+        import app.api.workflow as workflow_api
+        from app.services import workflow_runtime
+
+        owner_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+        session = AsyncMock()
+        session.add = MagicMock()
+        session.execute.side_effect = [_result(project), _result(assignment)]
+        app.dependency_overrides[get_db] = lambda: session
+
+        captured: dict = {"published": []}
+
+        async def fake_ensure(pid, expected_type) -> None:
+            pass
+
+        def fake_resume(pid, resume_value) -> None:
+            captured["resume"] = resume_value
+
+        async def fake_get_state(pid):
+            snapshot = MagicMock()
+            snapshot.values = {"outline": outline}
+            return snapshot
+
+        async def fake_publish(pid, event):
+            captured["published"].append(event)
+
+        monkeypatch.setattr(workflow_runtime, "ensure_pending_interrupt", fake_ensure)
+        monkeypatch.setattr(workflow_runtime, "resume_workflow_in_background", fake_resume)
+        monkeypatch.setattr(workflow_runtime, "get_state", fake_get_state)
+        monkeypatch.setattr(workflow_api, "publish_event", fake_publish)
+        return {
+            "owner_id": owner_id,
+            "project_id": project_id,
+            "session": session,
+            "captured": captured,
+        }
+
+    @pytest.mark.asyncio
+    async def test_hit_assignment_rejected_and_removed(self, client, monkeypatch) -> None:
+        """chapter_no 命中分工：打回 + 推 task_reviewed + 不再进 rewrite feedback."""
+        from app.models.proposal import ChapterAssignment
+
+        assignment = ChapterAssignment(
+            id=uuid.uuid4(),
+            project_id=uuid.uuid4(),
+            chapter_no="1",
+            title="项目概述",
+            assignee_id=uuid.uuid4(),
+            assigned_by=uuid.uuid4(),
+            status="approved",
+        )
+        env = self._env(
+            monkeypatch, assignment, [{"chapter_no": "1", "title": "项目概述"}]
+        )
+        try:
+            resp = await client.post(
+                f"/api/v1/projects/{env['project_id']}/workflow/confirm-review",
+                headers={"Authorization": f"Bearer {create_access_token(str(env['owner_id']))}"},
+                json={"action": "feedback", "feedback": {"1": "缺少进度计划"}},
+            )
+            assert resp.status_code == 200
+            assert assignment.status == "rejected"
+            assert assignment.review_comment == "缺少进度计划"
+            # 全部回派 → resume action 改 redispatched（图路由回 review 重新挂起）
+            assert env["captured"]["resume"]["action"] == "redispatched"
+            assert env["captured"]["resume"]["feedback"] == {}
+            assert resp.json()["data"]["next_phase"] == "redispatch"
+            assert env["captured"]["published"][0]["type"] == "task_reviewed"
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_title_key_matches_chapter(self, client, monkeypatch) -> None:
+        """标题键匹配章节 → 同样回派."""
+        from app.models.proposal import ChapterAssignment
+
+        assignment = ChapterAssignment(
+            id=uuid.uuid4(),
+            project_id=uuid.uuid4(),
+            chapter_no="2",
+            title="技术方案",
+            assignee_id=uuid.uuid4(),
+            assigned_by=uuid.uuid4(),
+            status="approved",
+        )
+        env = self._env(
+            monkeypatch, assignment, [{"chapter_no": "2", "title": "技术方案"}]
+        )
+        try:
+            resp = await client.post(
+                f"/api/v1/projects/{env['project_id']}/workflow/confirm-review",
+                headers={"Authorization": f"Bearer {create_access_token(str(env['owner_id']))}"},
+                json={"action": "feedback", "feedback": {"技术方案": "补充架构图"}},
+            )
+            assert resp.status_code == 200
+            assert assignment.status == "rejected"
+            assert env["captured"]["resume"]["feedback"] == {}
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_no_assignment_keeps_rewrite(self, client, monkeypatch) -> None:
+        """无分工章节：意见保留在 feedback（原 rewrite 链路）."""
+        env = self._env(monkeypatch, None, [{"chapter_no": "3", "title": "实施计划"}])
+        try:
+            resp = await client.post(
+                f"/api/v1/projects/{env['project_id']}/workflow/confirm-review",
+                headers={"Authorization": f"Bearer {create_access_token(str(env['owner_id']))}"},
+                json={"action": "feedback", "feedback": {"3": "细化里程碑"}},
+            )
+            assert resp.status_code == 200
+            assert env["captured"]["resume"]["feedback"] == {"3": "细化里程碑"}
+            assert env["captured"]["published"] == []
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+
+def _result(scalar: object) -> MagicMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = scalar
+    return result

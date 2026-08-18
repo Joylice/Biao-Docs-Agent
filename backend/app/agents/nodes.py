@@ -19,6 +19,7 @@ from app.core.database import async_session_factory
 from app.models.document import Document, ScorePoint, TechRequirement
 from app.models.project import Project
 from app.models.proposal import ProposalSection, ProposalSkeleton, ProposalWorkflow
+from app.services import kb_base_service
 from app.services.event_service import publish_event
 
 logger = logging.getLogger(__name__)
@@ -318,6 +319,9 @@ async def confirm_outline_node(state: dict) -> dict:
             # 资料库挂载配置（None = 项目全量，[] = 不挂载）
             if "mounted_doc_ids" in decision:
                 state = {**state, "mounted_doc_ids": decision["mounted_doc_ids"]}
+            # 知识库级挂载配置（与文档级并集生效，见 resolve_mount_doc_ids）
+            if "mounted_kb_ids" in decision:
+                state = {**state, "mounted_kb_ids": decision["mounted_kb_ids"]}
         confirmed = decision is True or (
             isinstance(decision, dict) and decision.get("confirmed") is True
         )
@@ -341,6 +345,8 @@ async def confirm_outline_node(state: dict) -> dict:
         # 挂载配置仅在显式提交过时写入 state（缺省 None 保持项目全量检索）
         if "mounted_doc_ids" in state:
             updates["mounted_doc_ids"] = state["mounted_doc_ids"]
+        if "mounted_kb_ids" in state:
+            updates["mounted_kb_ids"] = state["mounted_kb_ids"]
         return updates
 
 
@@ -365,6 +371,7 @@ async def retrieve_node(state: dict) -> dict:
     chapters = state.get("chapters", {})
     # 资料库挂载配置（confirm-outline 写入）：None = 项目全量，[] = 不挂载
     mounted_doc_ids = state.get("mounted_doc_ids")
+    mounted_kb_ids = state.get("mounted_kb_ids")
 
     # 找到下一个未生成的章节
     next_chapter = next((c for c in outline if c["chapter_no"] not in chapters), None)
@@ -377,17 +384,16 @@ async def retrieve_node(state: dict) -> dict:
         query = f"{next_chapter.get('title', '')} {sec_text}"
         query_embedding = await get_embedding(query)
         async with async_session_factory() as db:  # 只读块，无需 commit
+            doc_ids = await kb_base_service.resolve_mount_doc_ids(
+                db, mounted_kb_ids, mounted_doc_ids
+            )
             results = await retrieve_with_rerank(
                 db=db,
                 project_id=uuid.UUID(project_id),
                 query=query,
                 query_embedding=query_embedding,
                 top_k=8,
-                doc_ids=(
-                    [uuid.UUID(str(d)) for d in mounted_doc_ids]
-                    if mounted_doc_ids is not None
-                    else None
-                ),
+                doc_ids=doc_ids,
             )
         context = "\n\n---\n\n".join(r.content for r in results)
     except Exception as e:
@@ -412,6 +418,7 @@ async def write_node(state: dict) -> dict:
     summaries = dict(state.get("chapter_summaries", {}))
     # 资料库挂载配置（confirm-outline 写入）：None = 项目全量，[] = 不挂载
     mounted_doc_ids = state.get("mounted_doc_ids")
+    mounted_kb_ids = state.get("mounted_kb_ids")
 
     chapter = next((c for c in outline if c["chapter_no"] == chapter_no), None)
     if not chapter:
@@ -459,6 +466,9 @@ async def write_node(state: dict) -> dict:
 
     try:
         async with async_session_factory() as db:  # 只读块（RAG 兜底检索），无需 commit
+            doc_ids = await kb_base_service.resolve_mount_doc_ids(
+                db, mounted_kb_ids, mounted_doc_ids
+            )
             content = await generate_chapter(
                 chapter=chapter,
                 score_points=state.get("score_points", []),
@@ -466,11 +476,7 @@ async def write_node(state: dict) -> dict:
                 project_id=uuid.UUID(project_id),
                 context=state.get("retrieved_context", ""),
                 db=db,
-                doc_ids=(
-                    [uuid.UUID(str(d)) for d in mounted_doc_ids]
-                    if mounted_doc_ids is not None
-                    else None
-                ),
+                doc_ids=doc_ids,
                 on_delta=on_delta,
                 prior_summaries=prior_summaries,
                 supplement_points=coverage["uncovered"],
@@ -825,9 +831,12 @@ def chapter_route(state: dict) -> str:
 
 
 def review_route(state: dict) -> str:
-    """审阅路由：通过 → 导出；有反馈 → 重写."""
-    if state.get("review_action") == "feedback":
+    """审阅路由：通过 → 导出；有反馈 → 重写；全部回派 → 重新等待审阅."""
+    action = state.get("review_action")
+    if action == "feedback":
         return "rewrite"
+    if action == "redispatched":
+        return "review"
     return "export"
 
 

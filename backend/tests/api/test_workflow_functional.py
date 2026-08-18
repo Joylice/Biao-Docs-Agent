@@ -89,9 +89,18 @@ def owner_headers() -> dict[str, str]:
 
 @pytest.fixture
 def owner_db():
-    """get_db 覆盖：owner 恒通过成员校验（execute 始终返回本项目）."""
+    """get_db 覆盖：owner 恒通过成员校验（Project 查询返回本项目，其余实体查无）."""
+
+    def _execute(*args, **kwargs):
+        stmt = args[0] if args else kwargs.get("statement")
+        descriptions = getattr(stmt, "column_descriptions", None) or []
+        entity = descriptions[0].get("entity") if descriptions else None
+        if entity is Project:
+            return _result(_owned_project())
+        return _result(None)
+
     session = AsyncMock()
-    session.execute.side_effect = lambda *a, **k: _result(_owned_project())
+    session.execute.side_effect = _execute
     session.add = MagicMock()  # audit.record 同步调用 add，不能用 AsyncMock
     app.dependency_overrides[get_db] = lambda: session
     yield

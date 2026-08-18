@@ -80,20 +80,33 @@ def _url() -> str:
 
 class TestListAssignments:
     @pytest.mark.asyncio
-    async def test_list_returns_items(self, client: AsyncClient, override_db) -> None:
-        """成员读取分工列表：含负责人姓名与状态."""
+    async def test_list_returns_items(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """成员读取分工列表：含负责人姓名、状态与 outline 子节（2 级目录）."""
         user = User(id=MEMBER_ID, email="m@x.com", password_hash="x", display_name="张三")
         session = override_db([])
         session.execute.side_effect = [
             _result(_project()),  # _check_project_member（owner 一次即过）
             _join_result([(_assignment(), user, "draft")]),
         ]
+        snapshot = MagicMock()
+        snapshot.values = {
+            "outline": [{"chapter_no": "1", "title": "项目概述", "sections": ["背景", "目标"]}]
+        }
+
+        async def fake_get_state(pid):
+            return snapshot
+
+        monkeypatch.setattr(division_api.workflow_runtime, "get_state", fake_get_state)
         resp = await client.get(_url(), headers=_headers(OWNER_ID))
         assert resp.status_code == 200
         items = resp.json()["data"]["items"]
         assert len(items) == 1
         assert items[0]["assignee_name"] == "张三"
+        assert items[0]["submitted_by_name"] == "张三"
         assert items[0]["status"] == "pending"
+        assert items[0]["sections"] == ["背景", "目标"]
 
     @pytest.mark.asyncio
     async def test_list_forbidden_for_non_member(self, client: AsyncClient, override_db) -> None:
@@ -251,6 +264,109 @@ class TestGenerateAssignment:
         assert "领取" in resp.json()["message"]
 
 
+class TestAssistGenerate:
+    """阶段 2：AI 辅助生成（可暂停）端点."""
+
+    @pytest.mark.asyncio
+    async def test_assist_generate_success(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """assignee 辅助生成：委托 assist_service，返回内容与 stopped 标记 + 审计."""
+        from app.services import assist_service
+
+        assignment = _assignment("in_progress")
+        session = override_db([])
+        session.execute.side_effect = [*_member_check_seq(), _result(assignment)]
+        captured: dict = {}
+
+        async def fake_assist(project_id, chapter_no, user_id, prompt="", mode="append"):
+            captured["args"] = (chapter_no, prompt, mode)
+            return {"content": "辅助生成内容", "stopped": False, "mode": mode}
+
+        monkeypatch.setattr(assist_service, "assist_generate", fake_assist)
+        resp = await client.post(
+            f"{_url()}/{assignment.id}/assist-generate",
+            json={"prompt": "突出安全设计", "mode": "append"},
+            headers=_headers(MEMBER_ID),
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["content"] == "辅助生成内容"
+        assert data["stopped"] is False
+        assert captured["args"] == ("1", "突出安全设计", "append")
+        session.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_assist_generate_requires_accept(
+        self, client: AsyncClient, override_db
+    ) -> None:
+        """pending 未领取 → 4000."""
+        assignment = _assignment("pending")
+        session = override_db([])
+        session.execute.side_effect = [*_member_check_seq(), _result(assignment)]
+        resp = await client.post(
+            f"{_url()}/{assignment.id}/assist-generate",
+            json={},
+            headers=_headers(MEMBER_ID),
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_assist_generate_forbidden_for_non_assignee(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """非 assignee 成员 → 403."""
+        from app.models.project import ProjectMember
+
+        other_member = ProjectMember(project_id=PROJECT_ID, user_id=OTHER_ID)
+        assignment = _assignment("in_progress")  # assignee = MEMBER_ID
+        session = override_db([])
+        session.execute.side_effect = [
+            _result(_project()),
+            _result(other_member),
+            _result(assignment),
+        ]
+        resp = await client.post(
+            f"{_url()}/{assignment.id}/assist-generate",
+            json={},
+            headers=_headers(OTHER_ID),
+        )
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_stop_assist_generate(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """stop 端点：置位取消令牌，返回 stopped=True."""
+        from app.services import assist_service
+
+        assignment = _assignment("in_progress")
+        session = override_db([])
+        session.execute.side_effect = [*_member_check_seq(), _result(assignment)]
+        monkeypatch.setattr(assist_service, "stop_task", lambda pid, chapter_no: True)
+        resp = await client.post(
+            f"{_url()}/{assignment.id}/assist-generate/stop", headers=_headers(MEMBER_ID)
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["stopped"] is True
+
+    @pytest.mark.asyncio
+    async def test_stop_without_running_task(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """无进行中任务 → stopped=False（幂等）."""
+        from app.services import assist_service
+
+        assignment = _assignment("in_progress")
+        session = override_db([])
+        session.execute.side_effect = [*_member_check_seq(), _result(assignment)]
+        monkeypatch.setattr(assist_service, "stop_task", lambda pid, chapter_no: False)
+        resp = await client.post(
+            f"{_url()}/{assignment.id}/assist-generate/stop", headers=_headers(MEMBER_ID)
+        )
+        assert resp.json()["data"]["stopped"] is False
+
+
 class TestSubmitAssignment:
     @pytest.mark.asyncio
     async def test_submit_publishes_event(
@@ -296,13 +412,16 @@ class TestReviewAssignment:
         session.execute.side_effect = [
             _result(_project()),  # get_current_owner_id
             _result(assignment),  # get_assignment
+            _result(_project()),  # 审核通过 → 自动快照钩子加载项目
         ]
         published: list = []
 
         async def fake_publish(pid, event):
             published.append(event)
 
+        auto_snapshot = AsyncMock(return_value=None)
         monkeypatch.setattr(division_api, "publish_event", fake_publish)
+        monkeypatch.setattr(division_api.version_service, "maybe_auto_snapshot", auto_snapshot)
         resp = await client.post(
             f"{_url()}/{assignment.id}/review",
             headers=_headers(OWNER_ID),
@@ -314,6 +433,7 @@ class TestReviewAssignment:
         assert session.commit.await_count == 1
         assert published[0]["type"] == "task_reviewed"
         assert published[0]["action"] == "approved"
+        auto_snapshot.assert_awaited_once_with(session, PROJECT_ID, "测试项目")
 
     @pytest.mark.asyncio
     async def test_review_reject_stores_comment(
@@ -360,3 +480,104 @@ class TestReviewAssignment:
         )
         assert resp.status_code == 400
         assert resp.json()["code"] == 4000
+
+
+class TestAnnotations:
+    """章节批注（阶段 4）：成员可读，assignee/owner 可写."""
+
+    @pytest.mark.asyncio
+    async def test_list_returns_items_with_author(self, client: AsyncClient, override_db) -> None:
+        """成员读取批注列表：含作者姓名，时间正序."""
+        from datetime import UTC, datetime
+
+        from app.models.proposal import ChapterAnnotation
+
+        assignment = _assignment("in_progress")
+        ann = ChapterAnnotation(
+            project_id=PROJECT_ID,
+            chapter_no="1",
+            content="补充实施周期说明",
+            created_by=MEMBER_ID,
+        )
+        ann.created_at = datetime.now(UTC)
+        session = override_db([])
+        session.execute.side_effect = [
+            *_member_check_seq(),
+            _result(assignment),
+            _join_result([(ann, "张三")]),
+        ]
+        resp = await client.get(
+            f"{_url()}/{assignment.id}/annotations", headers=_headers(MEMBER_ID)
+        )
+        assert resp.status_code == 200
+        items = resp.json()["data"]["items"]
+        assert len(items) == 1
+        assert items[0]["content"] == "补充实施周期说明"
+        assert items[0]["created_by_name"] == "张三"
+
+    @pytest.mark.asyncio
+    async def test_create_by_assignee(self, client: AsyncClient, override_db) -> None:
+        """assignee 新增批注：落库 + commit."""
+        assignment = _assignment("in_progress")
+        session = override_db([])
+        session.execute.side_effect = [
+            *_member_check_seq(),
+            _result(assignment),
+            _result(_project()),  # owner 判定（非 owner）
+        ]
+        resp = await client.post(
+            f"{_url()}/{assignment.id}/annotations",
+            headers=_headers(MEMBER_ID),
+            json={"content": "需要补充报价明细"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["content"] == "需要补充报价明细"
+        assert session.commit.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_create_by_owner_allowed(self, client: AsyncClient, override_db) -> None:
+        """项目 owner 非 assignee 也可批注."""
+        assignment = _assignment("in_progress")
+        session = override_db([])
+        session.execute.side_effect = [
+            _result(_project()),  # _check_project_member（owner 一次即过）
+            _result(assignment),
+            _result(_project()),
+        ]
+        resp = await client.post(
+            f"{_url()}/{assignment.id}/annotations",
+            headers=_headers(OWNER_ID),
+            json={"content": "owner 批注"},
+        )
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_create_forbidden_for_other_member(
+        self, client: AsyncClient, override_db
+    ) -> None:
+        """非 assignee 非 owner 成员批注 → 403."""
+        other_member = ProjectMember(project_id=PROJECT_ID, user_id=OTHER_ID)
+        assignment = _assignment("in_progress")  # assignee = MEMBER_ID
+        session = override_db([])
+        session.execute.side_effect = [
+            _result(_project()),
+            _result(other_member),
+            _result(assignment),
+            _result(_project()),
+        ]
+        resp = await client.post(
+            f"{_url()}/{assignment.id}/annotations",
+            headers=_headers(OTHER_ID),
+            json={"content": "越权批注"},
+        )
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_list_forbidden_for_non_member(self, client: AsyncClient, override_db) -> None:
+        """非成员读取批注 → 403."""
+        override_db([_project(), None])
+        resp = await client.get(
+            f"{_url()}/{uuid.uuid4()}/annotations", headers=_headers(OTHER_ID)
+        )
+        assert resp.status_code == 403
+

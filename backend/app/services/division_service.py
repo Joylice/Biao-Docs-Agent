@@ -115,6 +115,8 @@ async def list_assignments(db: AsyncSession, project_id: uuid.UUID) -> list[dict
                 "title": assignment.title,
                 "assignee_id": str(assignment.assignee_id),
                 "assignee_name": user.display_name or user.email,
+                # 提交人即负责人（编制提交由 assignee 发起，审阅页标注用）
+                "submitted_by_name": user.display_name or user.email,
                 "assigned_by": str(assignment.assigned_by),
                 "status": assignment.status,
                 "section_status": section_status,

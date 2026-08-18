@@ -62,32 +62,37 @@
                 </a-button>
               </a-tooltip>
             </div>
-            <a-list
+            <a-tree
               v-if="!siderCollapsed"
-              :data-source="chapterKeys"
-              size="small"
+              :tree-data="treeData"
+              :selected-keys="[activeChapter]"
+              :expanded-keys="expandedKeys"
+              block-node
               class="chapter-tree"
+              @select="onTreeSelect"
+              @expand="onTreeExpand"
             >
-              <template #renderItem="{ item }">
-                <a-list-item
-                  class="chapter-node"
-                  :class="{ 'chapter-node--active': activeChapter === item }"
-                  @click="selectChapter(item)"
+              <template #title="{ dataRef }">
+                <div
+                  v-if="dataRef.kind === 'chapter'"
+                  class="chapter-node__row"
                 >
-                  <div class="chapter-node__row">
-                    <div class="chapter-node__no">
-                      章节 {{ item }}
-                    </div>
-                    <a-tag
-                      :color="chapterStateColor(item)"
-                      class="chapter-node__tag"
-                    >
-                      {{ chapterStateText(item) }}
-                    </a-tag>
-                  </div>
-                </a-list-item>
+                  <span class="chapter-node__no">
+                    {{ dataRef.chapter_no }} {{ dataRef.title }}
+                  </span>
+                  <a-tag
+                    :color="chapterStateColor(dataRef.chapter_no)"
+                    class="chapter-node__tag"
+                  >
+                    {{ chapterStateText(dataRef.chapter_no) }}
+                  </a-tag>
+                </div>
+                <span
+                  v-else
+                  class="section-node__title"
+                >{{ dataRef.title }}</span>
               </template>
-            </a-list>
+            </a-tree>
           </a-layout-sider>
 
           <a-layout-content class="review-content">
@@ -133,11 +138,21 @@
               </a-button>
             </div>
 
-            <!-- 章节内容：编辑 / 预览 -->
+            <!-- 章节内容：编辑 / 预览（章级审阅，与生成粒度一致） -->
             <a-card
-              :title="`章节 ${activeChapter}`"
               class="chapter-card"
             >
+              <template #title>
+                <div class="chapter-card__title">
+                  <span>章节 {{ activeChapter }}{{ activeChapterTitle ? ` ${activeChapterTitle}` : '' }}</span>
+                  <a-tag
+                    color="geekblue"
+                    class="chapter-card__submitter"
+                  >
+                    提交人：{{ submitterOf(activeChapter) }}
+                  </a-tag>
+                </div>
+              </template>
               <a-textarea
                 v-if="mode === 'edit'"
                 v-model:value="editDrafts[activeChapter]"
@@ -196,8 +211,127 @@
             </a-button>
           </template>
         </a-result>
+
+        <!-- 版本库：评审通过快照（自动/手动），可下载与归档公司知识库 -->
+        <a-card
+          class="version-card"
+          title="版本库"
+        >
+          <template #extra>
+            <a-button
+              v-if="isOwner"
+              size="small"
+              type="primary"
+              ghost
+              :loading="snapshotting"
+              @click="openSnapshotModal"
+            >
+              手动快照
+            </a-button>
+          </template>
+          <a-empty
+            v-if="versions.length === 0"
+            description="暂无版本：全部章节审核通过后将自动快照，owner 也可手动创建"
+          />
+          <a-list
+            v-else
+            :data-source="versions"
+            size="small"
+          >
+            <template #renderItem="{ item }">
+              <a-list-item>
+                <div class="version-item">
+                  <div class="version-item__main">
+                    <a-tag color="blue">
+                      v{{ item.version }}
+                    </a-tag>
+                    <a-tag
+                      v-if="item.auto"
+                      color="default"
+                    >
+                      自动快照
+                    </a-tag>
+                    <span class="version-item__note">
+                      {{ item.snapshot_note || '—' }}
+                    </span>
+                    <span class="version-item__meta">
+                      {{ item.created_by_name || '系统' }} · {{ formatTime(item.created_at) }}
+                    </span>
+                  </div>
+                  <a-space>
+                    <a-button
+                      size="small"
+                      @click="handleDownloadVersion(item, 'docx')"
+                    >
+                      下载 Word
+                    </a-button>
+                    <a-button
+                      size="small"
+                      @click="handleDownloadVersion(item, 'source')"
+                    >
+                      Markdown 源
+                    </a-button>
+                    <a-button
+                      v-if="isOwner"
+                      size="small"
+                      type="primary"
+                      ghost
+                      @click="openArchiveModal(item)"
+                    >
+                      归档
+                    </a-button>
+                  </a-space>
+                </div>
+              </a-list-item>
+            </template>
+          </a-list>
+        </a-card>
       </template>
     </PageContainer>
+
+    <!-- 手动快照弹窗 -->
+    <a-modal
+      v-model:open="snapshotModalOpen"
+      title="手动创建版本快照"
+      ok-text="创建快照"
+      cancel-text="取消"
+      :confirm-loading="snapshotting"
+      @ok="handleCreateSnapshot"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="备注（可选）">
+          <a-textarea
+            v-model:value="snapshotNote"
+            :rows="3"
+            placeholder="例如：评审定稿版、客户要求调整后的版本"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <!-- 归档选库弹窗（限公司级知识库） -->
+    <a-modal
+      v-model:open="archiveModalOpen"
+      title="归档到公司知识库"
+      ok-text="归档"
+      cancel-text="取消"
+      :confirm-loading="archiving"
+      :ok-button-props="{ disabled: !archiveKbId }"
+      @ok="handleArchive"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="目标知识库">
+          <a-select
+            v-model:value="archiveKbId"
+            :options="companyBases"
+            placeholder="选择公司级知识库"
+          />
+        </a-form-item>
+        <div class="feedback-redispatch-hint">
+          归档后版本文档将入公司库分块向量化，供全公司方案生成检索
+        </div>
+      </a-form>
+    </a-modal>
 
     <!-- 反馈重写面板 -->
     <a-drawer
@@ -218,6 +352,9 @@
             :rows="8"
             placeholder="描述需要修改的内容，例如：补充行业成功案例、调整表述为第一人称等"
           />
+          <div class="feedback-redispatch-hint">
+            意见将回派给章节负责人；无分工的章节由 AI 重写
+          </div>
         </a-form-item>
       </a-form>
       <div class="drawer-footer">
@@ -242,6 +379,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { InfoCircleOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons-vue'
 import api from '@/api/client'
+import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -253,16 +391,50 @@ interface WorkflowInterrupt {
   message?: string
 }
 
+interface OutlineNode {
+  chapter_no: string
+  title: string
+  sections?: string[]
+}
+
 interface WorkflowStatus {
   phase?: string
   progress?: number
   chapters?: Record<string, string>
+  outline?: OutlineNode[]
   review_action?: string
   review_feedback?: Record<string, string>
   export_status?: string
   export_storage_key?: string
   error?: string
   interrupt?: WorkflowInterrupt | null
+}
+
+/** 左侧目录树节点：章（可选中审阅）+ 子节（纯展示，与生成粒度一致的章级导航） */
+interface ChapterTreeNode {
+  key: string
+  kind: 'chapter' | 'section'
+  chapter_no: string
+  title: string
+  selectable: boolean
+  children?: ChapterTreeNode[]
+}
+
+/** 版本库条目（GET /projects/{pid}/versions） */
+interface VersionItem {
+  id: string
+  version: number
+  snapshot_note: string | null
+  created_by: string | null
+  created_by_name: string | null
+  auto: boolean
+  created_at: string | null
+}
+
+/** 公司级知识库选项（归档选库弹窗） */
+interface KbBaseOption {
+  value: string
+  label: string
 }
 
 const route = useRoute()
@@ -272,6 +444,10 @@ const projectId = route.params.projectId as string
 const loading = ref(false)
 const loadError = ref('')
 const chapters = ref<Record<string, string>>({})
+const outline = ref<OutlineNode[]>([])
+/** 提交人标注：chapter_no → 分工提交人姓名（无分工显示 AI 生成/未分配） */
+const submitters = ref<Record<string, string>>({})
+const expandedKeys = ref<string[]>([])
 const activeChapter = ref('')
 const reviewFeedback = ref<Record<string, string>>({})
 const approving = ref(false)
@@ -292,8 +468,61 @@ const editDrafts = ref<Record<string, string>>({})
 const feedbackDrawerOpen = ref(false)
 const feedbackComment = ref('')
 
+// 版本库：列表/手动快照/下载/归档公司库
+const isOwner = ref(false)
+const versions = ref<VersionItem[]>([])
+const snapshotModalOpen = ref(false)
+const snapshotNote = ref('')
+const snapshotting = ref(false)
+const archiveModalOpen = ref(false)
+const archiving = ref(false)
+const archiveKbId = ref<string | undefined>(undefined)
+const archiveTarget = ref<VersionItem | null>(null)
+const companyBases = ref<KbBaseOption[]>([])
+
 const chapterKeys = computed(() => Object.keys(chapters.value))
 const polling = computed(() => pollTimer !== null)
+
+/** 全量 2 级目录树：outline 章 + 子节；仅有内容不在 outline 的章兼容补充 */
+const treeData = computed<ChapterTreeNode[]>(() => {
+  const nodes: ChapterTreeNode[] = outline.value.map((c) => ({
+    key: c.chapter_no,
+    kind: 'chapter',
+    chapter_no: c.chapter_no,
+    title: c.title,
+    selectable: true,
+    children: (c.sections || []).map((s, idx) => ({
+      key: `${c.chapter_no}-s${idx}`,
+      kind: 'section',
+      chapter_no: c.chapter_no,
+      title: s,
+      selectable: false,
+    })),
+  }))
+  const outlineNos = new Set(outline.value.map((c) => c.chapter_no))
+  for (const no of chapterKeys.value) {
+    if (!outlineNos.has(no)) {
+      nodes.push({ key: no, kind: 'chapter', chapter_no: no, title: '', selectable: true })
+    }
+  }
+  return nodes
+})
+
+const activeChapterTitle = computed(
+  () => outline.value.find((c) => c.chapter_no === activeChapter.value)?.title || '',
+)
+
+/** 提交人：有分工显示提交人姓名，无分工显示「AI 生成/未分配」 */
+const submitterOf = (chapterNo: string): string =>
+  submitters.value[chapterNo] || 'AI 生成/未分配'
+
+const onTreeSelect = (keys: string[]) => {
+  if (keys.length > 0) selectChapter(keys[0])
+}
+
+const onTreeExpand = (keys: string[]) => {
+  expandedKeys.value = keys
+}
 
 /** 展示内容：本地编辑草稿优先，无草稿时用服务端章节原文 */
 const displayContent = computed(
@@ -367,6 +596,7 @@ const stopPolling = () => {
 
 const applyStatus = (data: WorkflowStatus) => {
   chapters.value = data.chapters || {}
+  outline.value = data.outline || []
   reviewFeedback.value = data.review_feedback || {}
   exportStatus.value = data.export_status || ''
   exportStorageKey.value = data.export_storage_key || ''
@@ -380,11 +610,146 @@ const applyStatus = (data: WorkflowStatus) => {
       editDrafts.value[chapterNo] = chapters.value[chapterNo] || ''
     }
   }
+  // 目录树默认展开全部章节点
+  if (expandedKeys.value.length === 0) {
+    expandedKeys.value = outline.value.map((c) => c.chapter_no)
+  }
 }
 
 const fetchStatus = async (): Promise<WorkflowStatus | undefined> => {
   const res = await api.get(`/projects/${projectId}/workflow/status`)
   return res.data?.data as WorkflowStatus | undefined
+}
+
+/** 拉取分工列表供提交人标注（可选增强，失败不阻塞审阅） */
+const fetchSubmitters = async () => {
+  try {
+    const res = await api.get(`/projects/${projectId}/chapter-assignments`)
+    const items = (res.data?.data?.items || []) as {
+      chapter_no: string
+      submitted_by_name?: string
+    }[]
+    const map: Record<string, string> = {}
+    for (const it of items) {
+      if (it.submitted_by_name) map[it.chapter_no] = it.submitted_by_name
+    }
+    submitters.value = map
+  } catch {
+    // 提交人标注失败时降级显示「AI 生成/未分配」
+  }
+}
+
+/** 版本库列表刷新（快照/归档成功后复用） */
+const fetchVersions = async () => {
+  try {
+    const res = await api.get(`/projects/${projectId}/versions`)
+    if (res.data?.code === 0) versions.value = res.data.data.items || []
+  } catch {
+    // 版本库加载失败不阻塞审阅主流程
+  }
+}
+
+/** 项目 owner 判定（手动快照/归档入口可见性） */
+const fetchOwnerFlag = async () => {
+  try {
+    await fetchCurrentUserRole()
+    const res = await api.get(`/projects/${projectId}`)
+    if (res.data?.code === 0) {
+      isOwner.value = res.data.data.owner_id === currentUserId.value
+    }
+  } catch {
+    isOwner.value = false
+  }
+}
+
+const formatTime = (iso: string | null): string => {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('zh-CN', { hour12: false })
+}
+
+const openSnapshotModal = () => {
+  snapshotNote.value = ''
+  snapshotModalOpen.value = true
+}
+
+/** 手动快照（仅 owner）：POST versions 后续号入库 */
+const handleCreateSnapshot = async () => {
+  snapshotting.value = true
+  try {
+    const res = await api.post(`/projects/${projectId}/versions`, {
+      snapshot_note: snapshotNote.value.trim() || null,
+    })
+    if (res.data?.code === 0) {
+      message.success(`版本 v${res.data.data.version} 快照已创建`)
+      snapshotModalOpen.value = false
+      await fetchVersions()
+    } else {
+      message.error(res.data?.message || '快照创建失败')
+    }
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '快照创建失败')
+  } finally {
+    snapshotting.value = false
+  }
+}
+
+/** 版本下载：取签名 URL 后新窗打开（docx / Markdown 源二选一） */
+const handleDownloadVersion = async (item: VersionItem, type: 'docx' | 'source') => {
+  try {
+    const res = await api.get(`/projects/${projectId}/versions/${item.id}/download`, {
+      params: { type },
+    })
+    if (res.data?.code === 0 && res.data.data.url) {
+      window.open(res.data.data.url, '_blank')
+    } else {
+      message.error(res.data?.message || '下载链接生成失败')
+    }
+  } catch {
+    message.error('下载链接生成失败')
+  }
+}
+
+/** 归档选库弹窗：拉取公司级知识库列表 */
+const openArchiveModal = async (item: VersionItem) => {
+  archiveTarget.value = item
+  archiveKbId.value = undefined
+  archiveModalOpen.value = true
+  if (companyBases.value.length > 0) return
+  try {
+    const res = await api.get('/kb-bases')
+    if (res.data?.code === 0) {
+      companyBases.value = (res.data.data.items || [])
+        .filter((b: { scope: string }) => b.scope === 'company')
+        .map((b: { id: string; name: string }) => ({ value: b.id, label: b.name }))
+    }
+  } catch {
+    message.error('知识库列表加载失败')
+  }
+}
+
+/** 归档：版本文档入公司库（全局素材 + 分块向量化入队） */
+const handleArchive = async () => {
+  if (!archiveTarget.value || !archiveKbId.value) return
+  archiving.value = true
+  try {
+    const res = await api.post(
+      `/projects/${projectId}/versions/${archiveTarget.value.id}/archive`,
+      { kb_id: archiveKbId.value },
+    )
+    if (res.data?.code === 0) {
+      message.success(`已归档：${res.data.data.title}`)
+      archiveModalOpen.value = false
+    } else {
+      message.error(res.data?.message || '归档失败')
+    }
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '归档失败')
+  } finally {
+    archiving.value = false
+  }
 }
 
 /** 轮询状态直到满足终止条件（最长约 3 分钟）. */
@@ -465,6 +830,12 @@ const handleSubmitChapterFeedback = async () => {
       message.error(res.data?.message || '提交修改意见失败')
       return
     }
+    // 意见全部回派负责人 → 无 AI 重写，等待重编后复审
+    if (res.data?.data?.next_phase === 'redispatch') {
+      message.success('修改意见已回派给章节负责人，重编提交后复审')
+      feedbackDrawerOpen.value = false
+      return
+    }
     message.success('修改意见已提交，已触发章节重写')
     feedbackDrawerOpen.value = false
     rewriting.value = true
@@ -527,6 +898,9 @@ onMounted(async () => {
   try {
     const data = await fetchStatus()
     if (data) applyStatus(data)
+    await fetchSubmitters()
+    await fetchOwnerFlag()
+    await fetchVersions()
   } catch {
     loadError.value = '审阅状态加载失败'
   } finally {
@@ -602,6 +976,27 @@ onUnmounted(() => {
   line-height: 18px;
 }
 
+.section-node__title {
+  font-size: 12px;
+  color: var(--text-secondary, #8c8c8c);
+}
+
+.chapter-card__title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chapter-card__submitter {
+  font-weight: 400;
+}
+
+.feedback-redispatch-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary, #999);
+}
+
 .review-content {
   background: transparent;
   min-width: 0;
@@ -633,6 +1028,36 @@ onUnmounted(() => {
 }
 
 .actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px; }
+
+.version-card {
+  margin-top: 24px;
+  background: var(--card-bg);
+}
+
+.version-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.version-item__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.version-item__note {
+  font-size: 13px;
+}
+
+.version-item__meta {
+  font-size: 12px;
+  color: var(--text-secondary, #999);
+}
 
 .drawer-footer {
   display: flex;
