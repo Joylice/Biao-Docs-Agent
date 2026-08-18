@@ -82,6 +82,77 @@
           </a-row>
         </a-card>
 
+        <!-- 格式要求汇总（LLM 提取 + 人工可编辑，驱动 Word 导出排版） -->
+        <a-card
+          v-if="tenderDoc"
+          title="格式要求汇总"
+          class="mb-4"
+        >
+          <template #extra>
+            <a-space>
+              <a-button
+                size="small"
+                @click="handleAddFormatItem"
+              >
+                新增条目
+              </a-button>
+              <a-button
+                size="small"
+                type="primary"
+                :loading="formatSaving"
+                @click="handleSaveFormat"
+              >
+                保存
+              </a-button>
+            </a-space>
+          </template>
+          <a-alert
+            v-if="formatRequirements.length === 0"
+            type="info"
+            show-icon
+            message="未提取到格式要求，可手动新增（字体字号、行距、页边距等将应用到 Word 导出排版）"
+          />
+          <div
+            v-else
+            class="format-list"
+          >
+            <div
+              v-for="group in formatGroups"
+              :key="group.category"
+              class="format-group"
+            >
+              <div class="format-group__label">
+                {{ formatCategoryLabel(group.category) }}
+              </div>
+              <div
+                v-for="item in group.items"
+                :key="item.key"
+                class="format-item"
+              >
+                <a-select
+                  v-model:value="item.category"
+                  :options="formatCategoryOptions"
+                  style="width: 140px"
+                  size="small"
+                />
+                <a-input
+                  v-model:value="item.requirement"
+                  size="small"
+                  placeholder="格式要求描述，如：正文小四号仿宋、1.5 倍行距"
+                />
+                <a-button
+                  size="small"
+                  type="text"
+                  danger
+                  @click="handleRemoveFormatItem(item)"
+                >
+                  删除
+                </a-button>
+              </div>
+            </div>
+          </div>
+        </a-card>
+
         <!-- 评分点表格 -->
         <a-card
           title="评分点"
@@ -319,6 +390,65 @@ const tenderDoc = ref<TenderDocItem | null>(null)
 const reparseLoading = ref(false)
 const selectedRowKeys = ref<string[]>([])
 const generateLoading = ref(false)
+const formatRequirements = ref<FormatRequirementItem[]>([])
+const formatSaving = ref(false)
+let formatKeySeq = 0
+
+/** 按分类分组展示（保持后端分类枚举顺序） */
+const formatGroups = computed(() => {
+  const groups: { category: string; items: FormatRequirementItem[] }[] = []
+  for (const cat of FORMAT_CATEGORIES.map((c) => c.value)) {
+    const items = formatRequirements.value.filter((it) => it.category === cat)
+    if (items.length > 0) groups.push({ category: cat, items })
+  }
+  // 未知分类归入末尾
+  const known = new Set(FORMAT_CATEGORIES.map((c) => c.value))
+  const unknown = formatRequirements.value.filter((it) => !known.has(it.category))
+  if (unknown.length > 0) groups.push({ category: 'other', items: unknown })
+  return groups
+})
+
+const handleAddFormatItem = () => {
+  formatKeySeq += 1
+  formatRequirements.value.push({ key: `new-${formatKeySeq}`, category: 'other', requirement: '' })
+}
+
+const handleRemoveFormatItem = (item: FormatRequirementItem) => {
+  formatRequirements.value = formatRequirements.value.filter((it) => it.key !== item.key)
+}
+
+/** 保存格式要求：清洗空条目后幂等覆盖（PUT 完整数组） */
+const handleSaveFormat = async () => {
+  if (!tenderDoc.value) return
+  const items = formatRequirements.value
+    .map((it) => ({ category: it.category, requirement: it.requirement.trim() }))
+    .filter((it) => it.requirement)
+  formatSaving.value = true
+  try {
+    const res = await api.put(
+      `/projects/${projectId}/documents/${tenderDoc.value.id}/format-requirements`,
+      { format_requirements: items },
+    )
+    if (res.data?.code !== 0) {
+      message.error(res.data?.message || '格式要求保存失败')
+      return
+    }
+    const saved = res.data?.data?.items || []
+    formatRequirements.value = saved.map(
+      (it: { category: string; requirement: string }, i: number) => ({
+        key: `fmt-${i}`,
+        category: it.category,
+        requirement: it.requirement,
+      }),
+    )
+    message.success(`格式要求已保存（${saved.length} 条），导出 Word 时将应用该排版`)
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '格式要求保存失败')
+  } finally {
+    formatSaving.value = false
+  }
+}
 
 /** 重新解析入口可用：内嵌模式且最新招标文件已完成解析或解析失败 */
 const canReparse = computed(
@@ -366,6 +496,29 @@ const riskColor = (level: string | null) => {
   return colors[level || ''] || 'default'
 }
 
+interface FormatRequirementItem {
+  key: string
+  category: string
+  requirement: string
+}
+
+/** 格式要求分类枚举（与后端 parse.yaml / format_spec 对齐） */
+const FORMAT_CATEGORIES: { value: string; label: string }[] = [
+  { value: 'font_body', label: '正文字体字号' },
+  { value: 'font_heading', label: '标题字体字号' },
+  { value: 'line_spacing', label: '行距' },
+  { value: 'margin', label: '页边距' },
+  { value: 'page_setup', label: '页面设置' },
+  { value: 'binding', label: '装订' },
+  { value: 'page_number', label: '页码' },
+  { value: 'toc', label: '目录' },
+  { value: 'other', label: '其他' },
+]
+
+const formatCategoryOptions = FORMAT_CATEGORIES
+const formatCategoryLabel = (value: string) =>
+  FORMAT_CATEGORIES.find((c) => c.value === value)?.label || value
+
 const fetchData = async () => {
   loading.value = true
   loadError.value = ''
@@ -383,6 +536,18 @@ const fetchData = async () => {
     })
     const docItems = docRes.data?.data?.items || docRes.data?.data || []
     tenderDoc.value = docItems[0] || null
+    // 格式要求汇总（依赖最新招标文件 doc_id）
+    if (tenderDoc.value) {
+      const fmtRes = await api.get(
+        `/projects/${projectId}/documents/${tenderDoc.value.id}/format-requirements`,
+      )
+      const items = fmtRes.data?.data?.items || []
+      formatRequirements.value = items.map((it: { category: string; requirement: string }, i: number) => ({
+        key: `fmt-${i}`,
+        category: it.category,
+        requirement: it.requirement,
+      }))
+    }
   } catch {
     loadError.value = '解析数据加载失败'
   } finally {
@@ -630,5 +795,25 @@ onMounted(fetchData)
 
 .sp-row--high td {
   background: rgba(198, 40, 40, 0.05) !important;
+}
+
+.format-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.format-group__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary, #666);
+  margin-bottom: 6px;
+}
+
+.format-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 </style>

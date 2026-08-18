@@ -71,86 +71,88 @@
     <a-layout-content class="workspace-content">
       <router-view />
     </a-layout-content>
-  </a-layout>
 
-  <!-- 成员管理抽屉：列表 + 移除（仅 owner）+ 添加协作者 -->
-  <a-drawer
-    v-model:open="showMembersDrawer"
-    title="成员管理"
-    :width="420"
-  >
-    <a-spin :spinning="membersLoading">
-      <a-list
-        :data-source="members"
-        :locale="{ emptyText: '暂无成员' }"
-      >
-        <template #renderItem="{ item }">
-          <a-list-item>
-            <a-list-item-meta>
-              <template #title>
-                <span class="member-name">{{ item.display_name }}</span>
-                <a-tag
-                  v-if="item.is_owner"
-                  color="gold"
-                  class="member-tag"
-                >
-                  所有者
-                </a-tag>
-                <a-tag
-                  v-if="item.user_id === currentUserId"
-                  color="blue"
-                  class="member-tag"
-                >
-                  我
-                </a-tag>
-              </template>
-              <template #description>
-                <div>{{ item.email }}</div>
-                <div class="member-joined">
-                  {{ formatTime(item.joined_at) }} 加入
-                </div>
-              </template>
-            </a-list-item-meta>
-            <a-popconfirm
-              v-if="isOwner && !item.is_owner"
-              title="确定移除该成员？"
-              ok-text="移除"
-              cancel-text="取消"
-              @confirm="handleRemoveMember(item.user_id)"
-            >
-              <a-button
-                type="text"
-                danger
-                size="small"
-              >
-                移除
-              </a-button>
-            </a-popconfirm>
-          </a-list-item>
-        </template>
-      </a-list>
-    </a-spin>
-    <template #footer>
-      <div
-        v-if="isOwner"
-        class="member-add"
-      >
-        <a-input
-          v-model:value="addEmail"
-          placeholder="协作者邮箱"
-          allow-clear
-          @press-enter="handleAddMember"
-        />
-        <a-button
-          type="primary"
-          :loading="addingMember"
-          @click="handleAddMember"
+    <!-- 成员管理抽屉：列表 + 移除（仅 owner）+ 添加协作者 -->
+    <!-- 注意：必须位于 a-layout 单根节点内 —— App.vue 的 <Transition mode="out-in"> -->
+    <!-- 无法对 fragment（多根）组件做过渡，否则路由跳转时静默白屏 -->
+    <a-drawer
+      v-model:open="showMembersDrawer"
+      title="成员管理"
+      :width="420"
+    >
+      <a-spin :spinning="membersLoading">
+        <a-list
+          :data-source="members"
+          :locale="{ emptyText: '暂无成员' }"
         >
-          添加
-        </a-button>
-      </div>
-    </template>
-  </a-drawer>
+          <template #renderItem="{ item }">
+            <a-list-item>
+              <a-list-item-meta>
+                <template #title>
+                  <span class="member-name">{{ item.display_name }}</span>
+                  <a-tag
+                    v-if="item.is_owner"
+                    color="gold"
+                    class="member-tag"
+                  >
+                    所有者
+                  </a-tag>
+                  <a-tag
+                    v-if="item.user_id === currentUserId"
+                    color="blue"
+                    class="member-tag"
+                  >
+                    我
+                  </a-tag>
+                </template>
+                <template #description>
+                  <div>{{ item.email }}</div>
+                  <div class="member-joined">
+                    {{ formatTime(item.joined_at) }} 加入
+                  </div>
+                </template>
+              </a-list-item-meta>
+              <a-popconfirm
+                v-if="isOwner && !item.is_owner"
+                title="确定移除该成员？"
+                ok-text="移除"
+                cancel-text="取消"
+                @confirm="handleRemoveMember(item.user_id)"
+              >
+                <a-button
+                  type="text"
+                  danger
+                  size="small"
+                >
+                  移除
+                </a-button>
+              </a-popconfirm>
+            </a-list-item>
+          </template>
+        </a-list>
+      </a-spin>
+      <template #footer>
+        <div
+          v-if="isOwner"
+          class="member-add"
+        >
+          <a-input
+            v-model:value="addEmail"
+            placeholder="协作者邮箱"
+            allow-clear
+            @press-enter="handleAddMember"
+          />
+          <a-button
+            type="primary"
+            :loading="addingMember"
+            @click="handleAddMember"
+          >
+            添加
+          </a-button>
+        </div>
+      </template>
+    </a-drawer>
+  </a-layout>
 </template>
 
 <script setup lang="ts">
@@ -208,6 +210,7 @@ const menuRoutes: Record<string, string> = {
   parse: 'Parse',
   generate: 'Generate',
   review: 'Review',
+  division: 'Division',
 }
 
 // 路由 name → 菜单 key（选中态反查）
@@ -215,9 +218,10 @@ const routeMenuKeys: Record<string, string> = {
   Parse: 'parse',
   Generate: 'generate',
   Review: 'review',
+  Division: 'division',
 }
 
-// 按投标流程步骤先后排列：招标解析 → 方案生成 → 审阅
+// 按投标流程步骤先后排列：招标解析 → 方案生成 → 审阅 → 分工协作
 const menuItems: MenuProps['items'] = [
   {
     key: 'parse',
@@ -233,6 +237,11 @@ const menuItems: MenuProps['items'] = [
     key: 'review',
     icon: () => h('span', { class: 'workspace__step' }, '3'),
     label: '审阅',
+  },
+  {
+    key: 'division',
+    icon: () => h('span', { class: 'workspace__step' }, '4'),
+    label: '分工协作',
   },
   {
     key: 'members',
