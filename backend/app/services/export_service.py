@@ -1,9 +1,64 @@
 """Word 文档导出服务."""
 
 import io
+import re
+from urllib.parse import unquote, urlparse
 
+from app.core.config import settings
 from app.services.format_spec import FormatSpec, build_format_spec
-from app.services.storage_service import upload_file
+from app.services.storage_service import download_file, upload_file
+
+# Markdown 图片语法 ![alt](url)；url 允许带签名查询串（截断空格后整体捕获再剔除查询）
+IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)[^)]*\)")
+
+# 内嵌图片宽度上限（cm）
+IMAGE_WIDTH_CM = 15
+
+
+def _storage_key_from_url(url: str) -> str:
+    """从签名/裸 URL 提取 MinIO storage_key；非对象 URL 原样返回（兼容裸 key）."""
+    parsed = urlparse(url)
+    if not parsed.netloc:
+        return url
+    path = unquote(parsed.path).lstrip("/")
+    bucket = settings.minio_bucket
+    if path.startswith(f"{bucket}/"):
+        return path[len(bucket) + 1 :]
+    return path
+
+
+def _embed_image(run, url: str, alt: str) -> None:
+    """向 run 内嵌图片（宽度上限 15cm）；拉取失败降级文本说明，不阻塞导出."""
+    from docx.shared import Cm
+
+    data: bytes | None = None
+    try:
+        data = download_file(_storage_key_from_url(url))
+    except Exception:  # 图片缺失降级不阻塞导出
+        data = None
+    if not data:
+        run.text = f"[图片: {alt or url}]"
+        return
+    run.add_picture(io.BytesIO(data), width=Cm(IMAGE_WIDTH_CM))
+
+
+def _add_content_paragraph(doc, text: str, spec: FormatSpec) -> None:
+    """正文段落：识别 ![alt](url) 内嵌图片，其余文本照常排版."""
+    matches = list(IMAGE_RE.finditer(text))
+    if not matches:
+        para = doc.add_paragraph(text)
+        _apply_body_format(para, spec)
+        return
+    para = doc.add_paragraph()
+    pos = 0
+    for m in matches:
+        if m.start() > pos:
+            para.add_run(text[pos : m.start()])
+        _embed_image(para.add_run(), m.group(2), m.group(1))
+        pos = m.end()
+    if pos < len(text):
+        para.add_run(text[pos:])
+    _apply_body_format(para, spec)
 
 
 def _apply_margins(doc, spec: FormatSpec) -> None:
@@ -86,7 +141,7 @@ async def export_to_word(
         heading = doc.add_heading(f"{chapter_no} {chapter_title}", level=1)
         _apply_heading_size(heading, spec.heading_size_pt)
 
-        # 章节内容（按段落拆分）
+        # 章节内容（按段落拆分，识别 Markdown 图片内嵌）
         for paragraph_text in content.split("\n\n"):
             if paragraph_text.strip():
                 # 检查是否是子标题（以 ## 开头）
@@ -96,8 +151,7 @@ async def export_to_word(
                 elif stripped.startswith("### "):
                     doc.add_heading(stripped[4:], level=3)
                 else:
-                    para = doc.add_paragraph(stripped)
-                    _apply_body_format(para, spec)
+                    _add_content_paragraph(doc, stripped, spec)
 
     # 保存到内存
     buffer = io.BytesIO()

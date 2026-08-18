@@ -4,6 +4,7 @@
 通过捕获上传 buffer 重新打开 docx 断言。
 """
 
+import base64
 import io
 
 import pytest
@@ -12,9 +13,16 @@ from docx.oxml.ns import qn
 from docx.shared import Pt, Twips
 
 import app.services.export_service as export_service
+from app.core.exceptions import BizError
 
 OUTLINE = [{"chapter_no": "1", "title": "项目概述"}]
 CHAPTERS = {"1": "## 背景\n\n这是正文段落内容，用于断言排版属性。"}
+
+# 1x1 合法 PNG（内嵌断言用）
+PNG_1PX = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+    "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
 
 
 @pytest.fixture
@@ -95,3 +103,41 @@ class TestFormatApplied:
         assert key == "test/export.docx"
         doc = _open(capture_upload)
         assert _body_paragraph(doc).runs[0].font.size == Pt(12)
+
+
+class TestImageEmbed:
+    """Markdown 图片语法内嵌 Word（阶段 3）."""
+
+    @pytest.mark.asyncio
+    async def test_image_embedded_from_signed_url(self, capture_upload, monkeypatch) -> None:
+        """签名 URL → 提取 storage_key 拉取字节 → inline shape 内嵌."""
+        downloaded: list[str] = []
+
+        def fake_download(key: str) -> bytes:
+            downloaded.append(key)
+            return PNG_1PX
+
+        monkeypatch.setattr(export_service, "download_file", fake_download)
+        url = "http://minio:9000/bid-documents/images/pid/u1/arch.png?X-Amz-Signature=abc"
+        chapters = {"1": f"架构示意如下\n\n![架构图]({url})\n\n结尾段落"}
+        await export_service.export_to_word(chapters, OUTLINE, "测试项目")
+        assert downloaded == ["images/pid/u1/arch.png"]
+        doc = _open(capture_upload)
+        assert len(doc.inline_shapes) == 1
+
+    @pytest.mark.asyncio
+    async def test_image_fetch_failure_fallback_text(self, capture_upload, monkeypatch) -> None:
+        """拉取失败降级为文本说明，不阻塞导出."""
+
+        def fake_download(key: str) -> bytes:
+            raise BizError(code=5003, message="下载失败")
+
+        monkeypatch.setattr(export_service, "download_file", fake_download)
+        chapters = {"1": "![架构图](images/pid/u1/arch.png)"}
+        key = await export_service.export_to_word(chapters, OUTLINE, "测试项目")
+        assert key == "test/export.docx"
+        doc = _open(capture_upload)
+        assert len(doc.inline_shapes) == 0
+        texts = [p.text for p in doc.paragraphs]
+        assert any("[图片: 架构图]" in t for t in texts)
+

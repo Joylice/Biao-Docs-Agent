@@ -375,3 +375,106 @@ async def test_reparse_missing_doc(client: AsyncClient, reparse_env) -> None:
     )
     assert response.status_code == 404
     assert response.json()["code"] == 4004
+
+
+# ── 章节插图上传（阶段 3）──
+
+
+class TestUploadImage:
+    @pytest.fixture
+    def image_env(self, monkeypatch):
+        """图片端点环境：mock 会话/存储/签名，真实 JWT 鉴权."""
+        user_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        project = Project(id=project_id, name="测试项目", owner_id=user_id)
+        session = _FakeUploadSession(project)
+        app.dependency_overrides[get_db] = lambda: session
+
+        storage_key = f"images/{project_id}/u1/arch.png"
+        monkeypatch.setattr("app.api.documents.upload_file", lambda *a, **k: storage_key)
+        monkeypatch.setattr(
+            "app.api.documents.presigned_url", lambda key, **k: f"http://minio/{key}?sig=x"
+        )
+        yield {
+            "project_id": project_id,
+            "storage_key": storage_key,
+            "session": session,
+            "headers": {"Authorization": f"Bearer {create_access_token(str(user_id))}"},
+        }
+        app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_upload_image_success(self, client: AsyncClient, image_env) -> None:
+        """成员上传 png → 返回 storage_key（images/{pid}/ 目录）与签名 URL + commit."""
+        files = {"file": ("arch.png", io.BytesIO(b"fake png"), "image/png")}
+        response = await client.post(
+            f"/api/v1/projects/{image_env['project_id']}/images",
+            files=files,
+            headers=image_env["headers"],
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["storage_key"] == image_env["storage_key"]
+        assert data["url"].startswith(f"http://minio/{image_env['storage_key']}")
+        assert image_env["session"].committed is True
+
+    @pytest.mark.asyncio
+    async def test_upload_image_rejects_non_image_type(
+        self, client: AsyncClient, image_env
+    ) -> None:
+        """非图片类型 → 400."""
+        files = {"file": ("a.pdf", io.BytesIO(b"x"), "application/pdf")}
+        response = await client.post(
+            f"/api/v1/projects/{image_env['project_id']}/images",
+            files=files,
+            headers=image_env["headers"],
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_upload_image_rejects_oversize(self, client: AsyncClient, image_env) -> None:
+        """超过 10MB → 400."""
+        files = {"file": ("big.png", io.BytesIO(b"x" * (11 * 1024 * 1024)), "image/png")}
+        response = await client.post(
+            f"/api/v1/projects/{image_env['project_id']}/images",
+            files=files,
+            headers=image_env["headers"],
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_upload_image_forbidden_for_non_member(
+        self, client: AsyncClient, image_env
+    ) -> None:
+        """非成员上传 → 403."""
+        outsider = uuid.uuid4()
+        project = Project(id=image_env["project_id"], name="测试项目", owner_id=uuid.uuid4())
+        session = AsyncMock()
+        session.execute.side_effect = [_result(project), _result(None)]
+        app.dependency_overrides[get_db] = lambda: session
+        files = {"file": ("arch.png", io.BytesIO(b"fake"), "image/png")}
+        response = await client.post(
+            f"/api/v1/projects/{image_env['project_id']}/images",
+            files=files,
+            headers={"Authorization": f"Bearer {create_access_token(str(outsider))}"},
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_signed_url_scoped_to_project(self, client: AsyncClient, image_env) -> None:
+        """签名读：本项目 images 目录可读，跨项目 key 拒绝 403."""
+        ok = await client.get(
+            f"/api/v1/projects/{image_env['project_id']}/images/signed",
+            params={"storage_key": image_env["storage_key"]},
+            headers=image_env["headers"],
+        )
+        assert ok.status_code == 200
+        assert "sig=" in ok.json()["data"]["url"]
+
+        foreign = f"images/{uuid.uuid4()}/u1/other.png"
+        denied = await client.get(
+            f"/api/v1/projects/{image_env['project_id']}/images/signed",
+            params={"storage_key": foreign},
+            headers=image_env["headers"],
+        )
+        assert denied.status_code == 403

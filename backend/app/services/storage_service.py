@@ -2,6 +2,7 @@
 
 import io
 import uuid
+from datetime import timedelta
 from typing import BinaryIO
 
 from minio import Minio
@@ -33,11 +34,15 @@ def upload_file(
     filename: str,
     content_type: str = "application/octet-stream",
     project_id: uuid.UUID | None = None,
+    key_prefix: str | None = None,
 ) -> str:
-    """上传文件到 MinIO，返回 storage_key."""
+    """上传文件到 MinIO，返回 storage_key.
+
+    key_prefix 优先（如图片 images/{project_id}），否则按 project_id/global 分目录。
+    """
     client = _get_client()
-    # 生成唯一 key: project_id/uuid/filename
-    prefix = str(project_id) if project_id else "global"
+    # 生成唯一 key: {prefix}/{uuid}/{filename}
+    prefix = key_prefix or (str(project_id) if project_id else "global")
     storage_key = f"{prefix}/{uuid.uuid4()}/{filename}"
 
     try:
@@ -73,6 +78,17 @@ def download_file(storage_key: str) -> bytes:
         if response is not None:
             response.close()
             response.release_conn()
+
+
+def presigned_url(storage_key: str, expires_days: int = 7) -> str:
+    """生成签名下载 URL（浏览器/Markdown 直读，无需鉴权头）."""
+    client = _get_client()
+    try:
+        return client.presigned_get_object(
+            settings.minio_bucket, storage_key, expires=timedelta(days=expires_days)
+        )
+    except S3Error as e:
+        raise BizError(code=5003, message=f"签名地址生成失败: {e}") from None
 
 
 def delete_file(storage_key: str) -> None:
