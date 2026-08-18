@@ -15,6 +15,55 @@
       </a-button>
     </template>
 
+    <!-- 知识库选择（阶段 1：多知识库容器，公司/个人分组） -->
+    <a-card class="kb-card">
+      <a-space wrap>
+        <span class="kb-muted">知识库：</span>
+        <a-select
+          v-model:value="selectedKbId"
+          style="width: 260px"
+          :loading="basesLoading"
+          @change="handleKbChange"
+        >
+          <a-select-option value="">
+            全部资料（含未归档）
+          </a-select-option>
+          <a-select-opt-group label="公司级">
+            <a-select-option
+              v-for="b in companyBases"
+              :key="b.id"
+              :value="b.id"
+            >
+              {{ b.name }}（{{ b.material_count }}）
+            </a-select-option>
+          </a-select-opt-group>
+          <a-select-opt-group label="个人">
+            <a-select-option
+              v-for="b in personalBases"
+              :key="b.id"
+              :value="b.id"
+            >
+              {{ b.name }}（{{ b.material_count }}）
+            </a-select-option>
+          </a-select-opt-group>
+        </a-select>
+        <a-button @click="createBaseOpen = true">
+          <template #icon>
+            <PlusOutlined />
+          </template>
+          新建知识库
+        </a-button>
+        <a-button
+          v-if="canDeleteSelectedBase"
+          type="link"
+          danger
+          @click="handleDeleteBase"
+        >
+          删除当前知识库
+        </a-button>
+      </a-space>
+    </a-card>
+
     <!-- 检索测试 -->
     <a-card class="kb-card">
       <a-input-search
@@ -165,6 +214,44 @@
       </a-table>
     </a-card>
 
+    <!-- 阶段 1：新建知识库弹窗（personal 任意用户 / company 仅管理员） -->
+    <a-modal
+      v-model:open="createBaseOpen"
+      title="新建知识库"
+      ok-text="创建"
+      cancel-text="取消"
+      :confirm-loading="creatingBase"
+      @ok="handleCreateBase"
+    >
+      <a-space
+        direction="vertical"
+        style="width: 100%"
+        :size="12"
+      >
+        <a-radio-group v-model:value="createBaseForm.scope">
+          <a-radio value="personal">
+            个人库（仅本人可见）
+          </a-radio>
+          <a-radio
+            v-if="isKbAdmin"
+            value="company"
+          >
+            公司库（全员可见）
+          </a-radio>
+        </a-radio-group>
+        <a-input
+          v-model:value="createBaseForm.name"
+          placeholder="知识库名称"
+          allow-clear
+        />
+        <a-textarea
+          v-model:value="createBaseForm.description"
+          placeholder="描述（可选）"
+          :rows="2"
+        />
+      </a-space>
+    </a-modal>
+
     <!-- 三期 S2：上传弹窗（分类 + 标签） -->
     <a-modal
       v-model:open="uploadOpen"
@@ -193,6 +280,12 @@
             {{ uploadFile ? uploadFile.name : '点击或拖拽文件到此处（pdf/doc/docx/jpg/png）' }}
           </p>
         </a-upload-dragger>
+        <a-select
+          v-model:value="uploadForm.kbId"
+          placeholder="归入知识库（可选，缺省公司公共可见）"
+          allow-clear
+          :options="writableBaseOptions"
+        />
         <a-select
           v-model:value="uploadForm.category"
           placeholder="素材分类（可选）"
@@ -245,9 +338,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { FileTextOutlined, InboxOutlined, UploadOutlined } from '@ant-design/icons-vue'
+import {
+  FileTextOutlined,
+  InboxOutlined,
+  PlusOutlined,
+  UploadOutlined,
+} from '@ant-design/icons-vue'
 import api from '@/api/client'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -269,6 +367,16 @@ interface SearchItem {
   title: string
   content: string
   score?: number
+}
+
+interface KbBase {
+  id: string
+  name: string
+  description?: string | null
+  scope: 'personal' | 'project' | 'company'
+  project_id?: string | null
+  owner_id?: string | null
+  material_count: number
 }
 
 // 三期 S2：素材分类枚举（与后端 schemas/document.py MATERIAL_CATEGORIES 对齐）
@@ -310,6 +418,109 @@ const searchResults = ref<SearchItem[]>([])
 const filterCategory = ref<string | undefined>(undefined)
 const filterTag = ref('')
 
+// 阶段 1：知识库容器状态（素材页无项目上下文 → 后端仅返回公司库 + 本人个人库）
+const kbBases = ref<KbBase[]>([])
+const basesLoading = ref(false)
+const selectedKbId = ref<string>('')
+const companyBases = computed(() => kbBases.value.filter((b) => b.scope === 'company'))
+const personalBases = computed(() => kbBases.value.filter((b) => b.scope === 'personal'))
+// 上传可选库：个人库（后端仅返回本人）+ 公司库（仅管理员可写）
+const writableBaseOptions = computed(() =>
+  kbBases.value
+    .filter((b) => b.scope === 'personal' || isKbAdmin.value)
+    .map((b) => ({
+      value: b.id,
+      label: `${b.name}（${b.scope === 'company' ? '公司' : '个人'}）`,
+    })),
+)
+const canDeleteSelectedBase = computed(() => {
+  const base = kbBases.value.find((b) => b.id === selectedKbId.value)
+  if (!base) return false
+  return base.scope === 'personal' || (base.scope === 'company' && isKbAdmin.value)
+})
+
+const fetchBases = async () => {
+  basesLoading.value = true
+  try {
+    const { data } = await api.get('/kb-bases')
+    if (data.code === 0) kbBases.value = data.data.items
+  } catch {
+    message.error('加载知识库失败')
+  } finally {
+    basesLoading.value = false
+  }
+}
+
+const handleKbChange = () => {
+  pagination.current = 1
+  fetchMaterials()
+}
+
+// ---- 新建知识库 ----
+const createBaseOpen = ref(false)
+const creatingBase = ref(false)
+const createBaseForm = reactive<{ scope: 'personal' | 'company'; name: string; description: string }>({
+  scope: 'personal',
+  name: '',
+  description: '',
+})
+
+const handleCreateBase = async () => {
+  const name = createBaseForm.name.trim()
+  if (!name) {
+    message.warning('请输入知识库名称')
+    return
+  }
+  creatingBase.value = true
+  try {
+    const { data } = await api.post('/kb-bases', {
+      scope: createBaseForm.scope,
+      name,
+      description: createBaseForm.description.trim() || null,
+    })
+    if (data.code === 0) {
+      message.success(`已创建知识库「${name}」`)
+      createBaseOpen.value = false
+      createBaseForm.name = ''
+      createBaseForm.description = ''
+      await fetchBases()
+      selectedKbId.value = data.data.id
+      handleKbChange()
+    }
+  } catch (e) {
+    const err = e as { response?: { data?: { message?: string } } }
+    message.error(err?.response?.data?.message || '创建失败')
+  } finally {
+    creatingBase.value = false
+  }
+}
+
+const handleDeleteBase = () => {
+  const base = kbBases.value.find((b) => b.id === selectedKbId.value)
+  if (!base) return
+  Modal.confirm({
+    title: `删除知识库「${base.name}」？`,
+    content: `库内 ${base.material_count} 份素材将一并删除，不可恢复。`,
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        const { data } = await api.delete(`/kb-bases/${base.id}`)
+        if (data.code === 0) {
+          message.success('已删除知识库')
+          selectedKbId.value = ''
+          await fetchBases()
+          fetchMaterials()
+        }
+      } catch (e) {
+        const err = e as { response?: { data?: { message?: string } } }
+        message.error(err?.response?.data?.message || '删除失败')
+      }
+    },
+  })
+}
+
 const pagination = reactive({
   current: 1,
   pageSize: 10,
@@ -327,6 +538,7 @@ const fetchMaterials = async () => {
     if (filterCategory.value) params.category = filterCategory.value
     const tag = filterTag.value.trim()
     if (tag) params.tag = tag
+    if (selectedKbId.value) params.kb_id = selectedKbId.value
     const { data } = await api.get('/kb/materials', { params })
     if (data.code === 0) {
       materials.value = data.data.items
@@ -354,9 +566,10 @@ const onTagInputChange = () => {
 // ---- 上传（弹窗式：文件 + 分类 + 标签） ----
 const uploadOpen = ref(false)
 const uploadFile = ref<File | null>(null)
-const uploadForm = reactive<{ category?: string; tags: string[] }>({
+const uploadForm = reactive<{ category?: string; tags: string[]; kbId?: string }>({
   category: undefined,
   tags: [],
+  kbId: undefined,
 })
 
 const pickUploadFile = (file: File) => {
@@ -368,6 +581,7 @@ const resetUploadForm = () => {
   uploadFile.value = null
   uploadForm.category = undefined
   uploadForm.tags = []
+  uploadForm.kbId = selectedKbId.value || undefined
 }
 
 const handleUploadSubmit = async () => {
@@ -377,6 +591,7 @@ const handleUploadSubmit = async () => {
   form.append('file', file)
   if (uploadForm.category) form.append('category', uploadForm.category)
   if (uploadForm.tags.length) form.append('tags', uploadForm.tags.join(','))
+  if (uploadForm.kbId) form.append('kb_id', uploadForm.kbId)
   uploading.value = true
   try {
     // 不手动设 Content-Type：axios 自动带 boundary（手动设置会丢失导致后端解析失败）
@@ -386,6 +601,7 @@ const handleUploadSubmit = async () => {
       uploadOpen.value = false
       resetUploadForm()
       fetchMaterials()
+      fetchBases()  // 刷新库内素材数
     }
   } catch (e) {
     const err = e as { response?: { data?: { message?: string } } }
@@ -492,7 +708,10 @@ const formatTime = (iso?: string) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-onMounted(fetchMaterials)
+onMounted(() => {
+  fetchBases()
+  fetchMaterials()
+})
 </script>
 
 <style scoped>

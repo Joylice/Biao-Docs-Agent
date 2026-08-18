@@ -23,6 +23,8 @@ class BidState(TypedDict, total=False):
 
     # ── 资料库挂载（confirm_outline 提交：None=项目全量 / []=不挂载 / 列表=指定文档）──
     mounted_doc_ids: list[str] | None
+    # 知识库级挂载（2026-08-18：库级与文档级并集生效，均为 None 时项目全量）
+    mounted_kb_ids: list[str] | None
 
     # ── 章节生成（逐章合并）──
     chapters: Annotated[dict[str, str], operator.or_]

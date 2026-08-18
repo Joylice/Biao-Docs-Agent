@@ -36,6 +36,11 @@ class Document(Base):
         JSON, nullable=False, default=list
     )  # 三期：自由标签数组（迁移 0008_documents_category_tags）
     meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    kb_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+        nullable=True,
+    )  # 归属知识库（迁移 0014；NULL = 存量未归档全局素材，视同公司级可见）
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )

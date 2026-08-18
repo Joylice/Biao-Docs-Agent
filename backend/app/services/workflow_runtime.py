@@ -262,6 +262,7 @@ async def generate_chapter_draft(project_id: uuid.UUID | str, chapter_no: str) -
     from app.agents.nodes import _upsert_section
     from app.core.database import async_session_factory
     from app.services.chapter_service import extract_chapter_summary, generate_chapter
+    from app.services.kb_base_service import resolve_mount_doc_ids
 
     snapshot = await get_state(project_id)
     values = snapshot.values or {}
@@ -270,12 +271,18 @@ async def generate_chapter_draft(project_id: uuid.UUID | str, chapter_no: str) -
     if chapter is None:
         raise BizError(code=4004, message=f"章节 {chapter_no} 不在大纲中，无法生成初稿")
 
+    # 挂载配置合并：知识库级 ∪ 文档级（均 None = 项目全量）
+    async with async_session_factory() as db:
+        doc_ids = await resolve_mount_doc_ids(
+            db, values.get("mounted_kb_ids"), values.get("mounted_doc_ids")
+        )
+
     content = await generate_chapter(
         chapter=chapter,
         score_points=values.get("score_points", []),
         tech_requirements=values.get("tech_requirements", []),
         project_id=uuid.UUID(str(project_id)),
-        doc_ids=values.get("mounted_doc_ids"),
+        doc_ids=doc_ids,
     )
     if not content:
         raise BizError(code=5001, message="章节初稿生成失败：LLM 返回为空")
@@ -321,11 +328,12 @@ async def save_outline_draft(
     project_id: uuid.UUID,
     outline: list[dict],
     mounted_doc_ids: list[str] | None = None,
+    mounted_kb_ids: list[str] | None = None,
 ) -> None:
     """保存大纲二次编辑草稿到 proposal_skeletons.draft（行不存在则创建，upsert）.
 
-    draft 结构：{"outline": [...], "mounted_doc_ids": [...]}；mounted_doc_ids 为
-    字符串列表（None=未设置挂载，保持项目全量检索语义）。
+    draft 结构：{"outline": [...], "mounted_doc_ids": [...], "mounted_kb_ids": [...]}；
+    两个挂载列表为字符串列表（None=未设置挂载，保持项目全量检索语义）。
     """
     from sqlalchemy import select
 
@@ -338,7 +346,11 @@ async def save_outline_draft(
     if not skeleton:
         skeleton = ProposalSkeleton(project_id=project_id, tree=[])
         db.add(skeleton)
-    skeleton.draft = {"outline": outline, "mounted_doc_ids": mounted_doc_ids}
+    skeleton.draft = {
+        "outline": outline,
+        "mounted_doc_ids": mounted_doc_ids,
+        "mounted_kb_ids": mounted_kb_ids,
+    }
     skeleton.draft_updated_at = datetime.now(UTC)
     await db.flush()
 
@@ -358,6 +370,7 @@ async def get_outline_draft(db, project_id: uuid.UUID) -> dict | None:
     return {
         "outline": skeleton.draft.get("outline", []),
         "mounted_doc_ids": skeleton.draft.get("mounted_doc_ids"),
+        "mounted_kb_ids": skeleton.draft.get("mounted_kb_ids"),
         "updated_at": skeleton.draft_updated_at,
     }
 

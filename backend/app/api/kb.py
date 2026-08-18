@@ -23,6 +23,8 @@ from app.core.deps import get_current_kb_admin_id, get_current_user_id
 from app.core.exceptions import BizError, ValidationError
 from app.core.response import paginated, success
 from app.models.document import Document
+from app.models.knowledge_base import KnowledgeBase
+from app.models.project import ProjectMember
 from app.models.user import User
 from app.schemas.document import (
     DocumentListOut,
@@ -31,7 +33,7 @@ from app.schemas.document import (
     validate_category,
     validate_tags,
 )
-from app.services import rag_service, storage_service, task_service
+from app.services import kb_base_service, rag_service, storage_service, task_service
 
 router = APIRouter()
 
@@ -41,13 +43,23 @@ async def upload_material(
     file: UploadFile,
     category: str | None = Form(None, description="素材分类（三期 S2，可选）"),
     tags: str = Form("", description="标签，逗号分隔（三期 S2，可选）"),
+    kb_id: uuid.UUID | None = Form(None, description="归属知识库（2026-08-18，可选）"),
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """上传全局资料库素材（pdf/doc/docx/jpg/png）."""
+    """上传全局资料库素材（pdf/doc/docx/jpg/png；可选归入指定知识库）."""
     # 校验文件类型与大小
     if file.content_type not in settings.allowed_upload_types:
         raise ValidationError(f"不支持的文件类型: {file.content_type}")
+
+    # 知识库归属校验（库存在且当前用户有写权限）
+    target_kb: KnowledgeBase | None = None
+    if kb_id is not None:
+        kb_result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+        target_kb = kb_result.scalar_one_or_none()
+        if not target_kb:
+            raise BizError(code=4004, message="知识库不存在")
+        await kb_base_service.check_base_writable(db, target_kb, user_id)
 
     # 三期 S2：分类/标签校验（枚举 + 上限）
     try:
@@ -69,7 +81,7 @@ async def upload_material(
         project_id=None,
     )
 
-    # 登记文档（project_id IS NULL = 全局资料）
+    # 登记文档（project_id IS NULL = 全局资料；kb_id 归属知识库）
     doc = Document(
         project_id=None,
         doc_type="kb_material",
@@ -78,6 +90,7 @@ async def upload_material(
         status="uploaded",
         category=doc_category,
         tags=doc_tags,
+        kb_id=target_kb.id if target_kb else None,
         created_by=user_id,
     )
     db.add(doc)
@@ -107,15 +120,29 @@ async def list_materials(
     page_size: int = Query(20, ge=1, le=100),
     category: str | None = Query(None, description="分类精确过滤（三期 S2）"),
     tag: str | None = Query(None, description="标签过滤：JSON 包含匹配（三期 S2）"),
+    kb_id: uuid.UUID | None = Query(None, description="知识库过滤（2026-08-18）"),
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """全局资料库列表（仅 kb_material，project_id IS NULL；LEFT JOIN 上传者）."""
+    """全局资料库列表（仅 kb_material，project_id IS NULL；按知识库可见性过滤）.
+
+    可见性（2026-08-18）：kb_id IS NULL 存量未归档 / 公司库全员 / 本人个人库 /
+    用户所属项目的项目库；他人个人库素材不可见。
+    """
     query = (
         select(Document, User.display_name)
         .join(User, Document.created_by == User.id, isouter=True)
+        .outerjoin(KnowledgeBase, KnowledgeBase.id == Document.kb_id)
+        .outerjoin(
+            ProjectMember,
+            (ProjectMember.project_id == KnowledgeBase.project_id)
+            & (ProjectMember.user_id == user_id),
+        )
         .where(Document.project_id.is_(None), Document.doc_type == "kb_material")
+        .where(kb_base_service.material_visibility_clause(user_id, ProjectMember.user_id))
     )
+    if kb_id is not None:
+        query = query.where(Document.kb_id == kb_id)
     if category:
         query = query.where(Document.category == category)
     if tag:

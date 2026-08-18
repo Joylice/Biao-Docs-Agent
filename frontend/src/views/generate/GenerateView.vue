@@ -52,7 +52,7 @@
             v-if="!kbLoading && !kbError"
             color="blue"
           >
-            已挂载 {{ mountedCount }} 份
+            已挂载 {{ mountedCount }} 份文档 · {{ mountedKbIds.length }} 个知识库
           </a-tag>
         </template>
         <a-alert
@@ -65,7 +65,23 @@
           v-else-if="kbLoading"
           :rows="2"
         />
-        <template v-else-if="kbDocs.length > 0">
+        <template v-else-if="kbDocs.length > 0 || kbBases.length > 0">
+          <!-- 阶段 1：知识库级挂载（库内全部素材参与检索，与文档级并集生效） -->
+          <div
+            v-if="kbBases.length > 0"
+            class="kb-mount__toolbar"
+          >
+            <span class="kb-mount__hint">挂载知识库：</span>
+            <a-select
+              v-model:value="mountedKbIds"
+              mode="multiple"
+              placeholder="选择知识库（库内素材全部参与检索）"
+              style="min-width: 360px; flex: 1"
+              allow-clear
+              :max-tag-count="3"
+              :options="kbBaseOptions"
+            />
+          </div>
           <div class="kb-mount__toolbar">
             <a-checkbox
               :checked="mountAllChecked"
@@ -73,7 +89,7 @@
             >
               全选
             </a-checkbox>
-            <span class="kb-mount__hint">仅勾选的资料库文档会参与方案生成检索（RAG）</span>
+            <span class="kb-mount__hint">文档级细选：仅勾选的文档会参与方案生成检索（RAG）</span>
           </div>
           <a-checkbox-group
             v-model:value="mountedIds"
@@ -568,6 +584,13 @@ interface KbDocument {
   created_at: string
 }
 
+interface KbBase {
+  id: string
+  name: string
+  scope: 'personal' | 'project' | 'company'
+  material_count: number
+}
+
 const route = useRoute()
 const router = useRouter()
 const projectId = route.params.projectId as string
@@ -592,7 +615,11 @@ const loadError = ref('')
 type DraftState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
 const draftState = ref<DraftState>('idle')
 const draftRestoreVisible = ref(false)
-const pendingDraft = ref<{ outline: OutlineItem[]; mounted_doc_ids: string[] | null } | null>(null)
+const pendingDraft = ref<{
+  outline: OutlineItem[]
+  mounted_doc_ids: string[] | null
+  mounted_kb_ids: string[] | null
+} | null>(null)
 const pendingDraftUpdatedAt = ref('')
 /** 重建树等非用户编辑引起的变更不触发草稿保存 */
 let suppressDraftWatch = false
@@ -913,6 +940,7 @@ const saveDraftNow = async () => {
     await api.put(`/projects/${projectId}/workflow/outline-draft`, {
       outline: treeToOutline(editedTree.value),
       mounted_doc_ids: resolveMountedDocIds(),
+      mounted_kb_ids: resolveMountedKbIds(),
     })
     draftState.value = 'saved'
   } catch {
@@ -954,6 +982,9 @@ const applyDraft = () => {
   editedTree.value = outlineToTree(d.outline)
   if (Array.isArray(d.mounted_doc_ids)) {
     mountedIds.value = d.mounted_doc_ids
+  }
+  if (Array.isArray(d.mounted_kb_ids)) {
+    mountedKbIds.value = d.mounted_kb_ids
   }
   nextTick(() => {
     suppressDraftWatch = false
@@ -1004,11 +1035,25 @@ const startOutlinePolling = () => {
   }, 2000)
 }
 
-/* ---------------- 资料库挂载配置（生成前选择参与 RAG 检索的文档） ---------------- */
+/* ---------------- 资料库挂载配置（阶段 1：知识库级 + 文档级两级，并集生效） ---------------- */
 const kbDocs = ref<KbDocument[]>([])
 const mountedIds = ref<string[]>([])
+const kbBases = ref<KbBase[]>([])
+const mountedKbIds = ref<string[]>([])
 const kbLoading = ref(false)
 const kbError = ref('')
+
+const scopeLabel: Record<KbBase['scope'], string> = {
+  company: '公司',
+  project: '项目',
+  personal: '个人',
+}
+const kbBaseOptions = computed(() =>
+  kbBases.value.map((b) => ({
+    value: b.id,
+    label: `${b.name}（${scopeLabel[b.scope]} · ${b.material_count} 份）`,
+  })),
+)
 
 const mountedCount = computed(() => mountedIds.value.length)
 const mountAllChecked = computed(
@@ -1021,9 +1066,14 @@ const resolveMountedDocIds = (): string[] | null => {
   return kbDocs.value.length === 0 || mountAll ? null : [...mountedIds.value]
 }
 
+/** 知识库级挂载 → 载荷：未选 → null（不参与限定），否则选中库清单 */
+const resolveMountedKbIds = (): string[] | null => {
+  return mountedKbIds.value.length > 0 ? [...mountedKbIds.value] : null
+}
+
 /** 挂载配置变化（编辑态）→ 防抖保存草稿 */
-watch(mountedIds, () => {
-  if (!suppressDraftWatch && awaitingOutlineConfirm.value && kbDocs.value.length > 0) {
+watch([mountedIds, mountedKbIds], () => {
+  if (!suppressDraftWatch && awaitingOutlineConfirm.value) {
     scheduleDraftSave()
   }
 })
@@ -1043,6 +1093,16 @@ const loadKbDocs = async () => {
     kbError.value = '资料库加载失败，生成将按项目全量文档检索'
   } finally {
     kbLoading.value = false
+  }
+}
+
+/** 知识库列表（项目上下文：公司库 + 本项目项目库 + 本人个人库） */
+const loadKbBases = async () => {
+  try {
+    const res = await api.get('/kb-bases', { params: { project_id: projectId } })
+    kbBases.value = res.data?.data?.items ?? []
+  } catch {
+    kbBases.value = []
   }
 }
 
@@ -1380,6 +1440,7 @@ const handleStartGenerate = async () => {
     // 挂载配置：全选或空资料库 → null（后端按项目全量检索）；否则传勾选清单（[] = 不挂载）
     const body: Record<string, unknown> = {
       mounted_doc_ids: resolveMountedDocIds(),
+      mounted_kb_ids: resolveMountedKbIds(),
     }
     // 二次编辑产物：仅确认态提交（后端 resume payload 传递，不经 update_state）
     if (awaitingOutlineConfirm.value) {
@@ -1437,6 +1498,7 @@ const loadInitial = async () => {
 onMounted(() => {
   loadInitial()
   loadKbDocs()
+  loadKbBases()
 })
 
 onUnmounted(() => {

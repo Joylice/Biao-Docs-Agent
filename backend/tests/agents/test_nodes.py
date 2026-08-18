@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 from app.agents import nodes
+from app.models.document import Document
 
 PROJECT_ID = uuid.uuid4()
 
@@ -206,6 +207,65 @@ class TestRetrieveNode:
         }
         await nodes.retrieve_node(state)
         assert captured["doc_ids"] == []
+
+    @pytest.mark.asyncio
+    async def test_mounted_kb_ids_resolved_to_doc_ids(self, monkeypatch) -> None:
+        """mounted_kb_ids → 经 resolve_mount_doc_ids 展开库内素材传入检索."""
+        kb_id = uuid.uuid4()
+        doc_a = uuid.uuid4()
+        captured: dict = {}
+
+        async def fake_embedding(_text: str):
+            return [0.1, 0.2]
+
+        async def fake_retrieve(**kwargs):
+            captured["doc_ids"] = kwargs.get("doc_ids", "<missing>")
+            return []
+
+        monkeypatch.setattr(
+            nodes, "async_session_factory", lambda: FakeDB({Document: [(doc_a,)]})
+        )
+        monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
+        monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
+
+        state = {
+            "project_id": str(PROJECT_ID),
+            "outline": [{"chapter_no": "1", "title": "概述", "sections": []}],
+            "chapters": {},
+            "mounted_kb_ids": [str(kb_id)],
+        }
+        await nodes.retrieve_node(state)
+        assert captured["doc_ids"] == [doc_a]
+
+    @pytest.mark.asyncio
+    async def test_mounted_kb_and_doc_ids_union(self, monkeypatch) -> None:
+        """库级 ∪ 文档级挂载并集去重后传入检索."""
+        kb_id = uuid.uuid4()
+        doc_kb, doc_direct = uuid.uuid4(), uuid.uuid4()
+        captured: dict = {}
+
+        async def fake_embedding(_text: str):
+            return [0.1, 0.2]
+
+        async def fake_retrieve(**kwargs):
+            captured["doc_ids"] = kwargs.get("doc_ids", "<missing>")
+            return []
+
+        monkeypatch.setattr(
+            nodes, "async_session_factory", lambda: FakeDB({Document: [(doc_kb,)]})
+        )
+        monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
+        monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
+
+        state = {
+            "project_id": str(PROJECT_ID),
+            "outline": [{"chapter_no": "1", "title": "概述", "sections": []}],
+            "chapters": {},
+            "mounted_kb_ids": [str(kb_id)],
+            "mounted_doc_ids": [str(doc_direct), str(doc_kb)],  # doc_kb 重复验证去重
+        }
+        await nodes.retrieve_node(state)
+        assert captured["doc_ids"] == sorted([doc_kb, doc_direct], key=str)
 
     @pytest.mark.asyncio
     async def test_no_mounted_doc_ids_keeps_project_wide(self, monkeypatch) -> None:

@@ -22,6 +22,7 @@ from app.core.database import get_db
 from app.core.security import create_access_token
 from app.main import app
 from app.models.document import Document
+from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
 
 USER_ID = uuid.uuid4()
@@ -193,6 +194,87 @@ class TestUploadMaterial:
         assert resp.status_code == 400
 
 
+class TestUploadMaterialKbAttribution:
+    """POST /kb/materials 知识库归属（kb_id，阶段 1）."""
+
+    def _personal_base(self) -> KnowledgeBase:
+        base = KnowledgeBase(
+            project_id=None, owner_id=USER_ID, scope="personal", name="我的库"
+        )
+        base.id = uuid.uuid4()
+        return base
+
+    @pytest.mark.asyncio
+    async def test_upload_into_own_personal_base(
+        self, client: AsyncClient, override_db, headers, monkeypatch
+    ) -> None:
+        """上传携带 kb_id 归入本人个人库（doc.kb_id 落库）."""
+        base = self._personal_base()
+        session = override_db([base])
+        monkeypatch.setattr(
+            "app.api.kb.storage_service.upload_file", lambda *a, **k: "global/x/a.pdf"
+        )
+
+        async def fake_enqueue(project_id, doc_id):
+            return True
+
+        monkeypatch.setattr("app.api.kb.task_service.enqueue_index_document", fake_enqueue)
+
+        async def fake_refresh(obj):
+            obj.id = obj.id or DOC_ID
+            obj.created_at = datetime.now(UTC)
+
+        session.refresh.side_effect = fake_refresh
+
+        files = {"file": ("a.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")}
+        resp = await client.post(
+            "/api/v1/kb/materials",
+            files=files,
+            data={"kb_id": str(base.id)},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        added_docs = [
+            a for c in session.add.call_args_list if isinstance((a := c.args[0]), Document)
+        ]
+        assert added_docs[0].kb_id == base.id
+
+    @pytest.mark.asyncio
+    async def test_upload_into_unknown_base_returns_4004(
+        self, client: AsyncClient, override_db, headers
+    ) -> None:
+        """kb_id 对应库不存在 → 4004（HTTP 404）."""
+        override_db([None])
+        files = {"file": ("a.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")}
+        resp = await client.post(
+            "/api/v1/kb/materials",
+            files=files,
+            data={"kb_id": str(uuid.uuid4())},
+            headers=headers,
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == 4004
+
+    @pytest.mark.asyncio
+    async def test_upload_into_others_base_forbidden(
+        self, client: AsyncClient, override_db, headers
+    ) -> None:
+        """归入他人个人库 → 403（库写权限按 scope 判定）."""
+        base = KnowledgeBase(
+            project_id=None, owner_id=uuid.uuid4(), scope="personal", name="他人库"
+        )
+        base.id = uuid.uuid4()
+        override_db([base])
+        files = {"file": ("a.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")}
+        resp = await client.post(
+            "/api/v1/kb/materials",
+            files=files,
+            data={"kb_id": str(base.id)},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+
 class TestListMaterials:
     """GET /kb/materials."""
 
@@ -266,6 +348,34 @@ class TestListMaterials:
             )
             assert "category" in stmts
             assert "@>" in stmts  # tag 过滤用 JSON 包含操作符（值为 bind 参数）
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_list_kb_id_filter_and_visibility_join(
+        self, client: AsyncClient, headers
+    ) -> None:
+        """kb_id 过滤 + 可见性 outerjoin（knowledge_bases + project_members）下推 SQL."""
+        session = AsyncMock()
+        count_result = MagicMock()
+        count_result.scalar.return_value = 0
+        items_result = MagicMock()
+        items_result.all.return_value = []
+        session.execute.side_effect = [count_result, items_result]
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            resp = await client.get(
+                "/api/v1/kb/materials",
+                params={"kb_id": str(uuid.uuid4())},
+                headers=headers,
+            )
+            assert resp.status_code == 200
+            stmts = " ".join(str(c.args[0]) for c in session.execute.call_args_list).replace(
+                "\n", " "
+            )
+            assert "knowledge_bases.id" in stmts  # 可见性 LEFT JOIN
+            assert "project_members" in stmts  # 项目库成员判定 JOIN
+            assert "documents.kb_id" in stmts  # kb_id 过滤条件
         finally:
             app.dependency_overrides.pop(get_db, None)
 
