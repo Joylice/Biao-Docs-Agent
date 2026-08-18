@@ -134,6 +134,8 @@ docker-compose.yml
 
 **异步处理**：上传走 Arq 任务队列，前端轮询解析/索引状态（progress 字段）。
 
+**多知识库容器与可见性矩阵（2026-08-18）**：`knowledge_bases` 容器表（scope=`personal|project|company`）作为 kb_material 的分组与授权容器，不改变分块/向量链路；`documents.kb_id` 标记素材归属（迁移 0014，存量全局素材 kb_id=NULL 兼容）。可见性矩阵：company 全员可见；project 限该 project_id 成员；personal 仅 owner_id 本人。建库权限：personal 任意登录用户、project 仅该项目 owner、company 仅 kb_admin/admin；删库限创建者（company 库限管理员），库内素材一并删除（MinIO + 记录 + 分块 CASCADE）。素材上传 `POST /kb/materials` 增可选 Form 字段 `kb_id`（校验库存在且当前用户可写）。挂载改库级：confirm-outline/outline-draft 增 `mounted_kb_ids`（与 mounted_doc_ids 并集生效），retrieve_node 经 `kb_base_service.resolve_doc_ids` 库→素材 id 列表传入检索；AI 辅助生成检索范围 = 项目挂载 ∪ 本人个人库素材（见 §3.9）。
+
 ### 3.3 招标文件解析模块
 
 **职责**：上传招标文件 → 抽取文本与结构 → LLM 提取评分点/资格/技术需求 → 人工确认。
@@ -235,8 +237,8 @@ class BidState(TypedDict):
 | 事件 | 负载 | 说明 |
 |---|---|---|
 | `progress` | `{phase, progress, current_chapter}` | 阶段进度（outline/generate/review） |
-| `section_token` | `{chapter_no, delta}` | 三期真流式增量文本块（write_node 节流发布：累积 ≥40 字符或距上次 ≥200ms 取先到者；尾部缓冲兜底 flush，delta 拼接 == 全文） |
-| `section_done` | `{chapter_no, title, content}` | 章节完成（携带全文，供断线重连/丢块兜底对齐） |
+| `section_token` | `{chapter_no, delta, source?}` | 三期真流式增量文本块（write_node 节流发布：累积 ≥40 字符或距上次 ≥200ms 取先到者；尾部缓冲兜底 flush，delta 拼接 == 全文；2026-08-18：辅助生成发布时带 `source="assist"` 区分整章工作流生成） |
+| `section_done` | `{chapter_no, title, content, source?, stopped?}` | 章节完成（携带全文，供断线重连/丢块兜底对齐；辅助生成携带 `source="assist"` 与 `stopped` 暂停标记） |
 | `task_done` | `{export_storage_key}` | 全流程完成 |
 | `task_assigned` | `{chapter_no, assignee_id}` | 分工推送（2026-08-18：owner 分配章节后通知成员） |
 | `task_submitted` | `{chapter_no, assignee_id}` | 成员提交章节待审（2026-08-18） |
@@ -263,9 +265,29 @@ class BidState(TypedDict):
 
 **章节级「可视不可改」**：所有项目成员可读全部章节；已分配章节仅 assignee/owner 可编辑（save_section_edit 前置校验 `division_service.check_chapter_editable`，越权 403）；未分配章节保持现状（项目成员可编辑），向后兼容。分工表只跟踪负责人与状态，章节正文仍存 workflow state `chapters` + `proposal_sections`，不重复存储。
 
-**前端**：Workspace 子路由「分工协作」（步骤 4）：owner 视角章节列表 + 成员下拉分配 + 增量推送 + 审核弹窗（打回必填意见）；成员视角任务卡片 + 领取/生成初稿/内嵌编辑器/提交；状态徽标按 status 渲染；监听 WS `task_*` 事件自动刷新。
+**前端**：Workspace 子路由「分工协作」（步骤 4）：owner 视角章节列表 + 成员下拉分配 + 增量推送 + 审核弹窗（打回必填意见）；成员视角任务卡片 + 领取/生成初稿/内嵌编辑器/提交；状态徽标按 status 渲染；监听 WS `task_*` 事件自动刷新。分工表附 outline 子节（list 接口附 `sections` 与 `submitted_by_name`），前端树形展示 2 级目录（章行保留分配/状态控件，子节行缩进纯展示，分工粒度仍为章级）。
 
-**表**：`chapter_assignments`（迁移 0013）。
+**章节编制工具栏（2026-08-18）**：编辑器 modal 改近全屏抽屉，工具栏：AI 生成/人工编辑（开关）/关闭编辑/图片/保存/提审/批注。
+- **AI 辅助生成**（`assist_service`）：仅 assignee，`POST /chapter-assignments/{id}/assist-generate`（body `{prompt, mode: append|overwrite}`）；检索范围 = 项目挂载（库级 ∪ 文档级）∪ 本人个人库素材；上下文 = 前文摘要 + 本章评分点 + 技术需求 + 用户 prompt；复用 generate_chapter 的 on_delta 流式经 WS `section_token`（source=assist）推送；append 追加到现有正文末尾/overwrite 整章覆盖，落库复用双写口径（state.chapters + proposal_sections + 摘要重算）；prompt 与检索素材外发前 redact 脱敏。
+- **暂停机制**：`call_llm_stream` 支持 `asyncio.Event` 取消令牌（每 chunk 检查，mock 模式同样分段支持）；任务注册表 `project_id:chapter_no → Event`，`POST .../assist-generate/stop` 置位 → 已累积部分按 mode 落库（空部分不落库）+ `section_done`（stopped=true）；暂停仅对辅助生成生效，整章工作流生成不支持暂停。
+- **图片插入**：`POST /projects/{pid}/images`（jpg/png/gif/webp ≤10MB，存 MinIO `images/{project_id}/`，返回 storage_key + 签名 URL；GET signed 读限本项目 images 目录防跨项目越权）；前端工具栏上传后在光标处插入 `![名称](url)`，预览态 MarkdownRenderer 渲染；Word 导出（export_service）解析 `![alt](url)` → 拉取 MinIO 字节 → `add_picture` 内嵌（宽度上限 15cm），拉取失败降级为文本说明不阻塞。
+- **章节级批注**：`chapter_annotations` 表（迁移 0015），`GET/POST /chapter-assignments/{id}/annotations`（项目成员可读，assignee/owner 可写，时间正序，附批注人姓名）；与审核打回意见字段并存；前端编辑器「批注」抽屉（留言列表 + 输入框）。
+
+**审阅增强与意见回派（2026-08-18）**：ReviewView 左侧 a-tree 全量 2 级目录（章 + 子节，子节仅导航不可选，审阅操作仍章级与生成粒度一致），章卡片标「提交人：XXX」（无分工显示「AI 生成/未分配」）；confirm-review feedback 意见回派：按 chapter_no/标题匹配大纲后查分工，命中且有 assignee → 该 assignment 置 rejected + review_comment + 推送 task_reviewed（assignee 在分工页看到打回可重编），并从 feedback 移除避免重复重写；无 assignee 章节保持现有 rewrite 链路；全部意见均回派后 decision.action 改 `redispatched`（review_route 返回 review 自环，重新 interrupt 等待复审，响应 next_phase=redispatch），避免空 feedback 进入 rewrite 报错。
+
+**表**：`chapter_assignments`（迁移 0013）、`chapter_annotations`（迁移 0015）。
+
+### 3.10 方案版本库与归档模块（2026-08-18）
+
+**职责**：评审通过方案入版本库（下载查阅）与归档公司知识库供检索。
+
+**版本快照**（`version_service`）：`proposal_versions` 表（迁移 0015，UNIQUE(project_id,version)，version 续号）；快照 = 导出 Word（复用 export_to_word，含格式要求排版）+ Markdown 源（章/子节结构重建）双产物入 MinIO `versions/{project_id}/`。**自动触发**：division 审核 approved 后 `maybe_auto_snapshot` 检查「无 pending/in_progress/submitted 且至少 1 章 approved」即快照（created_by=NULL 标记自动，失败 rollback 不阻塞审核）；owner 可手动 `POST /projects/{pid}/versions`（附可选备注）。下载：`GET .../versions/{id}/download?type=docx|source` 返签名 URL。
+
+**归档**：`POST .../versions/{id}/archive`（仅 owner，body kb_id 限公司级库否则 400）：创建全局素材记录（documents：project_id=NULL、doc_type=kb_material、kb_id=目标库、标题「归档-{项目名}-v{n}」，project_id=NULL 保证 kb/search 全局检索可命中）+ 审计 proposal.archive + 入队现有 index 任务分块向量化；归档文档删除不影响版本记录。
+
+**前端**：ReviewView 底部「版本库」卡片：版本列表（版本号/自动快照标记/备注/创建人/时间）+ 手动快照弹窗（owner）+ 下载 Word/Markdown 源 + 归档选库弹窗（仅列公司级库）。
+
+**表**：`proposal_versions`（迁移 0015）。
 
 ---
 
@@ -437,6 +459,42 @@ CREATE TABLE chapter_assignments (
   reviewed_at    TIMESTAMPTZ,              -- 审核时间
   UNIQUE (project_id, chapter_no)          -- 一章一负责人，重复分配幂等 upsert
 );
+
+-- 知识库容器（多知识库分级可见性；迁移 0014_knowledge_bases，documents 增 kb_id UUID NULL REFERENCES knowledge_bases ON DELETE SET NULL）
+CREATE TABLE knowledge_bases (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id  UUID REFERENCES projects(id) ON DELETE CASCADE,  -- NULL = 非项目库（personal/company）
+  owner_id    UUID NOT NULL REFERENCES users(id),              -- 创建者（personal 归属人）
+  scope       VARCHAR(10) NOT NULL,                            -- personal|project|company
+  name        TEXT NOT NULL,                                   -- 同 scope+owner/project 下唯一（服务层校验）
+  description TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 章节批注（章节级留言，与审核打回意见并存；迁移 0015_annotations_versions）
+CREATE TABLE chapter_annotations (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  chapter_no  VARCHAR(32) NOT NULL,        -- 大纲章节编号
+  content     TEXT NOT NULL,               -- 批注内容
+  created_by  UUID NOT NULL REFERENCES users(id),   -- 批注人（assignee/owner）
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ON chapter_annotations (project_id, chapter_no, created_at);
+
+-- 方案版本库（评审通过快照 + 归档；迁移 0015_annotations_versions）
+CREATE TABLE proposal_versions (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  version             INT NOT NULL,                  -- 项目内自续号（max+1）
+  snapshot_note       TEXT,                          -- 快照备注（手动可填）
+  storage_key_docx    TEXT NOT NULL,                 -- Word 产物 MinIO key
+  storage_key_source  TEXT NOT NULL,                 -- Markdown 源 MinIO key
+  created_by          UUID REFERENCES users(id),     -- NULL = 自动快照（全部章节 approved 触发）
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (project_id, version)
+);
 ```
 
 ### 4.2 数据一致性要点
@@ -458,16 +516,23 @@ CREATE TABLE chapter_assignments (
 | GET | /settings/llm | 读取 LLM 页面配置（全局，无项目上下文，普通登录用户可读；密钥脱敏为 sk-****+后4位，附 deepseek/dashscope_configured 标志，永不返回明文） |
 | PUT | /settings/llm | 更新 LLM 页面配置（**仅管理员**，BID_ADMIN_USER_IDS 逗号分隔邮箱列表，为空拒绝写入 403；密钥字段三态契约：省略(None)=保持/""=清除/非空=更新，服务端拒收疑似脱敏串（含连续 4 星号）；embedding_api_base 必填且做 SSRF 校验（禁私网/本机段，debug 档放行 loopback）；密钥 Fernet 加密入库（优先 BID_LLM_CRYPTO_SECRET 派生）；审计 settings.llm_update 的 detail 只记变更字段名；运行时缓存于 commit 成功后失效） |
 | POST | /settings/llm/test | LLM/Embedding 连通性测试（**仅管理员**；body target=llm\|embedding；15s 超时、异常全捕获，业务结果 data.ok=true/false，HTTP 恒 200） |
-| POST | /kb/materials | 全局资料库上传（二期：project_id IS NULL 全局共享；登录可用；审计 kb.material_upload；入队向量化；三期：Form 可选参数 category 枚举校验、tags 逗号分隔字符串，服务端拆分校验 ≤10 个/每个 ≤20 字符） |
+| POST | /kb/materials | 全局资料库上传（二期：project_id IS NULL 全局共享；登录可用；审计 kb.material_upload；入队向量化；三期：Form 可选参数 category 枚举校验、tags 逗号分隔字符串，服务端拆分校验 ≤10 个/每个 ≤20 字符；2026-08-18：Form 可选 kb_id 归属知识库，校验库存在且当前用户可写） |
 | GET | /kb/materials | 全局资料库列表（仅 project_id IS NULL 的 kb_material；分页 page/page_size；三期：查询参数 category/tag 精确过滤（tag 用 PG JSON 包含 `tags @> '["tag"]'`，tags 为 JSON 列需 cast 为 jsonb 后使用 @>），LEFT JOIN users 返回 uploader_name（created_by 为空时空串），列表项含 category/tags） |
 | PATCH | /kb/materials/{doc_id} | 全局素材编辑（三期：**仅资料库管理员** get_current_kb_admin_id；body title/category/tags 均可选，复用上传同套枚举/标签校验；审计 kb.material_update 记录变更字段） |
 | DELETE | /kb/materials/{doc_id} | 全局资料删除（三期：**仅资料库管理员** get_current_kb_admin_id（role ∈ kb_admin/admin 或白名单兼容），非管理角色 403；限 project_id IS NULL，项目级文档 4004 隔离；MinIO 文件 + 记录 + 分块 CASCADE；审计 kb.material_delete） |
 | GET | /kb/materials/search | 全局资料库检索测试（q 必填，top_k∈[1,20]；仅检索全局资料 doc_ids 范围；返回 {items:[{chunk_id,doc_id,title,content,page_no,score}],total}） |
+| GET | /kb-bases | 可见知识库列表（2026-08-18：查询参数 project_id 可选项目上下文；可见性矩阵 company 全员/project 限成员/personal 仅本人；返回 scope/素材数） |
+| POST | /kb-bases | 创建知识库（2026-08-18：body {scope, name, description?, project_id?}；personal 任意登录用户/project 仅该项目 owner/company 仅 kb_admin/admin；审计 kb.base_create） |
+| PATCH | /kb-bases/{id} | 编辑知识库（2026-08-18：name/description 均可选；写权限按 scope 判定；审计 kb.base_update） |
+| DELETE | /kb-bases/{id} | 删除知识库（2026-08-18：写权限按 scope 判定；库内素材一并删除：MinIO + 记录 + 分块 CASCADE；审计 kb.base_delete） |
+| GET | /kb-bases/{id}/materials | 库内素材列表（2026-08-18：限可见库，不可见 404；分页，LEFT JOIN users 返回 uploader_name） |
 | GET | /projects, POST /projects | 项目列表、创建 |
 | POST | /projects/{pid}/members | 添加协作者（仅 owner；审计 project.member_add 记 email） |
 | GET | /projects/{pid}/members | 成员列表（2026-08-17：项目成员可见；LEFT JOIN users 返回 user_id/email/display_name/is_owner/joined_at，owner 恒在首位；只读不记审计） |
 | DELETE | /projects/{pid}/members/{user_id} | 移除成员（2026-08-17：**仅 owner** get_current_owner_id；移除 owner 本人 4000、自移 4000、目标非成员 4004；审计 project.member_remove 记 target_id；显式 commit） |
 | POST | /projects/{pid}/documents | 上传文件（tender/kb） |
+| POST | /projects/{pid}/images | 上传章节插图（2026-08-18：jpg/png/gif/webp ≤10MB；仅项目成员；存 MinIO `images/{project_id}/`，返回 {storage_key, url} 签名 URL；审计 image.upload） |
+| GET | /projects/{pid}/images/signed | 图片签名读（2026-08-18：query storage_key；仅允许本项目 images 目录下对象，跨项目越权 4003；非成员 403） |
 | GET | /projects/{pid}/documents/{did}/format-requirements | 读取格式要求（2026-08-18：项目成员可读；仅 tender_file，其余 doc_type 拒绝 4010；返回 {items:[{category,requirement}]}） |
 | PUT | /projects/{pid}/documents/{did}/format-requirements | 更新格式要求（2026-08-18：项目成员可写；body.format_requirements 完整数组幂等覆盖 documents.meta；空 requirement 条目丢弃、未知 category 归 other；仅 tender_file 4010；审计 document.format_requirements_update） |
 | GET | /projects/{pid}/kb/search | 资料库相似度检索（RAG；query 参数 q 必填，top_k∈[1,20] 默认 5，按相似度倒序返回 {items,total}，仅项目成员可调） |
@@ -481,12 +546,12 @@ CREATE TABLE chapter_assignments (
 | POST | /projects/{pid}/workflow/start | 启动方案生成工作流（API 进程后台任务推进，遇 HITL interrupt 停下；在途重复启动被拒 4009） |
 | GET | /projects/{pid}/workflow/status | 工作流状态（phase/progress/interrupt/score_points/outline/chapters/error） |
 | POST | /projects/{pid}/workflow/confirm-score-points | 确认评分点，resume 工作流进入大纲阶段（前置校验 interrupt 类型） |
-| POST | /projects/{pid}/workflow/confirm-outline | 确认大纲（2026-08-16 二次编辑增强：body.outline 为前端编辑后大纲、body.mounted_doc_ids 为资料库挂载配置，两者均经 **resume payload** 传给 confirm_outline 节点——不再走 update_state 写 state，避免清除 checkpoint pending interrupt；缺省不携带时保持原大纲/项目全量检索），节点内替换 state.outline 并落库 proposal_skeletons，resume 进入章节生成 |
+| POST | /projects/{pid}/workflow/confirm-outline | 确认大纲（2026-08-16 二次编辑增强：body.outline 为前端编辑后大纲、body.mounted_doc_ids 为资料库挂载配置，两者均经 **resume payload** 传给 confirm_outline 节点——不再走 update_state 写 state，避免清除 checkpoint pending interrupt；缺省不携带时保持原大纲/项目全量检索；2026-08-18：增 body.mounted_kb_ids 知识库级挂载，与 mounted_doc_ids 并集生效），节点内替换 state.outline 并落库 proposal_skeletons，resume 进入章节生成 |
 | POST | /projects/{pid}/workflow/regenerate-outline | 重新生成大纲（仅 confirm_outline interrupt 挂起时允许；resume 节点 action=regenerate 返回图边标记，经 confirm_outline → generate_outline → confirm_outline 回边重新生成（节点返回值写入 checkpoint，state 与 DB 落库一致），随后再次 interrupt 挂起，保留 pending interrupt） |
 | PUT | /projects/{pid}/workflow/outline-draft | 保存大纲二次编辑草稿（body.outline 编辑后大纲、body.mounted_doc_ids 挂载配置；upsert proposal_skeletons.draft/draft_updated_at；仅项目成员；审计 workflow.outline_draft_save） |
 | GET | /projects/{pid}/workflow/outline-draft | 读取草稿（返回 {outline, mounted_doc_ids, updated_at}，无草稿返回 404；前端进入编辑态拉取，有草稿弹恢复弹窗） |
 | DELETE | /projects/{pid}/workflow/outline-draft | 清除草稿（幂等，draft=NULL；审计 workflow.outline_draft_clear；confirm_outline 确认成功后节点自动调用） |
-| POST | /projects/{pid}/workflow/confirm-review | 审阅确认：approved → 导出；feedback → 章节重写后复审 |
+| POST | /projects/{pid}/workflow/confirm-review | 审阅确认：approved → 导出；feedback → 意见回派 + 章节重写后复审（2026-08-18：feedback 键 chapter_no/标题命中分工 → assignment 置 rejected + 意见落库 + 推送 task_reviewed 并从 feedback 移除；无分工章节保持 rewrite 链路；全部回派后 action=redispatched 重新 interrupt 等待复审，响应 next_phase=redispatch） |
 | POST | /projects/{pid}/workflow/rewrite-chapter | 按审阅意见重写指定章节（query 参数 chapter_no、comment） |
 | GET | /projects/{pid}/workflow/export | 导出 Word（返回导出状态与存储 key） |
 | PUT | /projects/{pid}/workflow/sections/{chapter_no} | 章节人工编辑保存（2026-08-17：body.content；章节不存在于 state chapters 返回 4004；update_state 回写 chapters/chapter_summaries（摘要重算保章间上下文链路）+ proposal_sections upsert（content_md/status=review/updated_at，对齐 write_node 的 _upsert_section 口径）；仅项目成员；审计 workflow.section_edit） |
@@ -502,12 +567,20 @@ CREATE TABLE chapter_assignments (
 | GET | /users | 用户列表（三期：**仅管理员** role=admin 或白名单；查询参数 keyword（邮箱/姓名 ilike）/role 枚举过滤/page；返回 email/display_name/role/created_at，不含 password_hash） |
 | PUT | /users/{user_id}/role | 角色变更（三期：**仅管理员**；role ∈ member/kb_admin/admin；不可变更自己 4000；降级 admin 时至少保留 1 名 admin 4000；审计 user.role_change 记 from/to） |
 | GET | /audit-logs | 审计日志查询（三期：**仅管理员**，只读；过滤 action 前缀匹配/user_id/project_id/target_type 精确/时间范围 start-end；created_at 倒序分页，LEFT JOIN users 返回 user_name；查询自身记审计 audit.query） |
-| GET | /projects/{pid}/chapter-assignments | 分工列表（2026-08-18：项目成员可见；LEFT JOIN users 返回 assignee_name，并附章节内容状态 section_status 与四个阶段时间戳；非成员 403） |
+| GET | /projects/{pid}/chapter-assignments | 分工列表（2026-08-18：项目成员可见；LEFT JOIN users 返回 assignee_name 与 submitted_by_name（提交人标注，审阅页展示），并附章节内容状态 section_status、四个阶段时间戳与 outline 子节 sections（2 级目录展示）；非成员 403） |
 | POST | /projects/{pid}/chapter-assignments | 分配章节（2026-08-18：**仅 owner**；body `[{chapter_no,title,assignee_id}]` 批量幂等 upsert；assignee 非项目成员 4004；推送 WS task_assigned；审计 division.assign） |
 | POST | /projects/{pid}/chapter-assignments/{id}/accept | 领取章节（2026-08-18：仅 assignee；pending/rejected → in_progress 并记 accepted_at；非 assignee 403） |
 | POST | /projects/{pid}/chapter-assignments/{id}/generate | 生成章节初稿（2026-08-18：仅 assignee；复用 chapter_service.generate_chapter 的 RAG/脱敏/mock 链路，回写 state.chapters + proposal_sections（status=draft）；章节不在大纲 4004） |
 | POST | /projects/{pid}/chapter-assignments/{id}/submit | 提交待审（2026-08-18：仅 assignee；in_progress → submitted 并记 submitted_at；推送 WS task_submitted） |
-| POST | /projects/{pid}/chapter-assignments/{id}/review | 审核（2026-08-18：**仅 owner**；body `{action: approved\|rejected, comment}`；approved → approved，rejected → rejected 附意见可重新领取重编；推送 WS task_reviewed；审计 division.review） |
+| POST | /projects/{pid}/chapter-assignments/{id}/review | 审核（2026-08-18：**仅 owner**；body `{action: approved\|rejected, comment}`；approved → approved（并检查自动版本快照，见 §3.10），rejected → rejected 附意见可重新领取重编；推送 WS task_reviewed；审计 division.review） |
+| POST | /projects/{pid}/chapter-assignments/{id}/assist-generate | AI 辅助生成（2026-08-18：仅 assignee 且状态 in_progress/rejected；body `{prompt, mode: append\|overwrite}`；检索范围 = 项目挂载 ∪ 本人个人库，上下文 = 前文摘要 + 评分点 + 技术需求 + prompt；流式经 WS section_token（source=assist）；落库双写；同章已有任务 4000；审计 division.assist_generate） |
+| POST | /projects/{pid}/chapter-assignments/{id}/assist-generate/stop | 暂停辅助生成（2026-08-18：仅 assignee；置位取消令牌，生成端点保留已生成部分按 mode 落库；无进行中任务返 stopped=false） |
+| GET | /projects/{pid}/chapter-assignments/{id}/annotations | 章节批注列表（2026-08-18：项目成员可读；按时间正序，附批注人姓名） |
+| POST | /projects/{pid}/chapter-assignments/{id}/annotations | 新增批注（2026-08-18：assignee/owner 可写，其余成员 403；body.content 非空；审计 division.annotate） |
+| GET | /projects/{pid}/versions | 版本列表（2026-08-18：项目成员可读；version 倒序；created_by NULL = 自动快照标记 auto=true） |
+| POST | /projects/{pid}/versions | 手动版本快照（2026-08-18：**仅 owner**；body.snapshot_note 可选；Word + Markdown 源入 MinIO，version 续号；无章节内容 4000；审计 version.snapshot） |
+| GET | /projects/{pid}/versions/{id}/download | 版本下载（2026-08-18：项目成员；query type=docx\|source 二选一，返签名 URL） |
+| POST | /projects/{pid}/versions/{id}/archive | 归档公司知识库（2026-08-18：**仅 owner**；body.kb_id 限公司级库否则 400；登记全局素材（project_id=NULL）+ 入队分块向量化；审计 proposal.archive） |
 
 **前端 HITL 交互契约**（2026-08-16 补）：所有 confirm 端点均校验 pending interrupt，前端不得直接调用，须先确保工作流停在对应 interrupt：
 - 招标解析页（ParseView 内嵌 ParseConfirmView）：「确认并生成大纲」先 GET workflow/status，无挂起 interrupt 则 POST workflow/start，轮询（1s×60）直到 interrupt.type=confirm_score_points 再调 confirm-score-points；state.error 非空时展示解析失败原因。**短路引导（2026-08-16）**：status 已挂起其他类型 interrupt（大纲确认/章节审阅）或 phase 已推进到 outline 之后（generate/review/done）时，不重复 start（在途重复启动被后端 4009 拒绝）也不盲等，立即提示「工作流已进入后续阶段，请前往方案生成页继续操作」；phase=confirm 无 interrupt 时（parse 节点刚完成、interrupt 即将挂起）仅轮询等待不 start。页面存在 uploaded/parsing 状态招标文件时每 5s 自动轮询解析状态。
@@ -666,6 +739,7 @@ graph.add_edge("export", END)
 - JWT 认证 + 项目级权限中间件（非成员请求一律 403）；WebSocket 同样强制握手鉴权（query token + 成员校验，close code 4001/4003）；
 - RBAC 权限点体系（2026-08-17 落地，迁移 0011_rbac）：`roles`/`permissions`/`role_permissions` 三表 + 幂等种子（member/kb_admin/admin 三角色）；6 权限点收敛（system:manage/kb:manage/kb:read/kb:upload/settings:read 落角色表；project:member_manage 为 owner 数据属性不落表）；`require_permission(code)` 依赖以 `users.role` → `role_permissions` 判定（模块级缓存，PUT /users/{id}/role 后失效重载），`BID_ADMIN_USER_IDS` 白名单命中恒放行；现有管理端点行为等价收敛（deps `_is_admin`/`_is_kb_admin` 改基于权限点）；前端仅按角色收敛菜单/路由，后端 403 兜底；
 - 章节级编辑权限「可视不可改」（2026-08-18）：项目成员可读全部章节；已分配章节（chapter_assignments）仅 assignee/owner 可编辑，PUT workflow/sections/{chapter_no} 保存前经 `division_service.check_chapter_editable` 校验，越权 403；未分配章节保持项目成员可编辑（向后兼容）；分工分配/审核仅 owner，领取/生成/提交仅 assignee，后端 403 兜底；
+- 知识库分级权限（2026-08-18）：可见性矩阵 company 全员/project 限成员/personal 仅本人（`kb_base_service.visible_bases`）；建库 personal 任意登录用户/project 仅该项目 owner/company 仅 kb_admin/admin；删库限创建者（company 库限管理员）；素材上传 kb_id 归属校验库可写；辅助生成/初稿生成的检索范围限定项目挂载 ∪ 本人个人库，不越权读取他人个人库；图片签名读限本项目 `images/{project_id}/` 前缀（跨项目 4003）；批注仅 assignee/owner 可写；版本快照/归档仅 owner（归档目标库限公司级），均落审计（kb.base_*/division.assist_generate/division.annotate/image.upload/version.snapshot/proposal.archive）；
 - 密码 bcrypt 哈希；HTTPS 全链路（网关 TLS）；
 - 上传文件白名单（pdf/docx/jpg/png）、大小限制、病毒扫描（MVP 可选 ClamAV）；
 - LLM 外发内容脱敏（铁律，默认开启不可关闭）：`app/core/redact.py` 的 `redact()` 正则替换手机号/身份证/银行卡/邮箱，在 parse/chapter/review 三个拼接点前置脱敏，并在 `llm_service` 出口兜底；
@@ -759,7 +833,8 @@ deploy/
 
 - `kb_chunks.embedding` 维度与 pgvector 索引 → 迁移 Milvus；
 - 模型层通过 LiteLLM 路由 → 扩展多模型；
-- reviews 表已有完整记录 → 扩展版本表与 diff；
+- reviews 表已有完整记录 → 扩展版本表与 diff（2026-08-18：proposal_versions 版本库已落地，见 §3.10；尚缺版本间 diff/回滚）；
+- 知识库容器 knowledge_bases → 扩展库级配额/素材移动/跨库引用统计，当前仅容器 + 可见性开关，不改变分块/向量链路（2026-08-18 已落地，见 §3.2）；
 - 权限模型 project_members → 扩展项目内角色细分（当前 RBAC 仅覆盖全局功能权限，项目内为 owner/协作者两级 + 章节级 assignee 编辑权限（2026-08-18 已落地，见 §3.9/§九），尚不支持多负责人/章节内段落级协作）；
 - 格式要求 `documents.meta.format_requirements` → 扩展为公司模板库（多套排版预设 + 模板文件管理），当前仅支持单项目招标文件驱动；
 - 分工协作 chapter_assignments → 扩展截止日期/工作量统计/章节依赖编排，当前仅状态机跟踪。
