@@ -16,7 +16,7 @@ import uuid
 from sqlalchemy import select
 
 from app.core.database import async_session_factory
-from app.models.document import ScorePoint, TechRequirement
+from app.models.document import Document, ScorePoint, TechRequirement
 from app.models.project import Project
 from app.models.proposal import ProposalSection, ProposalSkeleton, ProposalWorkflow
 from app.services.event_service import publish_event
@@ -748,15 +748,33 @@ async def export_node(state: dict) -> dict:
     outline = state.get("outline", [])
     project_name = state.get("project_name", "技术方案")
 
+    # 读取最新招标文件的格式要求驱动排版；失败不阻塞导出（回退默认样式）
+    format_requirements = None
+    try:
+        async with async_session_factory() as db:
+            result = await db.execute(
+                select(Document)
+                .where(
+                    Document.project_id == uuid.UUID(project_id),
+                    Document.doc_type == "tender_file",
+                )
+                .order_by(Document.created_at.desc())
+                .limit(1)
+            )
+            tender = result.scalar_one_or_none()
+        if tender:
+            format_requirements = (tender.meta or {}).get("format_requirements")
+    except Exception:
+        logger.exception("读取格式要求失败，使用默认排版")
+
     try:
         storage_key = await export_to_word(
             chapters=chapters,
             outline=outline,
             project_name=project_name,
+            format_requirements=format_requirements,
         )
         async with async_session_factory() as db:
-            from app.models.document import Document
-
             doc = Document(
                 project_id=uuid.UUID(project_id),
                 doc_type="export",
