@@ -270,3 +270,119 @@ class TestParseTenderWithLlmSchema:
         schema = captured["schema"]
         assert "tech_requirements" in schema.get("properties", {})
         assert parsed.tech_requirements == [{"seq": 1, "description": "高可用"}]
+
+
+class TestFormatRequirementsSchema:
+    """格式要求提取：首次/重新解析均提取，缺失时兜底空列表."""
+
+    @pytest.mark.asyncio
+    async def test_schema_includes_format_requirements(self, monkeypatch) -> None:
+        from app.services import llm_service, parse_service
+
+        captured: dict = {}
+
+        async def fake_call(
+            system_prompt: str,
+            user_prompt: str,
+            response_format: dict | None = None,
+            mock: bool | None = None,
+        ) -> dict:
+            captured["schema"] = (response_format or {}).get("json_schema", {}).get("schema", {})
+            return {
+                "score_points": [{"clause_no": "1", "item": "方案"}],
+                "format_requirements": [{"category": "font_body", "requirement": "正文宋体小四"}],
+            }
+
+        monkeypatch.setattr(llm_service, "call_llm_with_schema", fake_call)
+
+        parsed = await parse_service.parse_tender_with_llm("招标正文")
+        props = captured["schema"]["properties"]
+        assert "format_requirements" in props
+        item_schema = props["format_requirements"]["items"]
+        assert set(item_schema["required"]) == {"category", "requirement"}
+        assert parsed.format_requirements == [
+            {"category": "font_body", "requirement": "正文宋体小四"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_format_requirements_kept_when_score_points_only(self, monkeypatch) -> None:
+        """重新解析（跳过技术需求）仍提取格式要求."""
+        from app.services import llm_service, parse_service
+
+        async def fake_call(
+            system_prompt: str,
+            user_prompt: str,
+            response_format: dict | None = None,
+            mock: bool | None = None,
+        ) -> dict:
+            return {
+                "score_points": [{"clause_no": "1", "item": "方案"}],
+                "format_requirements": [{"category": "margin", "requirement": "左边距3cm"}],
+            }
+
+        monkeypatch.setattr(llm_service, "call_llm_with_schema", fake_call)
+
+        parsed = await parse_service.parse_tender_with_llm(
+            "招标正文", include_tech_requirements=False
+        )
+        assert parsed.tech_requirements == []
+        assert parsed.format_requirements == [{"category": "margin", "requirement": "左边距3cm"}]
+
+    @pytest.mark.asyncio
+    async def test_missing_format_requirements_fallback_empty(self, monkeypatch) -> None:
+        from app.services import llm_service, parse_service
+
+        async def fake_call(
+            system_prompt: str,
+            user_prompt: str,
+            response_format: dict | None = None,
+            mock: bool | None = None,
+        ) -> dict:
+            return {"score_points": [{"clause_no": "1", "item": "方案"}]}
+
+        monkeypatch.setattr(llm_service, "call_llm_with_schema", fake_call)
+
+        parsed = await parse_service.parse_tender_with_llm("招标正文")
+        assert parsed.format_requirements == []
+
+
+class TestSaveParseResultFormatRequirements:
+    """格式要求落库：写入招标文件 Document.meta.format_requirements."""
+
+    @pytest.mark.asyncio
+    async def test_save_writes_format_requirements_to_meta(self) -> None:
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock
+
+        from app.models.document import Document
+        from app.services.parse_service import ParsedTender, save_parse_result
+
+        doc_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        doc = Document(
+            id=doc_id,
+            project_id=project_id,
+            doc_type="tender_file",
+            title="t.docx",
+            storage_key="k",
+            status="parsing",
+        )
+        doc.meta = {}
+
+        db = MagicMock()
+        db.flush = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = doc
+        db.execute = AsyncMock(return_value=result)
+
+        fr = [{"category": "line_spacing", "requirement": "1.5倍行距"}]
+        parsed = ParsedTender(
+            score_points=[{"clause_no": "1", "item": "方案"}],
+            tech_requirements=[],
+            format_requirements=fr,
+        )
+        sp_count, tr_count = await save_parse_result(db, project_id, doc_id, parsed)
+
+        assert (sp_count, tr_count) == (1, 0)
+        assert doc.meta["format_requirements"] == fr
+        assert doc.status == "parsed"

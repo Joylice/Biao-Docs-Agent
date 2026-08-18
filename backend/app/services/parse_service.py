@@ -2,7 +2,7 @@
 
 import io
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,8 @@ class ParsedTender:
     tech_requirements: list[dict]
     project_name: str | None = None
     tender_no: str | None = None
+    # 施组/技术方案格式要求（排版规范）：[{category, requirement}]，存 Document.meta
+    format_requirements: list[dict] = field(default_factory=list)
 
 
 # LLM 输入字符预算（DeepSeek 64k 上下文，预留输出与提示词空间）
@@ -209,6 +211,19 @@ async def parse_tender_with_llm(
         }
         required.append("tech_requirements")
 
+    # 格式要求：首次/重新解析均提取（成本可忽略，重新解析时同步刷新）
+    properties["format_requirements"] = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string"},
+                "requirement": {"type": "string"},
+            },
+            "required": ["category", "requirement"],
+        },
+    }
+
     result = await call_llm_with_schema(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -233,6 +248,7 @@ async def parse_tender_with_llm(
         tech_requirements=result.get("tech_requirements", []) if include_tech_requirements else [],
         project_name=result.get("project_name"),
         tender_no=result.get("tender_no"),
+        format_requirements=result.get("format_requirements", []),
     )
 
 
@@ -273,11 +289,12 @@ async def save_parse_result(
         db.add(tr)
         tr_count += 1
 
-    # 更新文档状态
+    # 更新文档状态与格式要求（存 meta；整体替换新 dict 确保 JSON 列标记脏）
     result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if doc:
         doc.status = "parsed"
+        doc.meta = {**doc.meta, "format_requirements": parsed.format_requirements}
 
     await db.flush()
     return sp_count, tr_count

@@ -4,6 +4,7 @@ import io
 import uuid
 
 from fastapi import APIRouter, Depends, Query, UploadFile
+from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +27,54 @@ from app.services.project_service import _check_project_member
 from app.services.storage_service import upload_file
 
 router = APIRouter()
+
+# 格式要求 category 枚举（与 parse.yaml 提示词对齐）；未知分类归入 other
+FORMAT_REQUIREMENT_CATEGORIES = frozenset(
+    {
+        "font_body",
+        "font_heading",
+        "line_spacing",
+        "margin",
+        "page_setup",
+        "binding",
+        "page_number",
+        "toc",
+        "other",
+    }
+)
+
+
+class FormatRequirementsBody(BaseModel):
+    """格式要求保存请求体 — 完整数组幂等覆盖."""
+
+    format_requirements: list[dict]
+
+
+def _clean_format_requirements(items: list[dict]) -> list[dict]:
+    """清洗格式要求条目：丢弃空 requirement，未知 category 归入 other."""
+    cleaned: list[dict] = []
+    for item in items:
+        requirement = str(item.get("requirement") or "").strip()
+        if not requirement:
+            continue
+        category = str(item.get("category") or "").strip()
+        if category not in FORMAT_REQUIREMENT_CATEGORIES:
+            category = "other"
+        cleaned.append({"category": category, "requirement": requirement})
+    return cleaned
+
+
+async def _load_tender_doc_for_format(
+    db: AsyncSession, project_id: uuid.UUID, document_id: uuid.UUID
+) -> Document:
+    """加载属本项目的招标文件（格式要求读写共用前置校验）."""
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    doc = result.scalar_one_or_none()
+    if not doc or doc.project_id != project_id:
+        raise BizError(code=4004, message="文档不存在")
+    if doc.doc_type != "tender_file":
+        raise BizError(code=4010, message="仅招标文件支持格式要求")
+    return doc
 
 
 @router.post("/{project_id}/documents")
@@ -183,6 +232,53 @@ async def list_documents(
 
     items_data = [DocumentListOut.model_validate(d).model_dump(mode="json") for d in items]
     return paginated(items_data, total)
+
+
+@router.get("/{project_id}/documents/{document_id}/format-requirements")
+async def get_format_requirements(
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """读取招标文件格式要求汇总（项目成员可读）."""
+    await _check_project_member(db, project_id, user_id)
+    doc = await _load_tender_doc_for_format(db, project_id, document_id)
+    items = doc.meta.get("format_requirements", []) if doc.meta else []
+    return success(data={"items": items})
+
+
+@router.put("/{project_id}/documents/{document_id}/format-requirements")
+async def update_format_requirements(
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+    body: FormatRequirementsBody,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """人工编辑格式要求：清洗后幂等覆盖 meta.format_requirements."""
+    await _check_project_member(db, project_id, user_id)
+    doc = await _load_tender_doc_for_format(db, project_id, document_id)
+
+    items = _clean_format_requirements(body.format_requirements)
+    # 整体替换新 dict 确保 JSON 列标记脏（原地改 key 不触发变更检测）
+    doc.meta = {**(doc.meta or {}), "format_requirements": items}
+    await db.flush()
+
+    # 审计埋点：格式要求人工修改（security.md §4）
+    await audit.record(
+        db,
+        user_id,
+        "document.format_requirements_update",
+        project_id=project_id,
+        target_type="document",
+        target_id=str(doc.id),
+        detail={"count": len(items)},
+    )
+
+    # 事务约定（BUG-1）：写入 + 审计响应前显式提交
+    await db.commit()
+    return success(data={"items": items})
 
 
 @router.get("/{project_id}/kb/search")
