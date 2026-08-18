@@ -567,3 +567,42 @@ class TestSaveSectionEdit:
         with pytest.raises(BizError) as ei:
             await workflow_runtime.save_section_edit(db, PROJECT_ID, "99", "内容")
         assert ei.value.code == 4004
+
+
+class TestGenerateChapterDraft:
+    """分工编制初稿：LLM（mock 模式）生成 + state 回写 + proposal_sections 落库 draft."""
+
+    async def _advance_to_outline_confirmed(self) -> None:
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+        await workflow_runtime.resume_workflow(PROJECT_ID, True)
+
+    @pytest.mark.asyncio
+    async def test_generate_draft_writes_state_and_section(
+        self, memory_runtime, mock_node_deps, monkeypatch
+    ) -> None:
+        """初稿回写 state.chapters 与摘要，proposal_sections 落库 status=draft."""
+        await self._advance_to_outline_confirmed()
+        db = make_fake_db()
+        monkeypatch.setattr("app.core.database.async_session_factory", lambda: db)
+
+        content = await workflow_runtime.generate_chapter_draft(PROJECT_ID, "1")
+
+        assert content, "mock 模式应产出确定性初稿"
+        snapshot = await workflow_runtime.get_state(PROJECT_ID)
+        assert snapshot.values["chapters"]["1"] == content
+        assert snapshot.values["chapter_summaries"]["1"]["summary"], "初稿应重算章节摘要"
+        sections = [o for o in db.added if isinstance(o, ProposalSection)]
+        assert sections, "初稿应落库 proposal_sections"
+        assert sections[-1].section_id == "1"
+        assert sections[-1].status == "draft"
+
+    @pytest.mark.asyncio
+    async def test_generate_draft_missing_chapter_raises(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """大纲中不存在的章节 → 4004."""
+        await self._advance_to_outline_confirmed()
+        with pytest.raises(BizError) as ei:
+            await workflow_runtime.generate_chapter_draft(PROJECT_ID, "99")
+        assert ei.value.code == 4004

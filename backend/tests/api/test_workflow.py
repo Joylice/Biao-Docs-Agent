@@ -176,8 +176,10 @@ async def test_save_section_edit_success(client: AsyncClient, monkeypatch) -> No
     project = Project(id=project_id, name="测试项目", owner_id=owner_id)
     result = MagicMock()
     result.scalar_one_or_none.return_value = project
+    unassigned = MagicMock()  # 章节级权限查询：未分配 → 可编辑
+    unassigned.scalar_one_or_none.return_value = None
     session = AsyncMock()
-    session.execute = AsyncMock(return_value=result)
+    session.execute = AsyncMock(side_effect=[result, unassigned])
     session.add = MagicMock()  # audit.record 同步调用 add
     app.dependency_overrides[get_db] = lambda: session
 
@@ -213,8 +215,10 @@ async def test_save_section_edit_chapter_not_found(client: AsyncClient, monkeypa
     project = Project(id=project_id, name="测试项目", owner_id=owner_id)
     result = MagicMock()
     result.scalar_one_or_none.return_value = project
+    unassigned = MagicMock()
+    unassigned.scalar_one_or_none.return_value = None
     session = AsyncMock()
-    session.execute = AsyncMock(return_value=result)
+    session.execute = AsyncMock(side_effect=[result, unassigned])
     app.dependency_overrides[get_db] = lambda: session
 
     async def fake_save(db, pid, chapter_no, content) -> None:
@@ -260,6 +264,49 @@ async def test_save_section_edit_non_member_forbidden(client: AsyncClient) -> No
         response = await client.put(
             f"/api/v1/projects/{project_id}/workflow/sections/1",
             headers={"Authorization": f"Bearer {create_access_token(str(uuid.uuid4()))}"},
+            json={"content": "x"},
+        )
+        assert response.status_code == 403
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_save_section_edit_non_assignee_forbidden(client: AsyncClient) -> None:
+    """已分配章节：非 assignee 且非 owner 编辑 → 403（可视不可改）."""
+    from app.models.project import ProjectMember
+    from app.models.proposal import ChapterAssignment
+
+    owner_id = uuid.uuid4()
+    assignee_id = uuid.uuid4()
+    member_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    assignment = ChapterAssignment(
+        project_id=project_id,
+        chapter_no="1",
+        title="项目概述",
+        assignee_id=assignee_id,
+        assigned_by=owner_id,
+    )
+
+    def _result(obj):
+        r = MagicMock()
+        r.scalar_one_or_none.return_value = obj
+        return r
+
+    session = AsyncMock()
+    session.execute.side_effect = [
+        _result(project),  # _check_project_member 查 project（非 owner）
+        _result(ProjectMember(project_id=project_id, user_id=member_id)),  # 成员表命中
+        _result(assignment),  # 章节已分配给他人
+        _result(project),  # owner 兜底判定（非 owner）
+    ]
+    app.dependency_overrides[get_db] = lambda: session
+    try:
+        response = await client.put(
+            f"/api/v1/projects/{project_id}/workflow/sections/1",
+            headers={"Authorization": f"Bearer {create_access_token(str(member_id))}"},
             json={"content": "x"},
         )
         assert response.status_code == 403

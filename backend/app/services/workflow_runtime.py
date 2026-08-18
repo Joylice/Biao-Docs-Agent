@@ -253,6 +253,46 @@ async def save_section_edit(
     await _upsert_section(db, str(project_id), chapter_no, title, content, status="review")
 
 
+async def generate_chapter_draft(project_id: uuid.UUID | str, chapter_no: str) -> str:
+    """分工编制：LLM 生成章节初稿并回写 state + proposal_sections（status=draft）.
+
+    复用图内同一 generate_chapter 链路（RAG 检索 + 脱敏 + mock 降级）；
+    与图内 write 节点的差异：不推进工作流阶段，仅产出初稿供人工编制。
+    """
+    from app.agents.nodes import _upsert_section
+    from app.core.database import async_session_factory
+    from app.services.chapter_service import extract_chapter_summary, generate_chapter
+
+    snapshot = await get_state(project_id)
+    values = snapshot.values or {}
+    outline = values.get("outline", [])
+    chapter = next((c for c in outline if c.get("chapter_no") == chapter_no), None)
+    if chapter is None:
+        raise BizError(code=4004, message=f"章节 {chapter_no} 不在大纲中，无法生成初稿")
+
+    content = await generate_chapter(
+        chapter=chapter,
+        score_points=values.get("score_points", []),
+        tech_requirements=values.get("tech_requirements", []),
+        project_id=uuid.UUID(str(project_id)),
+        doc_ids=values.get("mounted_doc_ids"),
+    )
+    if not content:
+        raise BizError(code=5001, message="章节初稿生成失败：LLM 返回为空")
+
+    title = chapter.get("title", "")
+    summaries = dict(values.get("chapter_summaries", {}))
+    summaries[chapter_no] = {"title": title, "summary": extract_chapter_summary(content)}
+    await update_state(
+        project_id,
+        {"chapters": {chapter_no: content}, "chapter_summaries": summaries},
+    )
+    async with async_session_factory() as db:
+        await _upsert_section(db, str(project_id), chapter_no, title, content, status="draft")
+        await db.commit()
+    return content
+
+
 async def export_workflow(project_id: uuid.UUID | str) -> dict:
     """导出 Word — 复用图内 export 节点（export_to_word + 落库 + 事件），结果回写 state."""
     snapshot = await get_state(project_id)

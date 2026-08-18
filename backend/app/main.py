@@ -8,7 +8,18 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import audit, auth, documents, kb, projects, requirements, users, websocket, workflow
+from app.api import (
+    audit,
+    auth,
+    division,
+    documents,
+    kb,
+    projects,
+    requirements,
+    users,
+    websocket,
+    workflow,
+)
 from app.api import settings as settings_api
 from app.core.config import settings
 from app.core.exceptions import BizError
@@ -84,6 +95,7 @@ app.include_router(projects.router, prefix=f"{settings.api_prefix}/projects", ta
 app.include_router(documents.router, prefix=f"{settings.api_prefix}/projects", tags=["文档"])
 app.include_router(requirements.router, prefix=f"{settings.api_prefix}/projects", tags=["技术需求"])
 app.include_router(workflow.router, prefix=f"{settings.api_prefix}/projects", tags=["工作流"])
+app.include_router(division.router, prefix=f"{settings.api_prefix}/projects", tags=["分工协作"])
 app.include_router(kb.router, prefix=f"{settings.api_prefix}/kb", tags=["资料库"])
 app.include_router(users.router, prefix=f"{settings.api_prefix}", tags=["用户管理"])
 app.include_router(audit.router, prefix=f"{settings.api_prefix}", tags=["审计日志"])

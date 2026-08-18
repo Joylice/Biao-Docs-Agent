@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import audit
 from app.core.database import get_db
 from app.core.deps import get_current_user_id
-from app.core.exceptions import BizError
+from app.core.exceptions import BizError, ForbiddenError
 from app.core.response import success
-from app.services import workflow_runtime
+from app.services import division_service, workflow_runtime
 from app.services.project_service import _check_project_member
 
 router = APIRouter()
@@ -262,8 +262,14 @@ async def save_section_edit(
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """人工编辑章节内容直接落库（state + proposal_sections 同步）."""
+    """人工编辑章节内容直接落库（state + proposal_sections 同步）.
+
+    章节级编辑权限（可视不可改）：已分配章节仅 assignee/owner 可编辑，
+    未分配章节保持现状（项目成员可编辑）。
+    """
     await _check_project_member(db, project_id, user_id)
+    if not await division_service.check_chapter_editable(db, project_id, chapter_no, user_id):
+        raise ForbiddenError("无权编辑该章节（已分配章节仅负责人/项目负责人可编辑）")
 
     try:
         await workflow_runtime.save_section_edit(db, project_id, chapter_no, body.content)

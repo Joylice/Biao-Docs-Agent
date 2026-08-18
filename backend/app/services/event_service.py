@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 # section_done  {"type":"section_done","chapter_no":...}
 # task_done     {"type":"task_done","export_storage_key":...}
 # error         {"type":"error","message":...}
+# task_assigned   {"type":"task_assigned","assignments":[{chapter_no,assignee_id}]}
+# task_submitted  {"type":"task_submitted","chapter_no":...,"assignee_id":...,"assignment_id":...}
+# task_reviewed   {"type":"task_reviewed","chapter_no":...,"assignee_id":...,"action":...}
 
 
 def event_channel(project_id: str) -> str:

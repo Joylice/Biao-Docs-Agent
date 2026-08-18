@@ -107,3 +107,36 @@ class Review(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class ChapterAssignment(Base):
+    """章节分工表 — 编制分工与状态跟踪（正文仍存 workflow state/proposal_sections）."""
+
+    __tablename__ = "chapter_assignments"
+    __table_args__ = (
+        UniqueConstraint("project_id", "chapter_no", name="uq_chapter_assignments_project_chapter"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    chapter_no: Mapped[str] = mapped_column(String(32), nullable=False)  # 骨架章节号
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    assignee_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    assigned_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    # pending(已分配待接收)|in_progress(编制中)|submitted(已提交待审)|approved(通过)|rejected(打回)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
