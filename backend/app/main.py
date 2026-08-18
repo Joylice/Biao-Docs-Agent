@@ -14,9 +14,11 @@ from app.api import (
     division,
     documents,
     kb,
+    kb_bases,
     projects,
     requirements,
     users,
+    versions,
     websocket,
     workflow,
 )
@@ -96,7 +98,9 @@ app.include_router(documents.router, prefix=f"{settings.api_prefix}/projects", t
 app.include_router(requirements.router, prefix=f"{settings.api_prefix}/projects", tags=["技术需求"])
 app.include_router(workflow.router, prefix=f"{settings.api_prefix}/projects", tags=["工作流"])
 app.include_router(division.router, prefix=f"{settings.api_prefix}/projects", tags=["分工协作"])
+app.include_router(versions.router, prefix=f"{settings.api_prefix}/projects", tags=["版本库"])
 app.include_router(kb.router, prefix=f"{settings.api_prefix}/kb", tags=["资料库"])
+app.include_router(kb_bases.router, prefix=f"{settings.api_prefix}", tags=["知识库"])
 app.include_router(users.router, prefix=f"{settings.api_prefix}", tags=["用户管理"])
 app.include_router(audit.router, prefix=f"{settings.api_prefix}", tags=["审计日志"])
 app.include_router(settings_api.router, prefix=f"{settings.api_prefix}/settings", tags=["系统设置"])
