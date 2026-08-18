@@ -146,7 +146,10 @@ docker-compose.yml
    - score_points：`[{clause_no, item, score, criteria, is_star}]`
    - qualifications：`[{category, requirement, evidence}]`
    - tech_requirements：`[{seq, description, category, is_mandatory}]`
+   - format_requirements（2026-08-18）：`[{category, requirement}]`，仅提取格式/排版类条款（字体字号、行距、页边距、纸张、装订、页码、目录等），排除评分点与技术需求；category 枚举 `font_body|font_heading|line_spacing|margin|page_setup|binding|page_number|toc|other`，未知分类入库时归 `other`、空 requirement 条目丢弃
 5. 人工确认页：解析结果表格化展示，可增删改；确认后落库、状态置 `parsed`。
+
+**格式要求存储与编辑（2026-08-18）**：提取结果写入招标文件 `documents.meta.format_requirements`（不建新表）；解析确认页评分点上方「格式要求汇总」卡片按 category 分组展示并支持增删改，PUT 幂等整体覆盖（审计 `document.format_requirements_update`）；仅 tender_file 可读写，其余 doc_type 拒绝（4010）。该数据驱动 Word 导出排版（见 §3.7）。
 
 **校验**：提取结果二次回读原文核对（LLM 自检 + 关键字段（★条款数）人工确认）；非法 JSON 自动重试 ≤2 次。
 
@@ -219,6 +222,8 @@ class BidState(TypedDict):
 
 **MVP 模板**：单套公司标准模板（封面 + 目录 + 正文样式 + 附表：评分对照表、资质索引表）。
 
+**格式要求驱动排版（2026-08-18）**：导出节点读取最新 tender_file 的 `meta.format_requirements`，经 `format_spec.py` 解析为 docx 参数（正文字体/字号、标题字号、行距、页边距）；内置中文字号映射（小四→12pt、四号→14pt、小三→15pt 等）与行距/边距解析；无法识别项回退默认样式（正文 12pt、行距 1.5、默认页边距），不阻塞导出；读取格式要求失败时降级默认排版。
+
 ### 3.8 流式输出模块
 
 **职责**：章节生成内容实时推送前端。
@@ -233,6 +238,9 @@ class BidState(TypedDict):
 | `section_token` | `{chapter_no, delta}` | 三期真流式增量文本块（write_node 节流发布：累积 ≥40 字符或距上次 ≥200ms 取先到者；尾部缓冲兜底 flush，delta 拼接 == 全文） |
 | `section_done` | `{chapter_no, title, content}` | 章节完成（携带全文，供断线重连/丢块兜底对齐） |
 | `task_done` | `{export_storage_key}` | 全流程完成 |
+| `task_assigned` | `{chapter_no, assignee_id}` | 分工推送（2026-08-18：owner 分配章节后通知成员） |
+| `task_submitted` | `{chapter_no, assignee_id}` | 成员提交章节待审（2026-08-18） |
+| `task_reviewed` | `{chapter_no, assignee_id, action}` | owner 审核通过/打回（2026-08-18） |
 | `error` | `{message}` | 异常 |
 
 **三期真流式链路**（已实现）：`llm_service.call_llm_stream`（mock 模式将 _MOCK_TEXT 按 ~20 字切片 yield；真实模式 `acompletion(stream=True)` 逐 chunk yield delta，出口同 call_llm_text 脱敏）→ `chapter_service.generate_chapter(on_delta=...)` 逐块回调并累积全文（未传 on_delta 时保持非流式，向后兼容）→ `write_node` 经 on_delta 节流发布 `section_token`，结束后照旧落库 + `section_done`（全文）+ `progress`；前端 GenerateView 对 `section_token` 增量追加渲染（已移除假打字机定时器），`section_done` 全量覆盖对齐。
@@ -240,6 +248,24 @@ class BidState(TypedDict):
 **LLM 结构化输出供应商兼容**（三期验收修复）：DeepSeek 兼容接口不支持 strict `json_schema`（报 "This response_format type is unavailable now"），`call_llm_with_schema` 内置 `_compat_response_format`：deepseek 模型自动降级为 `{"type":"json_object"}` 并将 schema 结构写入 system prompt 约束输出；其余模型（如 qwen）保持 json_schema 原样透传。
 
 **握手鉴权**（实现于 `app/api/websocket.py`）：连接 URL 携带 query 参数 `token`（JWT access token）；服务端在握手阶段校验 token 有效性与项目成员资格，失败即关闭连接（close code `4001` 未认证 / `4003` 非成员），不发送任何业务消息；refresh token 一律拒绝。
+
+### 3.9 章节分工协作模块（2026-08-18）
+
+**职责**：方案大纲确定后的章节分工流——owner 分配章节给成员、推送任务、成员 LLM 初稿 + 人工编制、提交汇总、owner 审核（通过/打回）。
+
+**状态机**（`chapter_assignments.status`）：`pending（已分配待接收）→ in_progress（编制中）→ submitted（已提交待审）→ approved（通过）/ rejected（打回，回退可重新领取重编）`。
+
+**流程与规则**：
+1. 分配：仅 owner，批量 `[{chapter_no, title, assignee_id}]` 幂等 upsert；assignee 必须是项目成员（非成员 4004）；推送 `task_assigned`。
+2. 领取/编制：仅 assignee 可 accept（pending/rejected → in_progress）；「生成初稿」复用 chapter_service.generate_chapter（RAG + 脱敏 + mock 降级），回写 state.chapters 与 proposal_sections（status=draft）；人工编辑走 PUT workflow/sections/{chapter_no}（受章节级权限约束）。
+3. 提交：仅 assignee，in_progress → submitted，推送 `task_submitted`。
+4. 审核：仅 owner，approved → approved；rejected → rejected 附意见（review_comment），推送 `task_reviewed`；审计 `division.review`。
+
+**章节级「可视不可改」**：所有项目成员可读全部章节；已分配章节仅 assignee/owner 可编辑（save_section_edit 前置校验 `division_service.check_chapter_editable`，越权 403）；未分配章节保持现状（项目成员可编辑），向后兼容。分工表只跟踪负责人与状态，章节正文仍存 workflow state `chapters` + `proposal_sections`，不重复存储。
+
+**前端**：Workspace 子路由「分工协作」（步骤 4）：owner 视角章节列表 + 成员下拉分配 + 增量推送 + 审核弹窗（打回必填意见）；成员视角任务卡片 + 领取/生成初稿/内嵌编辑器/提交；状态徽标按 status 渲染；监听 WS `task_*` 事件自动刷新。
+
+**表**：`chapter_assignments`（迁移 0013）。
 
 ---
 
@@ -394,6 +420,23 @@ CREATE TABLE llm_settings (
   llm_mock              BOOLEAN NOT NULL DEFAULT false,  -- 与 env 任一为 true 即 mock
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 章节分工（大纲确定后的编制协作；迁移 0013_chapter_assignments）
+CREATE TABLE chapter_assignments (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id     UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  chapter_no     VARCHAR(32) NOT NULL,     -- 大纲章节编号（state.outline[].chapter_no）
+  title          TEXT NOT NULL,            -- 章节标题快照
+  assignee_id    UUID NOT NULL REFERENCES users(id),   -- 章节负责人（必须为项目成员）
+  assigned_by    UUID NOT NULL REFERENCES users(id),   -- 分配人（仅 owner 可分配）
+  status         VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending|in_progress|submitted|approved|rejected
+  review_comment TEXT,                     -- 打回意见（rejected 时必填）
+  assigned_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  accepted_at    TIMESTAMPTZ,              -- 领取时间（pending/rejected → in_progress）
+  submitted_at   TIMESTAMPTZ,              -- 提交待审时间
+  reviewed_at    TIMESTAMPTZ,              -- 审核时间
+  UNIQUE (project_id, chapter_no)          -- 一章一负责人，重复分配幂等 upsert
+);
 ```
 
 ### 4.2 数据一致性要点
@@ -425,6 +468,8 @@ CREATE TABLE llm_settings (
 | GET | /projects/{pid}/members | 成员列表（2026-08-17：项目成员可见；LEFT JOIN users 返回 user_id/email/display_name/is_owner/joined_at，owner 恒在首位；只读不记审计） |
 | DELETE | /projects/{pid}/members/{user_id} | 移除成员（2026-08-17：**仅 owner** get_current_owner_id；移除 owner 本人 4000、自移 4000、目标非成员 4004；审计 project.member_remove 记 target_id；显式 commit） |
 | POST | /projects/{pid}/documents | 上传文件（tender/kb） |
+| GET | /projects/{pid}/documents/{did}/format-requirements | 读取格式要求（2026-08-18：项目成员可读；仅 tender_file，其余 doc_type 拒绝 4010；返回 {items:[{category,requirement}]}） |
+| PUT | /projects/{pid}/documents/{did}/format-requirements | 更新格式要求（2026-08-18：项目成员可写；body.format_requirements 完整数组幂等覆盖 documents.meta；空 requirement 条目丢弃、未知 category 归 other；仅 tender_file 4010；审计 document.format_requirements_update） |
 | GET | /projects/{pid}/kb/search | 资料库相似度检索（RAG；query 参数 q 必填，top_k∈[1,20] 默认 5，按相似度倒序返回 {items,total}，仅项目成员可调） |
 | GET | /projects/{pid}/documents | 文档列表与状态 |
 | POST | /projects/{pid}/documents/{did}/reparse | 重新解析招标文件（只提取评分点，不提取技术需求：按 doc_id 删除旧评分点 + 项目级 sp_derived 衍生需求，保留招标原文技术需求 → 状态重置 uploaded → 入队 task_parse_tender（score_points_only=True，LLM schema 裁掉 tech_requirements）；仅 tender_file；parsing/uploaded 状态拒绝 4010；非招标文件 4010；文档不存在 4004；审计 document.reparse） |
@@ -457,6 +502,12 @@ CREATE TABLE llm_settings (
 | GET | /users | 用户列表（三期：**仅管理员** role=admin 或白名单；查询参数 keyword（邮箱/姓名 ilike）/role 枚举过滤/page；返回 email/display_name/role/created_at，不含 password_hash） |
 | PUT | /users/{user_id}/role | 角色变更（三期：**仅管理员**；role ∈ member/kb_admin/admin；不可变更自己 4000；降级 admin 时至少保留 1 名 admin 4000；审计 user.role_change 记 from/to） |
 | GET | /audit-logs | 审计日志查询（三期：**仅管理员**，只读；过滤 action 前缀匹配/user_id/project_id/target_type 精确/时间范围 start-end；created_at 倒序分页，LEFT JOIN users 返回 user_name；查询自身记审计 audit.query） |
+| GET | /projects/{pid}/chapter-assignments | 分工列表（2026-08-18：项目成员可见；LEFT JOIN users 返回 assignee_name，并附章节内容状态 section_status 与四个阶段时间戳；非成员 403） |
+| POST | /projects/{pid}/chapter-assignments | 分配章节（2026-08-18：**仅 owner**；body `[{chapter_no,title,assignee_id}]` 批量幂等 upsert；assignee 非项目成员 4004；推送 WS task_assigned；审计 division.assign） |
+| POST | /projects/{pid}/chapter-assignments/{id}/accept | 领取章节（2026-08-18：仅 assignee；pending/rejected → in_progress 并记 accepted_at；非 assignee 403） |
+| POST | /projects/{pid}/chapter-assignments/{id}/generate | 生成章节初稿（2026-08-18：仅 assignee；复用 chapter_service.generate_chapter 的 RAG/脱敏/mock 链路，回写 state.chapters + proposal_sections（status=draft）；章节不在大纲 4004） |
+| POST | /projects/{pid}/chapter-assignments/{id}/submit | 提交待审（2026-08-18：仅 assignee；in_progress → submitted 并记 submitted_at；推送 WS task_submitted） |
+| POST | /projects/{pid}/chapter-assignments/{id}/review | 审核（2026-08-18：**仅 owner**；body `{action: approved\|rejected, comment}`；approved → approved，rejected → rejected 附意见可重新领取重编；推送 WS task_reviewed；审计 division.review） |
 
 **前端 HITL 交互契约**（2026-08-16 补）：所有 confirm 端点均校验 pending interrupt，前端不得直接调用，须先确保工作流停在对应 interrupt：
 - 招标解析页（ParseView 内嵌 ParseConfirmView）：「确认并生成大纲」先 GET workflow/status，无挂起 interrupt 则 POST workflow/start，轮询（1s×60）直到 interrupt.type=confirm_score_points 再调 confirm-score-points；state.error 非空时展示解析失败原因。**短路引导（2026-08-16）**：status 已挂起其他类型 interrupt（大纲确认/章节审阅）或 phase 已推进到 outline 之后（generate/review/done）时，不重复 start（在途重复启动被后端 4009 拒绝）也不盲等，立即提示「工作流已进入后续阶段，请前往方案生成页继续操作」；phase=confirm 无 interrupt 时（parse 节点刚完成、interrupt 即将挂起）仅轮询等待不 start。页面存在 uploaded/parsing 状态招标文件时每 5s 自动轮询解析状态。
@@ -614,6 +665,7 @@ graph.add_edge("export", END)
 
 - JWT 认证 + 项目级权限中间件（非成员请求一律 403）；WebSocket 同样强制握手鉴权（query token + 成员校验，close code 4001/4003）；
 - RBAC 权限点体系（2026-08-17 落地，迁移 0011_rbac）：`roles`/`permissions`/`role_permissions` 三表 + 幂等种子（member/kb_admin/admin 三角色）；6 权限点收敛（system:manage/kb:manage/kb:read/kb:upload/settings:read 落角色表；project:member_manage 为 owner 数据属性不落表）；`require_permission(code)` 依赖以 `users.role` → `role_permissions` 判定（模块级缓存，PUT /users/{id}/role 后失效重载），`BID_ADMIN_USER_IDS` 白名单命中恒放行；现有管理端点行为等价收敛（deps `_is_admin`/`_is_kb_admin` 改基于权限点）；前端仅按角色收敛菜单/路由，后端 403 兜底；
+- 章节级编辑权限「可视不可改」（2026-08-18）：项目成员可读全部章节；已分配章节（chapter_assignments）仅 assignee/owner 可编辑，PUT workflow/sections/{chapter_no} 保存前经 `division_service.check_chapter_editable` 校验，越权 403；未分配章节保持项目成员可编辑（向后兼容）；分工分配/审核仅 owner，领取/生成/提交仅 assignee，后端 403 兜底；
 - 密码 bcrypt 哈希；HTTPS 全链路（网关 TLS）；
 - 上传文件白名单（pdf/docx/jpg/png）、大小限制、病毒扫描（MVP 可选 ClamAV）；
 - LLM 外发内容脱敏（铁律，默认开启不可关闭）：`app/core/redact.py` 的 `redact()` 正则替换手机号/身份证/银行卡/邮箱，在 parse/chapter/review 三个拼接点前置脱敏，并在 `llm_service` 出口兜底；
@@ -708,7 +760,9 @@ deploy/
 - `kb_chunks.embedding` 维度与 pgvector 索引 → 迁移 Milvus；
 - 模型层通过 LiteLLM 路由 → 扩展多模型；
 - reviews 表已有完整记录 → 扩展版本表与 diff；
-- 权限模型 project_members → 扩展项目内角色细分（当前 RBAC 仅覆盖全局功能权限，项目内仍为 owner/协作者两级，已落地部分见 §九）。
+- 权限模型 project_members → 扩展项目内角色细分（当前 RBAC 仅覆盖全局功能权限，项目内为 owner/协作者两级 + 章节级 assignee 编辑权限（2026-08-18 已落地，见 §3.9/§九），尚不支持多负责人/章节内段落级协作）；
+- 格式要求 `documents.meta.format_requirements` → 扩展为公司模板库（多套排版预设 + 模板文件管理），当前仅支持单项目招标文件驱动；
+- 分工协作 chapter_assignments → 扩展截止日期/工作量统计/章节依赖编排，当前仅状态机跟踪。
 
 ### 11.3 待确认项
 
