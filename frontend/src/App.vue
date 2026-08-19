@@ -33,14 +33,18 @@
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import AppLayout from '@/layouts/AppLayout.vue'
 
-// 全局主题：专业商务蓝（与登录页/工作台渐变一致）
+// 全局主题：科技简约（主色 #1B6EF3、圆角 6、弱化阴影）
 const themeConfig = {
   token: {
-    colorPrimary: '#1565C0',
+    colorPrimary: '#1B6EF3',
     colorSuccess: '#2E7D32',
     colorWarning: '#ED6C02',
     colorError: '#C62828',
     borderRadius: 6,
+    // 弱化默认投影：仅保留贴近表面的轻阴影
+    boxShadow:
+      '0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px 0 rgba(0, 0, 0, 0.02)',
+    boxShadowSecondary: '0 1px 2px 0 rgba(0, 0, 0, 0.03)',
     fontFamily:
       "'Microsoft YaHei', '微软雅黑', 'PingFang SC', 'Helvetica Neue', Arial, sans-serif",
   },
@@ -52,13 +56,13 @@ const themeConfig = {
 :root {
   --app-bg: #f5f7fa;
   --card-bg: #ffffff;
-  --color-primary: #1565c0;
+  --color-primary: #1b6ef3;
   --color-warning: #ed6c02;
   --text-primary: rgba(0, 0, 0, 0.88);
   --text-secondary: rgba(0, 0, 0, 0.45);
   --text-disabled: rgba(0, 0, 0, 0.25);
   --border-color: #e8e8e8;
-  --bg-block: rgba(21, 101, 192, 0.06);
+  --bg-block: rgba(27, 110, 243, 0.06);
   --bg-hover: rgba(0, 0, 0, 0.04);
 }
 
@@ -73,14 +77,14 @@ body,
   min-width: 1280px;
 }
 
-/* 卡片 hover 抬升 + 阴影（0.2s 过渡） */
+/* 卡片 hover 抬升 + 轻阴影（0.2s 过渡，科技简约弱化投影） */
 .ant-card-hoverable {
   transition: box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .ant-card-hoverable:hover {
   transform: translateY(-3px);
-  box-shadow: 0 8px 20px rgba(21, 101, 192, 0.12);
+  box-shadow: 0 6px 16px rgba(27, 110, 243, 0.1);
 }
 
 body {
