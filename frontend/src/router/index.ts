@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { currentRole, fetchCurrentUserRole } from '@/stores/currentUser'
+import { fetchCurrentUserRole, hasPerm } from '@/stores/currentUser'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -37,19 +37,19 @@ const routes: RouteRecordRaw[] = [
     path: '/settings',
     name: 'Settings',
     component: () => import('@/views/settings/SettingsView.vue'),
-    meta: { requiresAuth: true, layout: 'app', role: 'admin' },
+    meta: { requiresAuth: true, layout: 'app', perm: 'system:manage' },
   },
   {
     path: '/users',
     name: 'Users',
     component: () => import('@/views/users/UsersView.vue'),
-    meta: { requiresAuth: true, layout: 'app', role: 'admin' },
+    meta: { requiresAuth: true, layout: 'app', perm: 'system:manage' },
   },
   {
     path: '/audit-logs',
     name: 'AuditLogs',
     component: () => import('@/views/audit/AuditLogsView.vue'),
-    meta: { requiresAuth: true, layout: 'app', role: 'admin' },
+    meta: { requiresAuth: true, layout: 'app', perm: 'system:manage' },
   },
   {
     path: '/projects/:projectId',
@@ -88,7 +88,7 @@ const router = createRouter({
 })
 
 // 路由守卫：未登录跳转登录页；已登录访问登录页重定向工作台；
-// meta.role 存在时校验角色（后端 403 兜底，此处仅收敛前端入口体验）
+// meta.perm 存在时校验功能权限点（后端 403 兜底，此处仅收敛前端入口体验）
 router.beforeEach(async (to) => {
   const token = localStorage.getItem('access_token')
   if (to.meta.requiresAuth && !token) {
@@ -98,10 +98,13 @@ router.beforeEach(async (to) => {
   if (to.name === 'Login' && token) {
     return { name: 'Workbench' }
   }
-  // 角色守卫：模块级角色初始为 member，先刷新再判定，避免误拦截
-  if (to.meta.role && currentRole.value !== to.meta.role) {
-    await fetchCurrentUserRole()
-    if (currentRole.value !== to.meta.role) {
+  // 权限守卫：刷新页面时权限点可能尚未加载，先 await /auth/me 刷新再判定，避免误拦截
+  if (to.meta.perm) {
+    const perm = to.meta.perm as string
+    if (!hasPerm(perm)) {
+      await fetchCurrentUserRole()
+    }
+    if (!hasPerm(perm)) {
       message.warning('无权访问：该页面仅限管理员')
       return { name: 'Workbench' }
     }

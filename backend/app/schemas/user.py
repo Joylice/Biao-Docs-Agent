@@ -1,4 +1,4 @@
-"""用户管理 Schema（三期 S1：角色细分）."""
+"""用户管理 Schema（三期 S1：角色细分；阶段 A：RBAC 权限点配置）."""
 
 import uuid
 from datetime import datetime
@@ -6,6 +6,7 @@ from datetime import datetime
 from pydantic import BaseModel, field_validator
 
 from app.core.deps import VALID_ROLES
+from app.core.rbac import FUNCTIONAL_PERMISSIONS
 
 
 class UserListOut(BaseModel):
@@ -30,4 +31,18 @@ class RoleUpdateIn(BaseModel):
     def _check_role(cls, v: str) -> str:
         if v not in VALID_ROLES:
             raise ValueError(f"非法角色: {v}（可选 {sorted(VALID_ROLES)}）")
+        return v
+
+
+class RolePermissionsUpdateIn(BaseModel):
+    """角色权限点全量覆盖请求（阶段 A；非法/不可授予权限码 422）."""
+
+    codes: list[str]
+
+    @field_validator("codes")
+    @classmethod
+    def _check_codes(cls, v: list[str]) -> list[str]:
+        invalid = set(v) - FUNCTIONAL_PERMISSIONS
+        if invalid:
+            raise ValueError(f"非法或不可授予的权限码: {sorted(invalid)}")
         return v

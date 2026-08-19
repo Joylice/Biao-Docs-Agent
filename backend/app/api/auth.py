@@ -10,6 +10,7 @@ from app.core import audit
 from app.core.database import get_db
 from app.core.deps import get_current_user_id
 from app.core.exceptions import BizError
+from app.core.rbac import user_permission_codes
 from app.core.response import success
 from app.core.security import (
     create_access_token,
@@ -109,9 +110,11 @@ async def get_me(
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """获取当前用户信息."""
+    """获取当前用户信息（含权限点列表，前端菜单权限点驱动）."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise BizError(code=4004, message="用户不存在")
-    return success(data=UserOut.model_validate(user).model_dump(mode="json"))
+    data = UserOut.model_validate(user).model_dump(mode="json")
+    data["permissions"] = await user_permission_codes(db, user)
+    return success(data=data)

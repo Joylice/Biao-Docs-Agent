@@ -1,7 +1,9 @@
-"""用户管理 API 路由（三期 S1：角色细分 member/kb_admin/admin）.
+"""用户管理 API 路由（三期 S1：角色细分 member/kb_admin/admin；阶段 A：RBAC 权限点配置）.
 
-仅系统管理员可用（get_current_admin_id）；角色变更留痕审计 user.role_change。
-安全约束：不返回 password_hash；禁止变更自身角色；至少保留 1 名 admin。
+仅系统管理员可用（get_current_admin_id / require_permission("system:manage")）；
+角色变更留痕审计 user.role_change，权限点配置留痕审计 rbac.update。
+安全约束：不返回 password_hash；禁止变更自身角色；至少保留 1 名 admin；
+admin 角色不可移除 system:manage（防自我锁死）。
 """
 
 import uuid
@@ -15,10 +17,17 @@ from app.core import audit
 from app.core.database import get_db
 from app.core.deps import ROLE_ADMIN, get_current_admin_id, get_current_user_id
 from app.core.exceptions import BizError
-from app.core.rbac import invalidate_rbac_cache
+from app.core.rbac import (
+    PERMISSION_CATEGORIES,
+    PERMISSIONS,
+    invalidate_rbac_cache,
+    require_permission,
+    role_permissions,
+    set_role_permissions,
+)
 from app.core.response import paginated, success
 from app.models.user import User
-from app.schemas.user import RoleUpdateIn, UserListOut
+from app.schemas.user import RolePermissionsUpdateIn, RoleUpdateIn, UserListOut
 
 router = APIRouter()
 
@@ -91,3 +100,51 @@ async def update_user_role(
     # RBAC 缓存失效：角色映射变更后下次判定重新加载
     invalidate_rbac_cache()
     return success(data=UserListOut.model_validate(target).model_dump(mode="json"))
+
+
+@router.get("/rbac/permissions")
+async def list_permission_catalog(
+    _admin_id: uuid.UUID = Depends(require_permission("system:manage")),
+) -> dict:
+    """权限点目录（仅系统管理员；阶段 A 权限配置页列头）."""
+    items = [
+        {"code": code, "name": name, "category": PERMISSION_CATEGORIES[code]}
+        for code, name in PERMISSIONS.items()
+    ]
+    return success(data={"items": items})
+
+
+@router.get("/rbac/roles/{role}/permissions")
+async def get_role_permission_codes(
+    role: Literal["member", "kb_admin", "admin"],
+    _admin_id: uuid.UUID = Depends(require_permission("system:manage")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """角色当前权限点映射（仅系统管理员）."""
+    codes = sorted(await role_permissions(db, role))
+    return success(data={"role": role, "codes": codes})
+
+
+@router.put("/rbac/roles/{role}/permissions")
+async def update_role_permission_codes(
+    role: Literal["member", "kb_admin", "admin"],
+    req: RolePermissionsUpdateIn,
+    admin_id: uuid.UUID = Depends(require_permission("system:manage")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """全量覆盖角色权限点（仅系统管理员；审计 rbac.update）.
+
+    admin 角色必须保留 system:manage（防自我锁死）；未知码/owner 数据属性权限码拒绝。
+    """
+    old_codes = sorted(await role_permissions(db, role))
+    await set_role_permissions(db, role, req.codes)
+    await audit.record(
+        db,
+        admin_id,
+        "rbac.update",
+        target_type="role",
+        target_id=role,
+        detail={"role": role, "from": old_codes, "to": sorted(req.codes)},
+    )
+    await db.commit()
+    return success(data={"role": role, "codes": sorted(req.codes)})

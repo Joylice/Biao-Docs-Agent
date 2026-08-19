@@ -584,6 +584,9 @@ CREATE TABLE proposal_versions (
 | GET | /tasks/{tid} | 任务进度轮询 |
 | GET | /users | 用户列表（三期：**仅管理员** role=admin 或白名单；查询参数 keyword（邮箱/姓名 ilike）/role 枚举过滤/page；返回 email/display_name/role/created_at，不含 password_hash） |
 | PUT | /users/{user_id}/role | 角色变更（三期：**仅管理员**；role ∈ member/kb_admin/admin；不可变更自己 4000；降级 admin 时至少保留 1 名 admin 4000；审计 user.role_change 记 from/to） |
+| GET | /rbac/permissions | 权限点目录（阶段 A：**仅 system:manage**；返回 items[{code,name,category}]，供权限矩阵列头） |
+| GET | /rbac/roles/{role}/permissions | 角色权限点映射（阶段 A：**仅 system:manage**；role ∈ member/kb_admin/admin，非法角色 422；返回 {role,codes}） |
+| PUT | /rbac/roles/{role}/permissions | 全量覆盖角色权限点（阶段 A：**仅 system:manage**；body {codes}，非法/不可授予码（含 project:member_manage）422；admin 角色必须保留 system:manage 防自我锁死 4000；delete+insert 后失效 RBAC 缓存；审计 rbac.update 记 from/to） |
 | GET | /audit-logs | 审计日志查询（三期：**仅管理员**，只读；过滤 action 前缀匹配/user_id/project_id/target_type 精确/时间范围 start-end；created_at 倒序分页，LEFT JOIN users 返回 user_name；查询自身记审计 audit.query） |
 | GET | /projects/{pid}/chapter-assignments | 分工列表（2026-08-18：项目成员可见；LEFT JOIN users 返回 assignee_name 与 submitted_by_name（提交人标注，审阅页展示），并附章节内容状态 section_status、四个阶段时间戳；2026-08-20：**树形返回**，章行附 children（子节分工）与聚合 approved_count/total；非成员 403） |
 | POST | /projects/{pid}/chapter-assignments | 分配章节（2026-08-18：**仅 owner**；body `[{chapter_no,title,assignee_id}]` 批量幂等 upsert；assignee 非项目成员 4004；2026-08-20：chapter_no 支持 `1.1` 子节粒度，**章级分配自动展开为其全部子节批量分配**；推送 WS task_assigned；审计 division.assign） |
@@ -756,7 +759,7 @@ graph.add_edge("export", END)
 ## 九、安全设计
 
 - JWT 认证 + 项目级权限中间件（非成员请求一律 403）；WebSocket 同样强制握手鉴权（query token + 成员校验，close code 4001/4003）；
-- RBAC 权限点体系（2026-08-17 落地，迁移 0011_rbac）：`roles`/`permissions`/`role_permissions` 三表 + 幂等种子（member/kb_admin/admin 三角色）；6 权限点收敛（system:manage/kb:manage/kb:read/kb:upload/settings:read 落角色表；project:member_manage 为 owner 数据属性不落表）；`require_permission(code)` 依赖以 `users.role` → `role_permissions` 判定（模块级缓存，PUT /users/{id}/role 后失效重载），`BID_ADMIN_USER_IDS` 白名单命中恒放行；现有管理端点行为等价收敛（deps `_is_admin`/`_is_kb_admin` 改基于权限点）；前端仅按角色收敛菜单/路由，后端 403 兜底；
+- RBAC 权限点体系（2026-08-17 落地，迁移 0011_rbac）：`roles`/`permissions`/`role_permissions` 三表 + 幂等种子（member/kb_admin/admin 三角色）；6 权限点收敛（system:manage/kb:manage/kb:read/kb:upload/settings:read 落角色表；project:member_manage 为 owner 数据属性不落表）；`require_permission(code)` 依赖以 `users.role` → `role_permissions` 判定（模块级缓存，PUT /users/{id}/role 后失效重载），`BID_ADMIN_USER_IDS` 白名单命中恒放行；现有管理端点行为等价收敛（deps `_is_admin`/`_is_kb_admin` 改基于权限点）；**权限点可配置（阶段 A，2026-08-20）**：GET/PUT /rbac/roles/{role}/permissions 读写角色映射（仅 system:manage，审计 rbac.update，admin 保留 system:manage 防自我锁死，project:member_manage 不可授予），/auth/me 返回 permissions 数组，前端菜单/路由改权限点驱动（hasPerm），用户管理页新增「角色权限」矩阵 Tab；后端 403 兜底；
 - 章节级编辑权限「可视不可改」（2026-08-18，2026-08-20 子节下沉与收紧）：项目成员可读全部章节；已分配章节/子节仅 assignee/owner 可编辑（`check_chapter_editable` 最小粒度匹配：子节分工优先，章级分工覆盖其下子节），PUT workflow/sections/{chapter_no} 保存前校验，越权 403；**无任何分工的章节仅 owner 可编辑**（行为收紧）；分工分配/审核仅 owner，领取/生成/提交仅 assignee，后端 403 兜底；
 - **按钮权限矩阵（2026-08-20，前端隐藏 + 后端 403 双保险）**：前端 `usePermission()` composable 统一判定（当前用户角色 + 项目 owner/assignee），各页面按钮按其渲染：
 

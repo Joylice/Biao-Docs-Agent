@@ -25,26 +25,29 @@
         </span>
         <template #overlay>
           <a-menu @click="handleUserMenu">
-            <a-menu-item key="kb">
+            <a-menu-item
+              v-if="hasPerm('kb:read')"
+              key="kb"
+            >
               <DatabaseOutlined />
               资料库
             </a-menu-item>
             <a-menu-item
-              v-if="isAdmin"
+              v-if="hasPerm('system:manage')"
               key="settings"
             >
               <SettingOutlined />
               模型设置
             </a-menu-item>
             <a-menu-item
-              v-if="isAdmin"
+              v-if="hasPerm('system:manage')"
               key="users"
             >
               <TeamOutlined />
               用户管理
             </a-menu-item>
             <a-menu-item
-              v-if="isAdmin"
+              v-if="hasPerm('system:manage')"
               key="audit"
             >
               <AuditOutlined />
@@ -105,13 +108,14 @@ import {
   TeamOutlined,
 } from '@ant-design/icons-vue'
 import api from '@/api/client'
-import { isAdmin, setCurrentUser, setRole } from '@/stores/currentUser'
+import { hasPerm, setCurrentPermissions, setCurrentUser, setRole } from '@/stores/currentUser'
 
 interface CurrentUser {
   id: string
   email: string
   display_name: string
   role?: string
+  permissions?: string[]
 }
 
 const router = useRouter()
@@ -165,6 +169,7 @@ const fetchCurrentUser = async () => {
       displayName.value = user.display_name || user.email
       email.value = user.email
       setRole(user.role)  // 三期：角色写入全局状态，控制管理入口展示
+      setCurrentPermissions(user.permissions)  // 阶段 A：功能权限点驱动菜单可见性
       if (user.id) {
         setCurrentUser(user.id)
       }

@@ -8,13 +8,13 @@ import uuid
 from collections.abc import Awaitable, Callable
 
 from fastapi import Depends
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import _load_user_or_forbid, get_current_user_id
-from app.core.exceptions import ForbiddenError
+from app.core.deps import VALID_ROLES, _load_user_or_forbid, get_current_user_id
+from app.core.exceptions import BizError, ForbiddenError
 from app.models.rbac import RolePermission
 from app.models.user import User
 
@@ -36,6 +36,16 @@ PERMISSION_CATEGORIES: dict[str, str] = {
     "kb:upload": "kb",
     "settings:read": "settings",
     "project:member_manage": "project",
+}
+
+# 功能权限点（可授予角色；project:member_manage 为 owner 数据属性不可授予）
+FUNCTIONAL_PERMISSIONS: frozenset[str] = frozenset(PERMISSIONS) - {"project:member_manage"}
+
+# 默认角色映射（与迁移 0011 种子一致；仅供前端初始化参考，运行时以 role_permissions 表为准）
+DEFAULT_ROLE_PERMS: dict[str, frozenset[str]] = {
+    "member": frozenset({"kb:read", "kb:upload", "settings:read"}),
+    "kb_admin": frozenset({"kb:read", "kb:upload", "settings:read", "kb:manage"}),
+    "admin": FUNCTIONAL_PERMISSIONS,
 }
 
 # 角色 → 权限点缓存（模块级；None=未加载。PUT role / 种子更新后 invalidate_rbac_cache）
@@ -79,6 +89,36 @@ async def has_permission(db: AsyncSession, user: User, code: str) -> bool:
     if user.role == "admin":
         return True
     return code in await role_permissions(db, user.role)
+
+
+async def user_permission_codes(db: AsyncSession, user: User) -> list[str]:
+    """用户全部功能权限点（供 /auth/me 返回；project:member_manage 不含）."""
+    codes: list[str] = []
+    for code in PERMISSIONS:
+        if code == "project:member_manage":
+            continue
+        if await has_permission(db, user, code):
+            codes.append(code)
+    return codes
+
+
+async def set_role_permissions(db: AsyncSession, role: str, codes: list[str]) -> None:
+    """全量覆盖角色权限点（删旧插新 + 失效缓存）.
+
+    校验：角色合法；codes ⊆ 功能权限点（未知码/owner 数据属性均拒绝）；
+    admin 角色必须保留 system:manage（防管理员自我锁死）。
+    """
+    if role not in VALID_ROLES:
+        raise BizError(code=4000, message=f"非法角色: {role}")
+    code_set = set(codes)
+    invalid = code_set - FUNCTIONAL_PERMISSIONS
+    if invalid:
+        raise BizError(code=4000, message=f"非法或不可授予的权限码: {sorted(invalid)}")
+    if role == "admin" and "system:manage" not in code_set:
+        raise BizError(code=4000, message="admin 角色必须保留 system:manage（防自我锁死）")
+    await db.execute(delete(RolePermission).where(RolePermission.role_code == role))
+    db.add_all([RolePermission(role_code=role, permission_code=c) for c in sorted(code_set)])
+    invalidate_rbac_cache()
 
 
 def require_permission(code: str) -> Callable[..., Awaitable[uuid.UUID]]:
