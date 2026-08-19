@@ -58,6 +58,101 @@ def flatten_sections(sections: list) -> list[str]:
     return out
 
 
+def _numbered_tree(nodes: list, prefix: str, out: list[tuple[str, str]]) -> None:
+    """嵌套树递归推导编号标题对 [(no, title)]（与 flatten_sections 编号规则一致）."""
+    for i, node in enumerate(nodes, 1):
+        if isinstance(node, str):
+            if node.strip():
+                out.append((f"{prefix}{i}", node.strip()))
+        elif isinstance(node, dict):
+            title = str(node.get("title", "")).strip()
+            if title:
+                out.append((f"{prefix}{i}", title))
+            children = node.get("children") or []
+            if children:
+                _numbered_tree(children, f"{prefix}{i}.", out)
+
+
+_HEADING_RE = re.compile(r"^#{2,6}\s+(.*)$")
+_LEADING_NO_RE = re.compile(r"^[\d.]+\s*")
+
+
+def is_nested_sections(sections: list) -> bool:
+    """sections 是否为嵌套树形态（含 dict 节点）；string[] 视为无子节（章级存储）."""
+    return any(isinstance(s, dict) for s in sections or [])
+
+
+def numbered_sections(sections_tree: list, chapter_no: str) -> list[tuple[str, str]]:
+    """嵌套树子节编号平铺 [(no, title)]（no = {chapter_no}.{序号…}）.
+
+    string[] 形态（无子节）返回 []，调用方保持章级语义。
+    """
+    if not is_nested_sections(sections_tree):
+        return []
+    out: list[tuple[str, str]] = []
+    _numbered_tree(sections_tree, f"{chapter_no}.", out)
+    return out
+
+
+def split_chapter_to_sections(
+    content_md: str, sections_tree: list, chapter_no: str
+) -> list[dict]:
+    """按大纲嵌套树将整章正文切分为子节片段.
+
+    仅当 sections_tree 含 dict 节点（嵌套树）时切分，否则返回 []（调用方保持
+    章级存储，向后兼容 string[] 大纲）。切分规则：按树序在正文中匹配 `##`~
+    `######` 标题行（容忍标题前编号如 `1.1`）；首个命中标题之前的前置文本
+    并入首个子节，未匹配标题的段落并入其前一子节（匹配失败不阻塞）。
+    返回 [{section_id, title, content}]，section_id = {chapter_no}.{序号…}。
+    """
+    if not is_nested_sections(sections_tree):
+        return []
+    numbered = numbered_sections(sections_tree, chapter_no)
+    if not numbered:
+        return []
+
+    def _norm(title: str) -> str:
+        return _LEADING_NO_RE.sub("", title.strip()).strip()
+
+    lines = content_md.splitlines()
+    # 按树序依次为每个子节定位命中的标题行（单调向后扫描，容忍缺失）
+    matched_line: list[int | None] = []
+    pos = 0
+    for _, title in numbered:
+        target = _norm(title)
+        hit: int | None = None
+        if target:
+            for li in range(pos, len(lines)):
+                m = _HEADING_RE.match(lines[li].strip())
+                if m and _norm(m.group(1)) == target:
+                    hit = li
+                    pos = li + 1
+                    break
+        matched_line.append(hit)
+
+    # 有效锚点（命中的子节及其行号），保持树序
+    anchors = [(idx, li) for idx, li in enumerate(matched_line) if li is not None]
+    results: list[dict] = []
+    if not anchors:
+        # 全部未命中：整章并入首个子节（不阻塞）
+        first_no, first_title = numbered[0]
+        return [{"section_id": first_no, "title": first_title, "content": content_md.strip()}]
+
+    for ai, (sec_idx, line_idx) in enumerate(anchors):
+        end = anchors[ai + 1][1] if ai + 1 < len(anchors) else len(lines)
+        seg = "\n".join(lines[line_idx:end]).strip()
+        if ai == 0 and line_idx > 0:
+            # 首标题之前的前置文本并入首个子节
+            prefix_text = "\n".join(lines[:line_idx]).strip()
+            if prefix_text:
+                seg = f"{prefix_text}\n\n{seg}" if seg else prefix_text
+        no, title = numbered[sec_idx]
+        results.append({"section_id": no, "title": title, "content": seg})
+
+    # 未命中的子节（无锚点）不产生空行；其应得内容已按「并入前一子节」规则归属
+    return results
+
+
 async def generate_chapter(
     chapter: dict,
     score_points: list[dict],

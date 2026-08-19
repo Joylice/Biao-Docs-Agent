@@ -82,7 +82,7 @@ async def assist_generate(
     append = 追加到现有正文末尾；overwrite = 整章覆盖；
     暂停后已累积部分同样按 mode 落库（空部分不落库）。
     """
-    from app.agents.nodes import _upsert_section
+    from app.agents.nodes import _persist_chapter_content
     from app.core.database import async_session_factory
     from app.services import workflow_runtime
     from app.services.chapter_service import extract_chapter_summary, generate_chapter
@@ -93,9 +93,15 @@ async def assist_generate(
     snapshot = await workflow_runtime.get_state(project_id)
     values = snapshot.values or {}
     outline = values.get("outline", [])
-    chapter = next((c for c in outline if c.get("chapter_no") == chapter_no), None)
+    # 子节编号 → 重定向父章生成（AI 仍章级产出），完成后切分返回子节片段
+    subsection_no = chapter_no if "." in chapter_no else ""
+    if subsection_no:
+        chapter_no = chapter_no.rsplit(".", 1)[0]
+    chapter = next((c for c in outline if str(c.get("chapter_no", "")) == chapter_no), None)
     if chapter is None:
-        raise BizError(code=4004, message=f"章节 {chapter_no} 不在大纲中，无法辅助生成")
+        raise BizError(
+            code=4004, message=f"章节 {subsection_no or chapter_no} 不在大纲中，无法辅助生成"
+        )
 
     key = _task_key(project_id, chapter_no)
     if key in _assist_tasks:
@@ -205,7 +211,15 @@ async def assist_generate(
         {"chapters": {chapter_no: final_content}, "chapter_summaries": new_summaries},
     )
     async with async_session_factory() as db:
-        await _upsert_section(db, str(project_id), chapter_no, title, final_content, status="draft")
+        await _persist_chapter_content(
+            db,
+            str(project_id),
+            chapter_no,
+            title,
+            final_content,
+            status="draft",
+            sections_tree=chapter.get("sections", []),
+        )
         await db.commit()
 
     await publish_event(
@@ -219,4 +233,13 @@ async def assist_generate(
             "stopped": stopped,
         },
     )
+    if subsection_no:
+        # 子节分工：切分后仅返回目标子节片段（未命中降级返回整章）
+        from app.services.chapter_service import split_chapter_to_sections
+
+        for sec in split_chapter_to_sections(
+            final_content, chapter.get("sections", []) or [], chapter_no
+        ):
+            if sec["section_id"] == subsection_no:
+                return {"content": sec["content"], "stopped": stopped, "mode": mode}
     return {"content": final_content, "stopped": stopped, "mode": mode}

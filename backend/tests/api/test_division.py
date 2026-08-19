@@ -89,6 +89,7 @@ class TestListAssignments:
         session.execute.side_effect = [
             _result(_project()),  # _check_project_member（owner 一次即过）
             _join_result([(_assignment(), user, "draft")]),
+            _result(None),  # list_assignments 查骨架（无 → 孤儿扁平路径）
         ]
         snapshot = MagicMock()
         snapshot.values = {
@@ -125,10 +126,12 @@ class TestAssignChapters:
         session = override_db([])
         session.execute.side_effect = [
             _result(_project()),  # get_current_owner_id 依赖
+            _result(None),  # assign_chapters 先查骨架（无嵌套大纲 → 不展开）
             _result(_project()),  # _is_project_member 查 project
             _result(_member_row()),  # 成员表命中
             _result(None),  # 无既有分工
             _join_result([(_assignment(), user, None)]),  # 分配后列表
+            _result(None),  # list_assignments 查骨架
         ]
         recorded: list = []
         published: list = []
@@ -170,6 +173,7 @@ class TestAssignChapters:
         session = override_db([])
         session.execute.side_effect = [
             _result(_project()),  # get_current_owner_id
+            _result(None),  # assign_chapters 先查骨架
             _result(_project()),  # _is_project_member
             _result(None),  # 成员表未命中
         ]

@@ -568,6 +568,44 @@ class TestSaveSectionEdit:
             await workflow_runtime.save_section_edit(db, PROJECT_ID, "99", "内容")
         assert ei.value.code == 4004
 
+    @pytest.mark.asyncio
+    async def test_save_section_edit_subsection_merges_parent(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """子节编号编辑：子节行更新（status=review）并重建父章全文回写 state."""
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+        # 确认嵌套大纲（含子节）→ 生成 → 审阅
+        await workflow_runtime.resume_workflow(
+            PROJECT_ID,
+            {
+                "confirmed": True,
+                "outline": [
+                    {
+                        "chapter_no": "1",
+                        "title": "项目概述",
+                        "sections": [{"title": "背景"}, {"title": "目标"}],
+                    }
+                ],
+            },
+        )
+        row12 = ProposalSection(
+            project_id=PROJECT_ID,
+            section_id="1.2",
+            title="目标",
+            content_md="旧目标",
+            status="draft",
+        )
+        db = make_fake_db()
+        db.rows_by_table[ProposalSection] = [row12]
+
+        await workflow_runtime.save_section_edit(db, PROJECT_ID, "1.2", "新目标内容")
+
+        assert row12.content_md == "新目标内容"
+        assert row12.status == "review"
+        snapshot = await workflow_runtime.get_state(PROJECT_ID)
+        assert snapshot.values["chapters"]["1"] == "新目标内容", "父章全文应由子节行重建"
+
 
 class TestGenerateChapterDraft:
     """分工编制初稿：LLM（mock 模式）生成 + state 回写 + proposal_sections 落库 draft."""
@@ -606,3 +644,34 @@ class TestGenerateChapterDraft:
         with pytest.raises(BizError) as ei:
             await workflow_runtime.generate_chapter_draft(PROJECT_ID, "99")
         assert ei.value.code == 4004
+
+    @pytest.mark.asyncio
+    async def test_generate_draft_subsection_routes_to_parent(
+        self, memory_runtime, mock_node_deps, monkeypatch
+    ) -> None:
+        """子节编号初稿：重定向父章生成，state 写父章，子节行落库."""
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+        await workflow_runtime.resume_workflow(
+            PROJECT_ID,
+            {
+                "confirmed": True,
+                "outline": [
+                    {
+                        "chapter_no": "1",
+                        "title": "项目概述",
+                        "sections": [{"title": "背景"}, {"title": "目标"}],
+                    }
+                ],
+            },
+        )
+        db = make_fake_db()
+        monkeypatch.setattr("app.core.database.async_session_factory", lambda: db)
+
+        content = await workflow_runtime.generate_chapter_draft(PROJECT_ID, "1.1")
+
+        assert content, "子节初稿应非空（命中子节片段或降级整章）"
+        snapshot = await workflow_runtime.get_state(PROJECT_ID)
+        assert "1" in snapshot.values["chapters"], "子节生成应写父章全文到 state"
+        sections = [o for o in db.added if isinstance(o, ProposalSection)]
+        assert any(s.section_id.startswith("1.") for s in sections), "子节行应落库"

@@ -15,6 +15,21 @@ IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)[^)]*\)")
 IMAGE_WIDTH_CM = 15
 
 
+def natural_sort_key(no: str) -> tuple:
+    """章节编号自然序排序键：1.1 < 1.2 < 2 < 10（修复字典序 10 < 2 隐患）.
+
+    按 `.` 分段，数字段按数值比较，非数字段按字符串比较（排在同位数字段之后）。
+    供 proposal_sections 子节行读取/拼装导出时排序使用。
+    """
+    parts: list[tuple[int, object]] = []
+    for seg in str(no).split("."):
+        if seg.isdigit():
+            parts.append((0, int(seg)))
+        else:
+            parts.append((1, seg))
+    return tuple(parts)
+
+
 def _storage_key_from_url(url: str) -> str:
     """从签名/裸 URL 提取 MinIO storage_key；非对象 URL 原样返回（兼容裸 key）."""
     parsed = urlparse(url)

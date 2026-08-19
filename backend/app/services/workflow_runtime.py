@@ -223,34 +223,80 @@ async def save_section_edit(
     chapter_no: str,
     content: str,
 ) -> None:
-    """人工编辑章节直接落库：state（chapters + 摘要重算）与 DB 同步.
+    """人工编辑章节/子节直接落库：state（chapters + 摘要重算）与 DB 同步.
 
     与 rewrite_chapter 的差异：不经 LLM，内容来自人工编辑；落库 status=review
-    （对齐 write_node 的 _upsert_section 字段口径）。摘要重算保持章间上下文
-    一致性链路（后续章节生成引用最新摘要）。DB 提交由 API 层统一 commit。
+    （对齐 write_node 的 _upsert_section 字段口径）。支持子节编号（如 1.1）：
+    子节行更新后按自然序拼接同章子节行重建父章全文回写 state。
+    章级编辑若大纲含嵌套子节则同步切分刷新子节行（子节真源一致）。
+    DB 提交由 API 层统一 commit。
     """
-    from app.agents.nodes import _upsert_section
+    from sqlalchemy import select
+
+    from app.agents.nodes import _persist_chapter_content, _upsert_section
+    from app.models.proposal import ProposalSection
     from app.services.chapter_service import extract_chapter_summary
+    from app.services.export_service import natural_sort_key
 
     snapshot = await get_state(project_id)
     values = snapshot.values or {}
     chapters = values.get("chapters", {})
-    if chapter_no not in chapters:
-        raise BizError(code=4004, message=f"章节 {chapter_no} 尚未生成，无法保存")
+    outline = values.get("outline", [])
+    is_subsection = "." in chapter_no
+    parent_no = chapter_no.rsplit(".", 1)[0] if is_subsection else chapter_no
+
+    if is_subsection:
+        if parent_no not in chapters:
+            raise BizError(code=4004, message=f"章节 {parent_no} 尚未生成，无法保存子节")
+        # 子节标题取大纲嵌套树（缺失时保留既有行标题）
+        title = ""
+        chapter = next((c for c in outline if str(c.get("chapter_no", "")) == parent_no), None)
+        if chapter:
+            from app.services.chapter_service import numbered_sections
+
+            title = next(
+                (t for no, t in numbered_sections(chapter.get("sections", []) or [], parent_no)
+                 if no == chapter_no),
+                "",
+            )
+        await _upsert_section(db, str(project_id), chapter_no, title, content, status="review")
+        # 自然序拼接同章子节行重建父章全文（1.1 < 1.2 < 2）
+        sec_result = await db.execute(
+            select(ProposalSection).where(
+                ProposalSection.project_id == uuid.UUID(str(project_id)),
+                ProposalSection.section_id.startswith(f"{parent_no}."),
+            )
+        )
+        sec_rows = sorted(sec_result.scalars().all(), key=lambda s: natural_sort_key(s.section_id))
+        merged = "\n\n".join(s.content_md for s in sec_rows if s.content_md)
+        target_no, target_content = parent_no, merged or content
+    else:
+        if chapter_no not in chapters:
+            raise BizError(code=4004, message=f"章节 {chapter_no} 尚未生成，无法保存")
+        target_no, target_content = chapter_no, content
 
     # 标题取大纲（章节均来自大纲生成）；缺失时保留既有摘要中的标题
-    outline = values.get("outline", [])
-    title = next((c.get("title", "") for c in outline if c.get("chapter_no") == chapter_no), "")
+    title = next((c.get("title", "") for c in outline if c.get("chapter_no") == target_no), "")
     if not title:
-        title = (values.get("chapter_summaries", {}).get(chapter_no) or {}).get("title", "")
+        title = (values.get("chapter_summaries", {}).get(target_no) or {}).get("title", "")
 
     summaries = dict(values.get("chapter_summaries", {}))
-    summaries[chapter_no] = {"title": title, "summary": extract_chapter_summary(content)}
+    summaries[target_no] = {"title": title, "summary": extract_chapter_summary(target_content)}
     await update_state(
         project_id,
-        {"chapters": {chapter_no: content}, "chapter_summaries": summaries},
+        {"chapters": {target_no: target_content}, "chapter_summaries": summaries},
     )
-    await _upsert_section(db, str(project_id), chapter_no, title, content, status="review")
+    if not is_subsection:
+        chapter = next((c for c in outline if c.get("chapter_no") == chapter_no), None)
+        await _persist_chapter_content(
+            db,
+            str(project_id),
+            chapter_no,
+            title,
+            content,
+            status="review",
+            sections_tree=(chapter or {}).get("sections", []),
+        )
 
 
 async def generate_chapter_draft(project_id: uuid.UUID | str, chapter_no: str) -> str:
@@ -258,16 +304,23 @@ async def generate_chapter_draft(project_id: uuid.UUID | str, chapter_no: str) -
 
     复用图内同一 generate_chapter 链路（RAG 检索 + 脱敏 + mock 降级）；
     与图内 write 节点的差异：不推进工作流阶段，仅产出初稿供人工编制。
+    子节编号（如 1.1）：生成整章后切分，仅返回目标子节片段（AI 仍章级产出）。
     """
-    from app.agents.nodes import _upsert_section
+    from app.agents.nodes import _persist_chapter_content
     from app.core.database import async_session_factory
-    from app.services.chapter_service import extract_chapter_summary, generate_chapter
+    from app.services.chapter_service import (
+        extract_chapter_summary,
+        generate_chapter,
+        split_chapter_to_sections,
+    )
     from app.services.kb_base_service import resolve_mount_doc_ids
 
     snapshot = await get_state(project_id)
     values = snapshot.values or {}
     outline = values.get("outline", [])
-    chapter = next((c for c in outline if c.get("chapter_no") == chapter_no), None)
+    is_subsection = "." in chapter_no
+    target_no = chapter_no.rsplit(".", 1)[0] if is_subsection else chapter_no
+    chapter = next((c for c in outline if str(c.get("chapter_no", "")) == target_no), None)
     if chapter is None:
         raise BizError(code=4004, message=f"章节 {chapter_no} 不在大纲中，无法生成初稿")
 
@@ -289,14 +342,27 @@ async def generate_chapter_draft(project_id: uuid.UUID | str, chapter_no: str) -
 
     title = chapter.get("title", "")
     summaries = dict(values.get("chapter_summaries", {}))
-    summaries[chapter_no] = {"title": title, "summary": extract_chapter_summary(content)}
+    summaries[target_no] = {"title": title, "summary": extract_chapter_summary(content)}
     await update_state(
         project_id,
-        {"chapters": {chapter_no: content}, "chapter_summaries": summaries},
+        {"chapters": {target_no: content}, "chapter_summaries": summaries},
     )
     async with async_session_factory() as db:
-        await _upsert_section(db, str(project_id), chapter_no, title, content, status="draft")
+        await _persist_chapter_content(
+            db,
+            str(project_id),
+            target_no,
+            title,
+            content,
+            status="draft",
+            sections_tree=chapter.get("sections", []),
+        )
         await db.commit()
+    if is_subsection:
+        # 返回目标子节片段；切分未命中时降级返回整章（不阻塞编制）
+        for sec in split_chapter_to_sections(content, chapter.get("sections", []) or [], target_no):
+            if sec["section_id"] == chapter_no:
+                return sec["content"]
     return content
 
 

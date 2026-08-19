@@ -153,6 +153,29 @@ async def _upsert_section(
     await db.flush()
 
 
+async def _persist_chapter_content(
+    db,
+    project_id: str,
+    chapter_no: str,
+    title: str,
+    content: str,
+    status: str = "draft",
+    sections_tree: list | None = None,
+) -> None:
+    """章节落库统一入口：章级行（全文）+ 嵌套大纲时切分子节行.
+
+    state.chapters 保持章级全文（检索/摘要用），proposal_sections 子节行为
+    子节真源（子节分工/编辑粒度）；string[] 大纲仅写章级行（向后兼容）。
+    """
+    from app.services.chapter_service import split_chapter_to_sections
+
+    await _upsert_section(db, project_id, chapter_no, title, content, status=status)
+    for sec in split_chapter_to_sections(content, sections_tree or [], chapter_no):
+        await _upsert_section(
+            db, project_id, sec["section_id"], sec["title"], sec["content"], status=status
+        )
+
+
 # ───────────────────────── 节点实现 ─────────────────────────
 
 
@@ -488,8 +511,14 @@ async def write_node(state: dict) -> dict:
     await _flush_tokens()  # 尾部未达阈值的缓冲也要发出，保证 delta 拼接 == 全文
 
     async with async_session_factory() as db:
-        await _upsert_section(
-            db, project_id, chapter_no, chapter.get("title", ""), content, status="draft"
+        await _persist_chapter_content(
+            db,
+            project_id,
+            chapter_no,
+            chapter.get("title", ""),
+            content,
+            status="draft",
+            sections_tree=chapter.get("sections", []),
         )
         total = len(outline)
         progress = round(0.4 + 0.35 * (len(chapters) + 1) / max(total, 1), 2)
@@ -583,7 +612,8 @@ async def consistency_check_node(state: dict) -> dict:
         for issue in fixable:
             comments.setdefault(issue["chapter_no"], []).append(issue.get("description", ""))
         for chapter_no, descs in comments.items():
-            title = next((c.get("title", "") for c in outline if c["chapter_no"] == chapter_no), "")
+            chapter_obj = next((c for c in outline if c["chapter_no"] == chapter_no), None)
+            title = (chapter_obj or {}).get("title", "")
             try:
                 new_content = await rewrite_chapter(
                     chapter_no=chapter_no,
@@ -597,8 +627,14 @@ async def consistency_check_node(state: dict) -> dict:
                         "summary": extract_chapter_summary(new_content),
                     }
                 async with async_session_factory() as db:
-                    await _upsert_section(
-                        db, project_id, chapter_no, title, new_content, status="draft"
+                    await _persist_chapter_content(
+                        db,
+                        project_id,
+                        chapter_no,
+                        title,
+                        new_content,
+                        status="draft",
+                        sections_tree=(chapter_obj or {}).get("sections", []),
                     )
                     await db.commit()  # BUG-2：重写章节显式提交
                 await publish_event(
@@ -692,7 +728,8 @@ async def rewrite_node(state: dict) -> dict:
     for chapter_no, comment in feedback.items():
         if chapter_no not in chapters:
             continue
-        title = next((c.get("title", "") for c in outline if c["chapter_no"] == chapter_no), "")
+        chapter_obj = next((c for c in outline if c["chapter_no"] == chapter_no), None)
+        title = (chapter_obj or {}).get("title", "")
         try:
             new_content = await rewrite_chapter(
                 chapter_no=chapter_no,
@@ -706,8 +743,14 @@ async def rewrite_node(state: dict) -> dict:
                     "summary": extract_chapter_summary(new_content),
                 }
             async with async_session_factory() as db:
-                await _upsert_section(
-                    db, project_id, chapter_no, title, new_content, status="draft"
+                await _persist_chapter_content(
+                    db,
+                    project_id,
+                    chapter_no,
+                    title,
+                    new_content,
+                    status="draft",
+                    sections_tree=(chapter_obj or {}).get("sections", []),
                 )
                 db.add(_review_record(project_id, chapter_no, comment))
                 await db.flush()
