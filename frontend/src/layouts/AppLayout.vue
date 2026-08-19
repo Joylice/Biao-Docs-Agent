@@ -1,7 +1,12 @@
 <template>
   <a-layout class="app-layout">
     <a-layout-header class="app-layout__header">
-      <div class="app-layout__brand">
+      <div
+        class="app-layout__brand"
+        role="button"
+        title="返回工作台"
+        @click="router.push({ name: 'Workbench' })"
+      >
         <span class="app-layout__logo">
           <FileSearchOutlined />
         </span>
@@ -57,23 +62,44 @@
         </template>
       </a-dropdown>
     </a-layout-header>
-    <a-layout-content class="app-layout__content">
-      <div class="app-layout__page">
-        <slot />
-      </div>
-    </a-layout-content>
+    <a-layout class="app-layout__main">
+      <!-- 深色窄边侧栏：工作台置首，项目列表次之（管理入口仍在右上角用户菜单） -->
+      <a-layout-sider
+        theme="dark"
+        :width="184"
+        :collapsed-width="64"
+        breakpoint="lg"
+        class="app-layout__sider"
+      >
+        <a-menu
+          theme="dark"
+          mode="inline"
+          :selected-keys="selectedNavKeys"
+          :items="navItems"
+          @click="handleNavClick"
+        />
+      </a-layout-sider>
+      <a-layout-content class="app-layout__content">
+        <div class="app-layout__page">
+          <slot />
+        </div>
+      </a-layout-content>
+    </a-layout>
   </a-layout>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, h, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
+import type { MenuProps } from 'ant-design-vue'
 import {
   AuditOutlined,
+  DashboardOutlined,
   DatabaseOutlined,
   DownOutlined,
   FileSearchOutlined,
+  FolderOpenOutlined,
   LogoutOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -89,11 +115,47 @@ interface CurrentUser {
 }
 
 const router = useRouter()
+const route = useRoute()
 
 const displayName = ref('')
 const email = ref('')
 
 const avatarText = computed(() => (displayName.value || email.value || '用').charAt(0).toUpperCase())
+
+/* ---------------- 侧边导航（key → 路由 name 映射） ---------------- */
+const NAV_ROUTES: Record<string, string> = {
+  workbench: 'Workbench',
+  projects: 'Projects',
+}
+
+// 路由 name → 菜单 key（选中态反查）
+const ROUTE_NAV_KEYS: Record<string, string> = {
+  Workbench: 'workbench',
+  Projects: 'projects',
+}
+
+const navItems: MenuProps['items'] = [
+  {
+    key: 'workbench',
+    icon: () => h(DashboardOutlined),
+    label: '工作台',
+  },
+  {
+    key: 'projects',
+    icon: () => h(FolderOpenOutlined),
+    label: '项目列表',
+  },
+]
+
+const selectedNavKeys = computed(() => {
+  const key = ROUTE_NAV_KEYS[String(route.name)]
+  return key ? [key] : []
+})
+
+const handleNavClick = ({ key }: { key: string }) => {
+  const name = NAV_ROUTES[key]
+  if (name) router.push({ name })
+}
 
 const fetchCurrentUser = async () => {
   try {
@@ -148,13 +210,14 @@ onMounted(fetchCurrentUser)
   height: 56px;
   padding: 0 24px;
   background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .app-layout__brand {
   display: flex;
   align-items: center;
   gap: 10px;
+  cursor: pointer;
 }
 
 .app-layout__logo {
@@ -205,8 +268,26 @@ onMounted(fetchCurrentUser)
   color: var(--text-secondary);
 }
 
+.app-layout__main {
+  background: transparent;
+}
+
+/* 深色窄边侧栏（科技简约：深底 + 浅色内容区） */
+.app-layout__sider {
+  position: sticky;
+  top: 56px;
+  height: calc(100vh - 56px);
+  overflow: auto;
+  background: #0b1526;
+}
+
+.app-layout__sider :deep(.ant-menu) {
+  background: transparent;
+}
+
 .app-layout__content {
   background: var(--app-bg);
+  min-width: 0;
 }
 
 .app-layout__page {

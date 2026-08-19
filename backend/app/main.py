@@ -20,6 +20,7 @@ from app.api import (
     users,
     versions,
     websocket,
+    workbench,
     workflow,
 )
 from app.api import settings as settings_api
@@ -98,6 +99,7 @@ app.include_router(documents.router, prefix=f"{settings.api_prefix}/projects", t
 app.include_router(requirements.router, prefix=f"{settings.api_prefix}/projects", tags=["技术需求"])
 app.include_router(workflow.router, prefix=f"{settings.api_prefix}/projects", tags=["工作流"])
 app.include_router(division.router, prefix=f"{settings.api_prefix}/projects", tags=["分工协作"])
+app.include_router(workbench.router, prefix=f"{settings.api_prefix}/workbench", tags=["工作台"])
 app.include_router(versions.router, prefix=f"{settings.api_prefix}/projects", tags=["版本库"])
 app.include_router(kb.router, prefix=f"{settings.api_prefix}/kb", tags=["资料库"])
 app.include_router(kb_bases.router, prefix=f"{settings.api_prefix}", tags=["知识库"])

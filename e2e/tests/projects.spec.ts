@@ -146,9 +146,10 @@ test.describe('项目管理', () => {
       return;
     }
 
-    // 路由守卫读取 localStorage.access_token（frontend/src/router/index.ts）
+    // 路由守卫读取 localStorage.access_token（frontend/src/router/index.ts）；
+    // 项目列表已迁至 /projects（/ 重定向到工作台）
     await page.evaluate((token) => localStorage.setItem('access_token', token), owner.accessToken);
-    await page.goto('/');
+    await page.goto('/projects');
     await expect(page.getByText('我的项目')).toBeVisible();
     await expect(page.getByText(project.name)).toBeVisible();
   });

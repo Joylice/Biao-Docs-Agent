@@ -90,9 +90,9 @@ const handleLogin = async () => {
         localStorage.setItem('refresh_token', data.data.refresh_token)
       }
       message.success('登录成功')
-      // 登录前被守卫拦截时携带的 redirect 回跳地址
+      // 登录前被守卫拦截时携带的 redirect 回跳地址；无回跳默认进入工作台
       const redirect = route.query.redirect as string | undefined
-      router.push(redirect && redirect.startsWith('/') ? redirect : { name: 'Projects' })
+      router.push(redirect && redirect.startsWith('/') ? redirect : { name: 'Workbench' })
     }
   } catch (error) {
     const body = (error as { response?: { data?: ApiErrorBody } })?.response?.data

@@ -11,15 +11,21 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true },
   },
   {
+    // 根路径默认进入工作台（子节分工与工作台改版）
     path: '/',
-    name: 'Projects',
-    component: () => import('@/views/projects/ProjectListView.vue'),
+    redirect: { name: 'Workbench' },
+  },
+  {
+    path: '/workbench',
+    name: 'Workbench',
+    component: () => import('@/views/workbench/WorkbenchView.vue'),
     meta: { requiresAuth: true, layout: 'app' },
   },
   {
-    // 兼容直接输入 /projects 的场景（守卫未命中不存在的路由会白屏）
     path: '/projects',
-    redirect: '/',
+    name: 'Projects',
+    component: () => import('@/views/projects/ProjectListView.vue'),
+    meta: { requiresAuth: true, layout: 'app' },
   },
   {
     path: '/materials',
@@ -81,7 +87,7 @@ const router = createRouter({
   routes,
 })
 
-// 路由守卫：未登录跳转登录页；已登录访问登录页重定向项目列表；
+// 路由守卫：未登录跳转登录页；已登录访问登录页重定向工作台；
 // meta.role 存在时校验角色（后端 403 兜底，此处仅收敛前端入口体验）
 router.beforeEach(async (to) => {
   const token = localStorage.getItem('access_token')
@@ -90,14 +96,14 @@ router.beforeEach(async (to) => {
     return { name: 'Login', query: { redirect: to.fullPath } }
   }
   if (to.name === 'Login' && token) {
-    return { name: 'Projects' }
+    return { name: 'Workbench' }
   }
   // 角色守卫：模块级角色初始为 member，先刷新再判定，避免误拦截
   if (to.meta.role && currentRole.value !== to.meta.role) {
     await fetchCurrentUserRole()
     if (currentRole.value !== to.meta.role) {
       message.warning('无权访问：该页面仅限管理员')
-      return { name: 'Projects' }
+      return { name: 'Workbench' }
     }
   }
   return true
