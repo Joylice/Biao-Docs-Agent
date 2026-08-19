@@ -1,0 +1,9 @@
+# 本地开发/测试覆盖（compose 自动合并）：LLM/Embedding 全 mock，
+# 供 E2E（BID_LLM_MOCK=true 前置）与离线开发使用；生产部署请删除本文件。
+services:
+  api:
+    environment:
+      BID_LLM_MOCK: "true"
+  worker:
+    environment:
+      BID_LLM_MOCK: "true"
