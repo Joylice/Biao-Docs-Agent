@@ -126,7 +126,7 @@ test.describe('注册登录', () => {
     expect(((await invalid.json()) as BizResponse).code).toBe(4001);
   });
 
-  test('UI：登录页可访问，登录后进入项目列表（E2E-01 进入工作台）', async ({
+  test('UI：登录页可访问，登录后进入工作台（E2E-01 进入工作台）', async ({
     api: apiCtx,
     page,
   }) => {
@@ -145,8 +145,8 @@ test.describe('注册登录', () => {
     // antd 两字中文按钮会在中间插入空格（accessible name 为 "登 录"），用正则匹配
     await page.getByRole('button', { name: /登\s*录/ }).click();
 
-    // 登录成功后路由跳转项目列表（router/index.ts: '/' => Projects）
-    await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByText('我的项目')).toBeVisible();
+    // 登录成功后路由跳转工作台（router/index.ts: '/' => redirect '/workbench'）
+    await expect(page).toHaveURL(/\/workbench$/);
+    await expect(page.getByText('我的待办')).toBeVisible();
   });
 });

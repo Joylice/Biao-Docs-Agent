@@ -172,7 +172,7 @@
               </template>
               <template v-if="column.key === 'action' && record.kind === 'chapter'">
                 <a-button
-                  v-if="isOwner && record.status === 'submitted'"
+                  v-if="isOwner && record.status === 'submitted' && record.assignment_id"
                   size="small"
                   type="primary"
                   @click="openReview(record)"
@@ -426,11 +426,15 @@ import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
+import { usePermission } from '@/composables/usePermission'
+
+/** 大纲子节：字符串（LLM 原始）或嵌套树（二次编辑产物），展示时拍平为标题 */
+type OutlineSectionLike = string | { title: string; children?: OutlineSectionLike[] }
 
 interface OutlineItem {
   chapter_no: string
   title: string
-  sections?: string[]
+  sections?: OutlineSectionLike[]
 }
 
 interface MemberItem {
@@ -440,16 +444,20 @@ interface MemberItem {
   is_owner: boolean
 }
 
+/** 章节分工记录（树形接口：章级聚合行 id/assignee 为 null，子节分工在 children） */
 interface AssignmentItem {
-  id: string
+  id: string | null
   chapter_no: string
   title: string
-  assignee_id: string
-  assignee_name: string
+  assignee_id: string | null
+  assignee_name: string | null
   status: string
   section_status: string | null
   review_comment: string | null
-  sections?: string[]
+  sections?: OutlineSectionLike[]
+  children?: AssignmentItem[]
+  total?: number
+  approved_count?: number
 }
 
 /** 分工表行：大纲章节 + 分工记录合并（章行含分配/状态控件，子节行纯展示） */
@@ -491,7 +499,11 @@ const projectId = route.params.projectId as string
 
 const loading = ref(false)
 const loadError = ref('')
-const isOwner = ref(false)
+/** 项目 owner ID（项目详情返回，usePermission 比较当前用户） */
+const projectOwnerId = ref('')
+const { isProjectOwner } = usePermission()
+/** 当前用户是否为项目所有者（决定分配/审核入口可见性） */
+const isOwner = computed(() => isProjectOwner(projectOwnerId.value))
 const members = ref<MemberItem[]>([])
 const outline = ref<OutlineItem[]>([])
 const assignments = ref<AssignmentItem[]>([])
@@ -572,6 +584,14 @@ const columns = [
   { title: '操作', key: 'action', width: 220 },
 ]
 
+/** 大纲子节 → 标题扁平列表（兼容嵌套树形态，仅取标题展示） */
+const sectionTitles = (sections?: OutlineSectionLike[]): string[] => {
+  if (!Array.isArray(sections)) return []
+  return sections.flatMap((s) =>
+    typeof s === 'string' ? [s] : [s.title, ...sectionTitles(s.children)],
+  )
+}
+
 /** 大纲章节 + 分工记录合并为表格行，子节紧随章行展平（2 级目录） */
 const chapterRows = computed<DivisionRow[]>(() => {
   const byNo = new Map(assignments.value.map((a) => [a.chapter_no, a]))
@@ -596,13 +616,17 @@ const chapterRows = computed<DivisionRow[]>(() => {
     })
   }
   for (const c of outline.value) {
-    const sections = byNo.get(c.chapter_no)?.sections ?? c.sections ?? []
+    // 已展开子节级分工时，子节行由分工记录（chapter_no 形如 1.1）承载，不重复展示大纲子节
+    const hasChildAssignment = assignments.value.some((a) => a.chapter_no.startsWith(`${c.chapter_no}.`))
+    const sections = hasChildAssignment
+      ? []
+      : sectionTitles(byNo.get(c.chapter_no)?.sections ?? c.sections)
     pushChapter(c.chapter_no, c.title, sections)
   }
   const outlineNos = new Set(outline.value.map((c) => c.chapter_no))
   for (const a of assignments.value) {
     if (!outlineNos.has(a.chapter_no)) {
-      pushChapter(a.chapter_no, a.title, a.sections ?? [])
+      pushChapter(a.chapter_no, a.title, sectionTitles(a.sections))
     }
   }
   return rows
@@ -638,13 +662,18 @@ const getErrorMessage = (err: unknown, fallback: string): string => {
   return body?.message || fallback
 }
 
+/** 分工树递归拍平：章行 + 子节 children（子节分工也纳入「我的任务」匹配） */
+const flattenAssignments = (items: AssignmentItem[]): AssignmentItem[] =>
+  items.flatMap((a) => [a, ...(a.children?.length ? flattenAssignments(a.children) : [])])
+
 const fetchAssignments = async () => {
   const { data } = await api.get(`/projects/${projectId}/chapter-assignments`)
   if (data.code === 0) {
-    assignments.value = data.data.items || []
+    // 树形接口：章行含子节 children，拍平后供任务匹配与表格行合并
+    assignments.value = flattenAssignments(data.data.items || [])
     // 同步分配草稿基线（owner 下拉初始值）
     const draft: Record<string, string | undefined> = {}
-    for (const a of assignments.value) draft[a.chapter_no] = a.assignee_id
+    for (const a of assignments.value) draft[a.chapter_no] = a.assignee_id ?? undefined
     draftAssignees.value = draft
   }
 }
@@ -660,7 +689,7 @@ const fetchAll = async () => {
       api.get(`/projects/${projectId}/workflow/status`),
     ])
     if (projectRes.data?.code === 0) {
-      isOwner.value = projectRes.data.data.owner_id === currentUserId.value
+      projectOwnerId.value = projectRes.data.data?.owner_id || ''
     }
     if (memberRes.data?.code === 0) {
       members.value = memberRes.data.data.items || []
@@ -688,9 +717,10 @@ const handleAssign = async () => {
   try {
     const { data } = await api.post(`/projects/${projectId}/chapter-assignments`, items)
     if (data.code === 0) {
-      assignments.value = data.data.items || []
+      // 响应同为树形结构，拍平保持与拉取路径一致
+      assignments.value = flattenAssignments(data.data.items || [])
       const draft: Record<string, string | undefined> = {}
-      for (const a of assignments.value) draft[a.chapter_no] = a.assignee_id
+      for (const a of assignments.value) draft[a.chapter_no] = a.assignee_id ?? undefined
       draftAssignees.value = draft
       message.success(`已推送 ${items.length} 个章节的分工任务`)
     } else {
@@ -704,6 +734,7 @@ const handleAssign = async () => {
 }
 
 const handleAccept = async (task: AssignmentItem) => {
+  if (!task.id) return
   acceptingId.value = task.id
   try {
     const { data } = await api.post(`/projects/${projectId}/chapter-assignments/${task.id}/accept`)
@@ -898,6 +929,7 @@ const handleSaveContent = async () => {
 }
 
 const handleSubmit = async (task: AssignmentItem) => {
+  if (!task.id) return
   submittingId.value = task.id
   try {
     const { data } = await api.post(`/projects/${projectId}/chapter-assignments/${task.id}/submit`)
