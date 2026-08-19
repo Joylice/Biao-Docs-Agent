@@ -97,14 +97,15 @@ test.describe('UI：招标解析 → 确认评分点 → 大纲 → 生成', () 
     // 2. 确认：前端自动 start workflow → 等待 interrupt → confirm-score-points
     await page.getByRole('button', { name: '确认并生成大纲' }).click();
 
-    // 3. 跳转方案生成页，大纲生成完成后出现「开始生成」（mock 秒级）
+    // 3. 跳转方案生成页，大纲生成完成后出现「确认大纲」主按钮（mock 秒级；
+    //    确认态底部「开始生成」已收敛为大纲卡「确认大纲」单一入口）
     await expect(page).toHaveURL(/\/generate$/, { timeout: 60_000 });
-    await expect(page.getByRole('button', { name: '开始生成' })).toBeVisible({
+    await expect(page.getByRole('button', { name: '确认大纲' })).toBeVisible({
       timeout: 60_000,
     });
 
-    // 4. 开始生成（confirm-outline）→ 章节产出完成 → 进入审阅入口出现
-    await page.getByRole('button', { name: '开始生成' }).click();
+    // 4. 确认大纲（confirm-outline）→ 章节产出完成 → 进入审阅入口出现
+    await page.getByRole('button', { name: '确认大纲' }).click();
     await expect(page.getByRole('button', { name: '进入审阅' })).toBeVisible({
       timeout: 90_000,
     });

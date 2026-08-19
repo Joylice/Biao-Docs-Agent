@@ -17,6 +17,7 @@
           :value="node.title"
           class="ote-title"
           size="small"
+          :readonly="readonly"
           :placeholder="isChapter ? '章节标题' : '子节标题'"
           @input="onTitleInput(node, $event)"
           @click.stop
@@ -26,11 +27,13 @@
           :value="clausesOf(node)"
           class="ote-clauses"
           size="small"
+          :readonly="readonly"
           placeholder="覆盖评分点，逗号分隔"
           @input="onClausesInput(node, $event)"
           @click.stop
         />
         <a-space
+          v-if="!readonly"
           class="ote-ops"
           size="2"
           @click.stop
@@ -123,6 +126,7 @@
         :level="level + 1"
         :prefix-no="nodeNo(idx)"
         :max-level="maxLevel"
+        :readonly="readonly"
         @select="emit('select', $event)"
         @add-child="emit('add-child', $event)"
         @remove="emit('remove', $event)"
@@ -152,6 +156,7 @@ import type { OutlineTreeNode } from '@/types/outline'
  * 大纲树形编辑组件（递归渲染）。
  * - 顶层为章节（编号 1/2/3…），子节点按位置推导编号（1.1 / 1.1.1…）
  * - 操作事件上抛由父组件执行（树结构在父组件持有，便于草稿联动）
+ * - readonly=true 时仅只读浏览：输入框只读、隐藏全部操作按钮（非 owner 确认态用）
  */
 defineOptions({ name: 'OutlineTreeEditor' })
 
@@ -162,11 +167,14 @@ const props = withDefaults(
     level?: number
     prefixNo?: string
     maxLevel?: number
+    /** 只读模式：禁用全部编辑控件（输入只读 + 隐藏操作按钮），递归透传子级 */
+    readonly?: boolean
   }>(),
   {
     level: 0,
     prefixNo: '',
     maxLevel: 4,
+    readonly: false,
   },
 )
 
@@ -201,8 +209,9 @@ const isChapter = computed(() => props.level === 0)
 const nodeNo = (idx: number): string =>
   props.level === 0 ? String(idx + 1) : `${props.prefixNo}.${idx + 1}`
 
-/** 标题输入（实时上抛，父组件更新树并触发草稿防抖保存） */
+/** 标题输入（实时上抛，父组件更新树并触发草稿防抖保存；只读态浏览器不触发 input） */
 const onTitleInput = (node: OutlineTreeNode, e: Event) => {
+  if (props.readonly) return
   emit('update-title', node.key, (e.target as HTMLInputElement).value)
 }
 
@@ -210,8 +219,9 @@ const onTitleInput = (node: OutlineTreeNode, e: Event) => {
 const clausesOf = (node: OutlineTreeNode): string =>
   (node.covered_clauses ?? []).join('、')
 
-/** 覆盖评分点输入（文本 → 上抛由父组件拆分存储） */
+/** 覆盖评分点输入（文本 → 上抛由父组件拆分存储；只读态浏览器不触发 input） */
 const onClausesInput = (node: OutlineTreeNode, e: Event) => {
+  if (props.readonly) return
   emit('update-clauses', node.key, (e.target as HTMLInputElement).value)
 }
 </script>
@@ -237,8 +247,8 @@ const onClausesInput = (node: OutlineTreeNode, e: Event) => {
 }
 
 .ote-row--active {
-  background: var(--bg-block, rgba(21, 101, 192, 0.06));
-  border-color: var(--color-primary, #1565c0);
+  background: var(--bg-block, rgba(27, 110, 243, 0.06));
+  border-color: var(--color-primary, #1b6ef3);
 }
 
 .ote-no {
@@ -246,7 +256,7 @@ const onClausesInput = (node: OutlineTreeNode, e: Event) => {
   min-width: 36px;
   font-weight: 600;
   font-size: 13px;
-  color: var(--color-primary, #1565c0);
+  color: var(--color-primary, #1b6ef3);
 }
 
 .ote-title {

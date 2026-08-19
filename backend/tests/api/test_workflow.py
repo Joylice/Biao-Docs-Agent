@@ -216,10 +216,12 @@ async def test_save_section_edit_success(client: AsyncClient, monkeypatch) -> No
     project = Project(id=project_id, name="测试项目", owner_id=owner_id)
     result = MagicMock()
     result.scalar_one_or_none.return_value = project
-    unassigned = MagicMock()  # 章节级权限查询：未分配 → 可编辑
+    unassigned = MagicMock()  # 章节级权限查询：精确匹配无分工
     unassigned.scalar_one_or_none.return_value = None
+    no_children = MagicMock()  # 子节分工查询：无
+    no_children.scalars.return_value.all.return_value = []
     session = AsyncMock()
-    session.execute = AsyncMock(side_effect=[result, unassigned])
+    session.execute = AsyncMock(side_effect=[result, unassigned, no_children, result])
     session.add = MagicMock()  # audit.record 同步调用 add
     app.dependency_overrides[get_db] = lambda: session
 
@@ -257,8 +259,10 @@ async def test_save_section_edit_chapter_not_found(client: AsyncClient, monkeypa
     result.scalar_one_or_none.return_value = project
     unassigned = MagicMock()
     unassigned.scalar_one_or_none.return_value = None
+    no_children = MagicMock()
+    no_children.scalars.return_value.all.return_value = []
     session = AsyncMock()
-    session.execute = AsyncMock(side_effect=[result, unassigned])
+    session.execute = AsyncMock(side_effect=[result, unassigned, no_children, result])
     app.dependency_overrides[get_db] = lambda: session
 
     async def fake_save(db, pid, chapter_no, content) -> None:

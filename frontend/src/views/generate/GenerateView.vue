@@ -157,6 +157,7 @@
       >
         <template #action>
           <a-button
+            v-if="canEditOutlineNow"
             type="primary"
             :loading="generating"
             @click="handleStartGenerate"
@@ -216,7 +217,22 @@
               :default-expand-all="true"
               class="gen-outline"
               @select="onSideTreeSelect"
-            />
+            >
+              <!-- 生成态：节点标题后附分工信息（负责人 + 状态徽标）；确认态编辑树不加 -->
+              <template #title="node">
+                <span>{{ node.title }}</span>
+                <template v-if="!awaitingOutlineConfirm && node.assigneeName">
+                  <span class="gen-outline__assignee">{{ node.assigneeName }}</span>
+                  <a-tag
+                    v-if="node.assignStatus && ASSIGN_STATUS_META[node.assignStatus]"
+                    class="gen-outline__tag"
+                    :color="ASSIGN_STATUS_META[node.assignStatus].color"
+                  >
+                    {{ ASSIGN_STATUS_META[node.assignStatus].text }}
+                  </a-tag>
+                </template>
+              </template>
+            </a-tree>
           </a-layout-sider>
 
           <a-layout-content class="gen-content">
@@ -226,7 +242,9 @@
               type="info"
               show-icon
               class="mb-4"
-              message="大纲已生成：可编辑章节标题/子节/覆盖评分点，确认后按此结构生成各章内容"
+              :message="canEditOutlineNow
+                ? '大纲已生成：可编辑章节标题/子节/覆盖评分点，确认后按此结构生成各章内容'
+                : '大纲已生成（只读）：等待项目负责人确认大纲后按此结构生成各章内容'"
             />
 
             <!-- 大纲二次编辑（仅确认态）：树形编辑 → 草稿自动保存 → 确认后才进入章节生成 -->
@@ -237,22 +255,36 @@
             >
               <template #extra>
                 <a-space size="middle">
+                  <a-tag color="orange">
+                    待确认
+                  </a-tag>
                   <a-tag
-                    v-if="draftState !== 'idle'"
+                    v-if="canEditOutlineNow && draftState !== 'idle'"
                     :color="draftTagColor"
                   >
                     {{ draftStatusText }}
                   </a-tag>
                   <a-button
+                    v-if="canEditOutlineNow"
                     size="small"
                     :loading="draftState === 'saving'"
                     @click="saveDraftNow"
                   >
                     保存草稿
                   </a-button>
+                  <a-button
+                    v-if="canEditOutlineNow"
+                    size="small"
+                    type="primary"
+                    :loading="generating"
+                    @click="handleStartGenerate"
+                  >
+                    确认大纲
+                  </a-button>
                 </a-space>
               </template>
               <a-alert
+                v-if="canEditOutlineNow"
                 type="info"
                 show-icon
                 class="mb-4"
@@ -261,6 +293,7 @@
               <OutlineTreeEditor
                 :nodes="editedTree"
                 :active-key="activeNodeKey"
+                :readonly="!canEditOutlineNow"
                 @select="onEditSelect"
                 @add-child="handleAddChild"
                 @remove="handleRemoveNode"
@@ -271,6 +304,7 @@
                 @update-clauses="handleUpdateClauses"
               />
               <a-button
+                v-if="canEditOutlineNow"
                 type="dashed"
                 block
                 class="mt-4"
@@ -302,6 +336,7 @@
                     获取建议
                   </a-button>
                   <a-button
+                    v-if="canEditOutlineNow"
                     size="small"
                     type="primary"
                     :loading="applyingSuggestions"
@@ -377,6 +412,18 @@
                 >
                   生成中：章节 {{ currentChapter }}
                 </a-tag>
+                <a-tag
+                  v-if="awaitingOutlineConfirm"
+                  color="orange"
+                >
+                  大纲待确认
+                </a-tag>
+                <a-tag
+                  v-else-if="generating || generated"
+                  color="green"
+                >
+                  大纲已确认
+                </a-tag>
                 <a-badge
                   v-if="generating"
                   status="processing"
@@ -403,27 +450,13 @@
             >
               <template #extra>
                 <a-space size="small">
-                  <a-segmented
-                    v-model:value="sectionMode"
-                    :options="sectionModeOptions"
-                    :disabled="generating"
-                    size="small"
-                  />
                   <a-button
-                    v-if="sectionMode === 'edit' && !generating"
+                    v-if="canCompileSelectedChapter"
                     size="small"
                     type="primary"
-                    :loading="savingSection"
-                    @click="handleSaveSection"
+                    @click="goToDivision"
                   >
-                    保存
-                  </a-button>
-                  <a-button
-                    v-if="sectionMode === 'edit' && !generating"
-                    size="small"
-                    @click="resetSectionDraft"
-                  >
-                    重置
+                    去编制
                   </a-button>
                   <a-button
                     size="small"
@@ -433,14 +466,8 @@
                   </a-button>
                 </a-space>
               </template>
-              <a-textarea
-                v-if="sectionMode === 'edit'"
-                v-model:value="sectionDrafts[selectedChapter]"
-                :rows="18"
-                class="chapter-editor"
-              />
               <MarkdownRenderer
-                v-else-if="displayChapters[selectedChapter]"
+                v-if="displayChapters[selectedChapter]"
                 :source="displayChapters[selectedChapter]"
               />
               <LoadingSkeleton
@@ -526,7 +553,7 @@
             <!-- 操作按钮 -->
             <div class="actions">
               <a-popconfirm
-                v-if="awaitingOutlineConfirm && !generating && !generated"
+                v-if="awaitingOutlineConfirm && !generating && !generated && canEditOutlineNow"
                 title="重新生成将用最新提示词覆盖当前大纲，确认继续？"
                 :ok-text="'重新生成'"
                 cancel-text="取消"
@@ -540,7 +567,7 @@
                 </a-button>
               </a-popconfirm>
               <a-button
-                v-if="!generating && !generated"
+                v-if="!awaitingOutlineConfirm && !generating && !generated && canEditOutlineNow"
                 type="primary"
                 :loading="generating"
                 @click="handleStartGenerate"
@@ -568,6 +595,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { BulbOutlined, DatabaseOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import api from '@/api/client'
+import { usePermission } from '@/composables/usePermission'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -594,6 +622,36 @@ interface KbBase {
 const route = useRoute()
 const router = useRouter()
 const projectId = route.params.projectId as string
+
+/* ---------------- 权限与章节分工映射（阶段 B：大纲确认 / 去编制门禁） ---------------- */
+const { isProjectOwner, canEditOutline, canEditChapter } = usePermission()
+/** 项目 owner ID（项目详情返回；与 WorkspaceView/DivisionView 同源判定） */
+const projectOwnerId = ref('')
+/** 当前用户是否可操作大纲（确认 / 草稿 / 重新生成）：语义为项目 owner */
+const canEditOutlineNow = computed(() => canEditOutline(isProjectOwner(projectOwnerId.value)))
+
+/** 章节分工树节点（章级聚合行 id/assignee 可能为 null；子节分工在 children） */
+interface AssignmentNode {
+  id: string | null
+  chapter_no: string
+  title: string
+  assignee_id: string | null
+  assignee_name: string | null
+  status: string | null
+  children?: AssignmentNode[]
+}
+
+/** chapter_no → 分工记录（递归拍平，含子节） */
+const assignmentMap = ref<Map<string, AssignmentNode>>(new Map())
+
+/** 大纲树分工列状态徽标元信息（仅生成态展示） */
+const ASSIGN_STATUS_META: Record<string, { text: string; color: string }> = {
+  pending: { text: '待领取', color: 'default' },
+  in_progress: { text: '编制中', color: 'processing' },
+  rejected: { text: '被打回', color: 'error' },
+  submitted: { text: '已提审', color: 'warning' },
+  approved: { text: '已通过', color: 'success' },
+}
 
 const progress = ref(0)
 const generating = ref(false)
@@ -828,6 +886,17 @@ interface TreeDataItem {
   key: string
   title: string
   children?: TreeDataItem[]
+  /** 分工负责人（生成态节点标题后展示） */
+  assigneeName?: string
+  /** 分工状态（生成态状态徽标） */
+  assignStatus?: string | null
+}
+
+/** 节点附加分工信息（负责人 + 状态）；无分工 → 不附加（树节点不显示） */
+const assignInfoOf = (chapterNo: string): { assigneeName?: string; assignStatus?: string | null } => {
+  const a = assignmentMap.value.get(chapterNo)
+  if (!a || !a.assignee_name) return {}
+  return { assigneeName: a.assignee_name, assignStatus: a.status }
 }
 
 /** 编辑树 → a-tree 数据（title 前缀自动编号） */
@@ -841,11 +910,12 @@ const toEditTreeData = (nodes: OutlineTreeNode[], prefix = ''): TreeDataItem[] =
     }
   })
 
-/** 大纲 → a-tree 数据（章节 + 子节层级，key 带 ch-/sub- 前缀） */
+/** 大纲 → a-tree 数据（章节 + 子节层级，key 带 ch-/sub- 前缀；附分工信息） */
 const toOutlineTreeData = (items: OutlineItem[]): TreeDataItem[] =>
   items.map((c) => ({
     key: `ch-${c.chapter_no}`,
     title: `${c.chapter_no} ${c.title}`,
+    ...assignInfoOf(c.chapter_no),
     children: toSectionTreeData(c.sections ?? [], c.chapter_no),
   }))
 
@@ -853,10 +923,13 @@ const toSectionTreeData = (sections: OutlineSection[], prefix: string): TreeData
   if (!Array.isArray(sections)) return []
   return sections.map((s, i) => {
     const no = `${prefix}.${i + 1}`
-    if (typeof s === 'string') return { key: `sub-${no}`, title: `${no} ${s}` }
+    if (typeof s === 'string') {
+      return { key: `sub-${no}`, title: `${no} ${s}`, ...assignInfoOf(no) }
+    }
     return {
       key: `sub-${no}`,
       title: `${no} ${s.title}`,
+      ...assignInfoOf(no),
       children: s.children?.length ? toSectionTreeData(s.children, no) : undefined,
     }
   })
@@ -923,7 +996,8 @@ const draftTagColor = computed(() => {
 
 /** 编辑变化 → 防抖 2s 落库（仅确认态；重建树等程序变更被 suppressDraftWatch 抑制） */
 const scheduleDraftSave = () => {
-  if (!awaitingOutlineConfirm.value) return
+  // 草稿仅 owner 可读写（outline-draft 写接口已收紧 owner），非 owner 只读浏览不触发保存
+  if (!awaitingOutlineConfirm.value || !canEditOutlineNow.value) return
   if (draftTimer !== null) clearTimeout(draftTimer)
   draftState.value = 'dirty'
   draftTimer = window.setTimeout(saveDraftNow, DRAFT_DEBOUNCE_MS)
@@ -1013,7 +1087,8 @@ watch(
 /** 进入编辑态：读取草稿提示恢复；离开编辑态：停止未落库的防抖定时器 */
 watch(awaitingOutlineConfirm, (v) => {
   if (v) {
-    loadDraftIfAny()
+    // 草稿恢复仅 owner（非 owner 确认态只读浏览，无草稿读写权限）
+    if (canEditOutlineNow.value) loadDraftIfAny()
   } else if (draftTimer !== null) {
     clearTimeout(draftTimer)
     draftTimer = null
@@ -1121,54 +1196,6 @@ const progressStatus = computed(() => {
 /** 每章展示内容：直接渲染 WS 增量累积的文本（section_done 全量兜底对齐） */
 const displayChapters = computed(() => chapters.value)
 
-/* ---------------- 章节人工编辑（预览/编辑切换 + 保存落库 PUT sections） ---------------- */
-const sectionMode = ref<'edit' | 'preview'>('preview')
-const sectionModeOptions = [
-  { label: '预览', value: 'preview' },
-  { label: '编辑', value: 'edit' },
-]
-const sectionDrafts = ref<Record<string, string>>({})
-const savingSection = ref(false)
-
-/** 选中章节变化 → 初始化编辑草稿（保留已输入内容；生成中由 disabled 禁止编辑） */
-watch(selectedChapter, (no) => {
-  if (!no) return
-  if (sectionDrafts.value[no] === undefined) {
-    sectionDrafts.value[no] = chapters.value[no] || ''
-  }
-})
-
-/** 保存章节编辑：PUT sections/{chapter_no} 直接落库（state + proposal_sections 双写） */
-const handleSaveSection = async () => {
-  const no = selectedChapter.value
-  const content = sectionDrafts.value[no]?.trim() ?? ''
-  if (!no) return
-  if (!content) {
-    message.warning('章节内容不能为空')
-    return
-  }
-  if (savingSection.value) return
-  savingSection.value = true
-  try {
-    await api.put(`/projects/${projectId}/workflow/sections/${no}`, { content })
-    chapters.value[no] = content
-    sectionDrafts.value[no] = content
-    sectionMode.value = 'preview'
-    message.success(`章节 ${no} 已保存到正式方案`)
-  } catch (err) {
-    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
-    message.error(msg || '章节保存失败')
-  } finally {
-    savingSection.value = false
-  }
-}
-
-/** 重置当前章节编辑草稿为已保存内容 */
-const resetSectionDraft = () => {
-  const no = selectedChapter.value
-  if (no) sectionDrafts.value[no] = chapters.value[no] || ''
-}
-
 /* ---------------- AI 优化建议（大纲确认态：规则/LLM → 勾选应用 → 重建编辑树） ---------------- */
 interface OutlineSuggestion {
   suggestion_id: string
@@ -1271,7 +1298,6 @@ const handleAdoptSectionSuggestion = async (item: SectionSuggestion) => {
     })
     const content = res.data?.data?.content
     if (typeof content === 'string') chapters.value[item.chapter_no] = content
-    delete sectionDrafts.value[item.chapter_no]
     message.success(`章节 ${item.chapter_no} 已按建议重写`)
   } catch (err) {
     const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
@@ -1332,6 +1358,9 @@ const connectWebSocket = () => {
       }
     } else if (data.type === 'done') {
       markGenerated()
+    } else if (typeof data.type === 'string' && data.type.startsWith('task_')) {
+      // 分工状态变化（领取/提审/审核）→ 刷新大纲树分工列
+      fetchAssignments()
     }
   }
   ws.onclose = (event) => {
@@ -1461,6 +1490,55 @@ const handleStartGenerate = async () => {
   }
 }
 
+/** 拉取项目详情取 owner_id（owner 判定依据；失败不阻断，后端 403 兜底） */
+const fetchProjectOwner = async () => {
+  try {
+    const { data } = await api.get(`/projects/${projectId}`)
+    if (data.code === 0) {
+      projectOwnerId.value = data.data?.owner_id || ''
+    }
+  } catch {
+    // 详情获取失败不阻断：owner 专属入口统一隐藏，后端 403 兜底
+  }
+}
+
+/** 分工树递归入 map（章 "1" 与子节 "1.1" 均按 chapter_no 索引） */
+const collectAssignments = (items: AssignmentNode[], map: Map<string, AssignmentNode>) => {
+  for (const item of items) {
+    if (item.chapter_no) map.set(item.chapter_no, item)
+    if (item.children?.length) collectAssignments(item.children, map)
+  }
+}
+
+/** 拉取章节分工映射（「去编制」入口 + 大纲树分工列依据） */
+const fetchAssignments = async () => {
+  try {
+    const { data } = await api.get(`/projects/${projectId}/chapter-assignments`)
+    if (data.code === 0) {
+      const map = new Map<string, AssignmentNode>()
+      collectAssignments(data.data?.items ?? [], map)
+      assignmentMap.value = map
+    }
+  } catch {
+    // 无分工/无权限时静默：相关入口不展示即可
+  }
+}
+
+/** 当前选中章节是否可编制：项目 owner 或章节（含任一子节）assignee */
+const canCompileSelectedChapter = computed(() => {
+  const no = selectedChapter.value
+  if (!no) return false
+  const own = assignmentMap.value.get(no)
+  const ids: Array<string | null> = [own?.assignee_id ?? null]
+  for (const child of own?.children ?? []) ids.push(child.assignee_id)
+  return canEditChapter(ids, isProjectOwner(projectOwnerId.value))
+})
+
+/** 跳转分工协作页（「去编制」入口） */
+const goToDivision = () => {
+  router.push({ name: 'Division', params: { projectId } })
+}
+
 const goToReview = () => {
   router.push({ name: 'Review', params: { projectId } })
 }
@@ -1499,6 +1577,8 @@ onMounted(() => {
   loadInitial()
   loadKbDocs()
   loadKbBases()
+  fetchProjectOwner()
+  fetchAssignments()
 })
 
 onUnmounted(() => {
@@ -1612,10 +1692,17 @@ onUnmounted(() => {
   background: var(--card-bg);
 }
 
-.chapter-editor {
-  font-family: 'Consolas', 'Microsoft YaHei', monospace;
-  font-size: 13px;
-  line-height: 1.7;
+.gen-outline__assignee {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #999);
+}
+
+.gen-outline__tag {
+  margin-left: 4px;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .outline-suggest-card,

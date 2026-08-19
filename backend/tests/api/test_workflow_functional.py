@@ -492,19 +492,15 @@ class TestConfirmOutlineMountedDocs:
             captured["resume"] = resume_value
             return MagicMock()
 
-        async def fake_member(_db, _project_id, _user_id) -> None:
-            pass
-
         monkeypatch.setattr(workflow_api.workflow_runtime, "ensure_pending_interrupt", fake_ensure)
         monkeypatch.setattr(
             workflow_api.workflow_runtime, "resume_workflow_in_background", fake_resume
         )
-        monkeypatch.setattr(workflow_api, "_check_project_member", fake_member)
         return captured
 
     @pytest.mark.asyncio
     async def test_mounted_doc_ids_written_to_state(
-        self, client, owner_headers, monkeypatch
+        self, client, owner_headers, owner_db, monkeypatch
     ) -> None:
         """携带 mounted_doc_ids → 以字符串化 UUID 列表进入 resume payload（节点写入 state）."""
         captured = self._patch_runtime(monkeypatch)
@@ -520,7 +516,7 @@ class TestConfirmOutlineMountedDocs:
 
     @pytest.mark.asyncio
     async def test_without_mounted_doc_ids_keeps_default(
-        self, client, owner_headers, monkeypatch
+        self, client, owner_headers, owner_db, monkeypatch
     ) -> None:
         """不携带 mounted_doc_ids → resume payload 不含该键（保持项目全量检索）."""
         captured = self._patch_runtime(monkeypatch)
@@ -535,7 +531,7 @@ class TestConfirmOutlineMountedDocs:
 
     @pytest.mark.asyncio
     async def test_empty_mounted_doc_ids_means_mount_none(
-        self, client, owner_headers, monkeypatch
+        self, client, owner_headers, owner_db, monkeypatch
     ) -> None:
         """空列表 = 明确不挂载任何资料（生成不使用 RAG 素材）."""
         captured = self._patch_runtime(monkeypatch)
@@ -548,9 +544,31 @@ class TestConfirmOutlineMountedDocs:
         assert resp.status_code == 200
         assert captured["resume"]["mounted_doc_ids"] == []
 
+    @pytest.mark.asyncio
+    async def test_confirm_outline_forbidden_for_non_owner(self, client, monkeypatch) -> None:
+        """非 owner 确认大纲 → 403（确认权收紧为仅 owner）."""
+        self._patch_runtime(monkeypatch)
+        session = AsyncMock()
+
+        def _execute(stmt, *a, **k):
+            return _result(_owned_project())
+
+        session.execute.side_effect = _execute
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            headers = {"Authorization": f"Bearer {create_access_token(str(uuid.uuid4()))}"}
+            resp = await client.post(
+                f"/api/v1/projects/{PROJECT_ID}/workflow/confirm-outline",
+                headers=headers,
+                json={},
+            )
+            assert resp.status_code == 403
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
 
 class TestOutlineDraft:
-    """大纲二次编辑草稿端点：保存/读取/清除（仅成员，写操作留审计）."""
+    """大纲二次编辑草稿端点：保存/读取/清除（读成员可读，写仅 owner，留审计）."""
 
     DRAFT_OUTLINE: ClassVar[list[dict]] = [
         {
@@ -633,6 +651,41 @@ class TestOutlineDraft:
             json={"outline": self.DRAFT_OUTLINE},
         )
         assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_non_owner_member_write_draft_forbidden(self, client, draft_db) -> None:
+        """项目成员但非 owner 写草稿 → 403（大纲编辑权收紧为仅 owner）."""
+        from app.models.project import ProjectMember
+
+        member_id = uuid.uuid4()
+        # 草稿 DB 覆盖的 Project owner = OWNER_ID；成员表命中 → 成员非 owner
+        session = AsyncMock()
+
+        def _execute(stmt, *a, **k):
+            entity = stmt.column_descriptions[0]["entity"]
+            if entity is Project:
+                return _result(_owned_project())
+            if entity is ProjectMember:
+                return _result(ProjectMember(project_id=PROJECT_ID, user_id=member_id))
+            return _result(self._skeleton())
+
+        session.execute.side_effect = _execute
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            headers = {"Authorization": f"Bearer {create_access_token(str(member_id))}"}
+            for method, body in (
+                (client.put, {"outline": self.DRAFT_OUTLINE}),
+                (client.delete, None),
+            ):
+                kwargs = {"headers": headers}
+                if body is not None:
+                    kwargs["json"] = body
+                resp = await method(
+                    f"/api/v1/projects/{PROJECT_ID}/workflow/outline-draft", **kwargs
+                )
+                assert resp.status_code == 403
+        finally:
+            app.dependency_overrides.pop(get_db, None)
 
     @pytest.mark.asyncio
     async def test_get_audit_on_save(self, client, owner_headers, draft_db) -> None:
