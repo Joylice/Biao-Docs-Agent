@@ -70,6 +70,23 @@ async def list_users(
     return paginated(items, total)
 
 
+@router.get("/users/options")
+async def list_user_options(
+    _user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """全量注册用户下拉数据源（登录即可；阶段7 成员选择/建项目选成员）.
+
+    仅返回最小字段（id/email/display_name），不泄露角色以外的敏感信息。
+    """
+    result = await db.execute(select(User).order_by(User.created_at.asc()).limit(500))
+    items = [
+        {"id": str(u.id), "email": u.email, "display_name": u.display_name}
+        for u in result.scalars().all()
+    ]
+    return success(data={"items": items})
+
+
 @router.put("/users/{target_id}/role")
 async def update_user_role(
     target_id: uuid.UUID,

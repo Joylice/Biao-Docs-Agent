@@ -136,11 +136,14 @@
           v-if="isOwner"
           class="member-add"
         >
-          <a-input
-            v-model:value="addEmail"
-            placeholder="协作者邮箱"
+          <a-select
+            v-model:value="addUserId"
+            :options="candidateOptions"
+            placeholder="选择协作者（姓名/邮箱）"
+            show-search
             allow-clear
-            @press-enter="handleAddMember"
+            option-filter-prop="label"
+            style="flex: 1"
           />
           <a-button
             type="primary"
@@ -195,8 +198,34 @@ const projectOwnerId = ref('')
 const showMembersDrawer = ref(false)
 const members = ref<MemberItem[]>([])
 const membersLoading = ref(false)
-const addEmail = ref('')
+const addUserId = ref<string | undefined>(undefined)
 const addingMember = ref(false)
+
+// 阶段7：协作者下拉数据源（GET /users/options，排除已有成员）
+interface UserOption {
+  id: string
+  email: string
+  display_name: string
+}
+const userOptions = ref<UserOption[]>([])
+
+const candidateOptions = computed(() => {
+  const memberIds = new Set(members.value.map((m) => m.user_id))
+  return userOptions.value
+    .filter((u) => !memberIds.has(u.id))
+    .map((u) => ({ value: u.id, label: `${u.display_name}（${u.email}）` }))
+})
+
+const loadUserOptions = async () => {
+  try {
+    const { data } = await api.get('/users/options')
+    if (data.code === 0) {
+      userOptions.value = data.data.items
+    }
+  } catch {
+    // 下拉数据源加载失败不阻塞成员列表展示
+  }
+}
 
 // 侧栏折叠态持久化（localStorage）
 const SIDER_KEY = 'bid.workspace.sider.collapsed'
@@ -317,17 +346,19 @@ const handleRemoveMember = async (userId: string) => {
 }
 
 const handleAddMember = async () => {
-  const email = addEmail.value.trim()
-  if (!email) {
-    message.warning('请输入协作者邮箱')
+  const selected = userOptions.value.find((u) => u.id === addUserId.value)
+  if (!selected) {
+    message.warning('请选择协作者')
     return
   }
   addingMember.value = true
   try {
-    const { data } = await api.post(`/projects/${projectId}/members`, { email })
+    const { data } = await api.post(`/projects/${projectId}/members`, {
+      email: selected.email,
+    })
     if (data.code === 0) {
       message.success('成员添加成功')
-      addEmail.value = ''
+      addUserId.value = undefined
       fetchMembers()
     } else {
       message.error(data.message || '成员添加失败')
@@ -343,6 +374,7 @@ const handleMenuClick = ({ key }: { key: string }) => {
   if (key === 'members') {
     showMembersDrawer.value = true
     fetchMembers()
+    loadUserOptions()
     return
   }
   const name = menuRoutes[key]

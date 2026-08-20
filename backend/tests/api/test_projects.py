@@ -10,7 +10,8 @@ from httpx import AsyncClient
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.main import app
-from app.models.project import Project
+from app.models.project import Project, ProjectMember
+from app.models.user import User
 
 
 @pytest.mark.asyncio
@@ -91,3 +92,89 @@ async def test_create_project_commits_before_response(client: AsyncClient) -> No
         assert session.committed is True
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+def _user_row(user_id: uuid.UUID, email: str) -> User:
+    return User(
+        id=user_id,
+        email=email,
+        password_hash="x",
+        display_name="用户",
+        role="member",
+        created_at=datetime.now(UTC),
+    )
+
+
+class TestCreateProjectWithMembers:
+    """阶段7：建项目选成员（member_ids → project_members）."""
+
+    def _session_with_users(self, users: list[User]) -> _FakeProjectSession:
+        session = _FakeProjectSession()
+
+        async def execute(stmt):
+            result = MagicMock()
+            result.scalars.return_value.all.return_value = users
+            return result
+
+        session.execute = execute
+        return session
+
+    @pytest.mark.asyncio
+    async def test_create_with_member_ids_writes_memberships(self, client: AsyncClient) -> None:
+        """member_ids 全部为已注册用户 → 写入 project_members（owner 额外一条）."""
+        owner_id = uuid.uuid4()
+        m1, m2 = uuid.uuid4(), uuid.uuid4()
+        session = self._session_with_users(
+            [_user_row(m1, "m1@x.com"), _user_row(m2, "m2@x.com")]
+        )
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            response = await client.post(
+                "/api/v1/projects",
+                json={"name": "带成员项目", "member_ids": [str(m1), str(m2)]},
+                headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+            )
+            assert response.status_code == 200
+            member_ids = {
+                m.user_id for m in session.added if isinstance(m, ProjectMember)
+            }
+            assert member_ids == {owner_id, m1, m2}
+            assert session.committed is True
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_unknown_member_id_rejected(self, client: AsyncClient) -> None:
+        """member_ids 含未注册用户 → BizError 4004，不创建成员."""
+        owner_id = uuid.uuid4()
+        session = self._session_with_users([])  # 查不到任何用户
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            response = await client.post(
+                "/api/v1/projects",
+                json={"name": "项目", "member_ids": [str(uuid.uuid4())]},
+                headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+            )
+            assert response.status_code == 404
+            assert response.json()["code"] == 4004
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_owner_in_member_ids_deduped(self, client: AsyncClient) -> None:
+        """member_ids 含创建者自己 → 自动去重，不产生重复成员记录."""
+        owner_id = uuid.uuid4()
+        session = self._session_with_users([_user_row(owner_id, "owner@x.com")])
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            response = await client.post(
+                "/api/v1/projects",
+                json={"name": "项目", "member_ids": [str(owner_id)]},
+                headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+            )
+            assert response.status_code == 200
+            memberships = [m for m in session.added if isinstance(m, ProjectMember)]
+            assert len(memberships) == 1
+            assert memberships[0].user_id == owner_id
+        finally:
+            app.dependency_overrides.pop(get_db, None)

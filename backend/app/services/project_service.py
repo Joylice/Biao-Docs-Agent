@@ -13,7 +13,7 @@ from app.schemas.project import ProjectCreate
 
 
 async def create_project(db: AsyncSession, req: ProjectCreate, owner_id: uuid.UUID) -> Project:
-    """创建项目（创建者自动成为 owner + 成员）."""
+    """创建项目（创建者自动成为 owner + 成员；阶段7：member_ids 建项目选成员）."""
     project = Project(
         name=req.name,
         tender_no=req.tender_no,
@@ -26,6 +26,17 @@ async def create_project(db: AsyncSession, req: ProjectCreate, owner_id: uuid.UU
     # owner 自动加入成员表
     member = ProjectMember(project_id=project.id, user_id=owner_id)
     db.add(member)
+
+    # 阶段7：建项目时选择的成员（仅限已注册用户，自动去重 owner）
+    member_ids = [mid for mid in dict.fromkeys(req.member_ids or []) if mid != owner_id]
+    if member_ids:
+        result = await db.execute(select(User).where(User.id.in_(member_ids)))
+        users = list(result.scalars().all())
+        if len(users) != len(member_ids):
+            raise BizError(code=4004, message="所选成员包含未注册用户")
+        for user in users:
+            db.add(ProjectMember(project_id=project.id, user_id=user.id))
+
     await db.flush()
     await db.refresh(project)
     return project

@@ -6,7 +6,7 @@
     <template #extra>
       <a-button
         type="primary"
-        @click="showCreateModal = true"
+        @click="openCreateModal"
       >
         <template #icon>
           <PlusOutlined />
@@ -201,6 +201,17 @@
         <a-form-item label="行业">
           <a-input v-model:value="newProject.industry" />
         </a-form-item>
+        <a-form-item label="项目成员">
+          <a-select
+            v-model:value="newProject.member_ids"
+            mode="multiple"
+            :options="memberOptions"
+            placeholder="选择项目成员（可多选，创建后可继续添加）"
+            show-search
+            allow-clear
+            option-filter-prop="label"
+          />
+        </a-form-item>
       </a-form>
     </a-modal>
   </PageContainer>
@@ -242,7 +253,38 @@ const newProject = reactive({
   name: '',
   tender_no: '',
   industry: '',
+  member_ids: [] as string[],
 })
+
+/* 阶段7：建项目选成员 —— 下拉数据源（GET /users/options，排除自己） */
+interface UserOption {
+  id: string
+  email: string
+  display_name: string
+}
+const userOptions = ref<UserOption[]>([])
+
+const memberOptions = computed(() =>
+  userOptions.value
+    .filter((u) => u.id !== currentUserId.value)
+    .map((u) => ({ value: u.id, label: `${u.display_name}（${u.email}）` })),
+)
+
+const loadUserOptions = async () => {
+  try {
+    const { data } = await api.get('/users/options')
+    if (data.code === 0) {
+      userOptions.value = data.data.items
+    }
+  } catch {
+    // 下拉数据源加载失败不阻塞建项目（可不选成员）
+  }
+}
+
+const openCreateModal = () => {
+  showCreateModal.value = true
+  loadUserOptions()
+}
 
 const statusText = (status: string): string => {
   const texts: Record<string, string> = {
@@ -355,6 +397,7 @@ const handleCreate = async () => {
       newProject.name = ''
       newProject.tender_no = ''
       newProject.industry = ''
+      newProject.member_ids = []
       fetchProjects()
     } else {
       message.error(data.message || '项目创建失败')

@@ -511,6 +511,35 @@ class TestResetPassword:
         assert resp.status_code == 404
 
 
+class TestUserOptions:
+    """GET /users/options（阶段7：成员下拉数据源，登录即可）."""
+
+    @pytest.mark.asyncio
+    async def test_no_auth(self, client: AsyncClient) -> None:
+        resp = await client.get("/api/v1/users/options")
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_member_can_list_options(self, client: AsyncClient, override_db) -> None:
+        """普通成员可拉取全量用户下拉项；仅返回最小字段，不泄露密码哈希."""
+        session = override_db([None])
+        options_result = MagicMock()
+        options_result.scalars.return_value.all.return_value = [
+            _user(MEMBER_ID, "member@x.com"),
+            _user(KB_ADMIN_ID, "kb@x.com", "kb_admin"),
+        ]
+        session.execute.side_effect = [options_result]
+
+        resp = await client.get("/api/v1/users/options", headers=_headers(MEMBER_ID))
+        assert resp.status_code == 200
+        items = resp.json()["data"]["items"]
+        assert len(items) == 2
+        assert items[0]["email"] == "member@x.com"
+        assert items[0]["display_name"] == "测试用户"
+        assert "id" in items[0]
+        assert all("password_hash" not in it for it in items)
+
+
 class TestDeleteUser:
     """DELETE /users/{id}（阶段4：管理员删除用户 + 保护规则）."""
 

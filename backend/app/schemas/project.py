@@ -7,11 +7,12 @@ from pydantic import BaseModel
 
 
 class ProjectCreate(BaseModel):
-    """创建项目请求."""
+    """创建项目请求（阶段7：member_ids 建项目时选成员）."""
 
     name: str
     tender_no: str | None = None
     industry: str | None = None
+    member_ids: list[uuid.UUID] = []
 
 
 class ProjectOut(BaseModel):
