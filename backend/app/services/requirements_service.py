@@ -54,7 +54,8 @@ def build_requirement_rows(
     """将 LLM 输出转为 tech_requirements 写入行（映射回填 + source 标注）.
 
     - sp_clause 精确匹配评分点唯一标识（clause_no|item）→ sp_id 回填 + source='sp_derived'
-    - 降级：LLM 仅写条款号且该条款号在目标评分点中唯一 → 同样视为匹配
+    - 降级 1：LLM 仅写条款号且该条款号在目标评分点中唯一 → 同样视为匹配
+    - 降级 2：条款号多候选时，description 包含评分项名（item）且唯一 → 视为匹配
     - 匹配不到 → sp_id=None + source='tender'（视为通用需求）
     - seq 从 seq_start 续编，避免与招标原文提取的需求序号冲突
     """
@@ -66,10 +67,15 @@ def build_requirement_rows(
         key = str(raw.get("sp_clause") or "").strip()
         sp = clause_map.get(key)
         if sp is None and key and "|" not in key:
-            # 降级容错：仅条款号且唯一 → 视为匹配
+            # 降级容错：仅条款号时，唯一候选视为匹配；
+            # 多候选时按 description 是否包含评分项名（item）二次匹配，仍不唯一则放弃
             candidates = [v for k, v in clause_map.items() if k.startswith(key + "|")]
             if len(candidates) == 1:
                 sp = candidates[0]
+            elif len(candidates) > 1:
+                matched = [c for c in candidates if c.item and c.item in description]
+                if len(matched) == 1:
+                    sp = matched[0]
         rows.append(
             {
                 "project_id": project_id,
@@ -146,11 +152,12 @@ async def generate_requirements(
         },
     )
 
-    # 3. 幂等：先删本项目旧衍生需求（招标原文提取的 tender/存量需求不受影响）
+    # 3. 幂等：先删本项目旧梳理产物（sp_derived 已匹配 + tender 未匹配行），
+    #    防重复 generate 积累重复需求；招标原文提取行（source=NULL）不受影响
     await db.execute(
         delete(TechRequirement).where(
             TechRequirement.project_id == project_id,
-            TechRequirement.source == "sp_derived",
+            TechRequirement.source.in_(("sp_derived", "tender")),
         )
     )
 

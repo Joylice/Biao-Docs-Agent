@@ -17,14 +17,24 @@ ORIGINAL_TENDER_NO = "TN-2026-001"
 
 
 class WorkerFakeDB(FakeDB):
-    """FakeDB 补充 commit（task_parse_tender 需要提交事务）."""
+    """FakeDB 补充 commit（task_parse_tender 需要提交事务）与 DELETE 语句记录."""
 
     def __init__(self, rows_by_table: dict | None = None) -> None:
         super().__init__(rows_by_table)
         self.committed = False
+        self.executed_statements: list = []
 
     async def commit(self) -> None:
         self.committed = True
+
+    async def execute(self, stmt):
+        self.executed_statements.append(stmt)
+        # DELETE 语句无实体描述，直接返回空结果
+        if str(stmt).lstrip().upper().startswith("DELETE"):
+            from tests.agents.test_graph import FakeScalarResult
+
+            return FakeScalarResult([])
+        return await super().execute(stmt)
 
 
 def _make_db(project: Project) -> WorkerFakeDB:
@@ -156,6 +166,55 @@ class TestTaskParseTenderProjectNameGuard:
         assert project.name == "解析出的项目名称"
         assert project.tender_no == "TN-2026-888"
         assert db.committed
+
+
+class TestTaskParseTenderIdempotentCleanup:
+    """解析任务保存前清理该文档旧评分点（幂等，防并发 reparse 数据翻倍）."""
+
+    @pytest.mark.asyncio
+    async def test_parse_cleans_old_score_points_before_save(
+        self, parse_env, monkeypatch
+    ) -> None:
+        """保存新结果前必须已对该文档旧评分点发起 DELETE（按 doc_id 限定）."""
+        from app.services import parse_service
+
+        db = _make_db(_make_project())
+        parse_env["patch_db"](db)
+        parse_env["patch_llm"](
+            ParsedTender(
+                score_points=[{"clause_no": "1", "item": "方案完整性"}],
+                tech_requirements=[],
+                project_name=None,
+                tender_no=None,
+            )
+        )
+
+        seen_delete_before_save: list[bool] = []
+
+        async def tracking_save(_db, _project_id, _doc_id, _parsed):
+            deletes = [
+                str(s)
+                for s in _db.executed_statements
+                if str(s).lstrip().upper().startswith("DELETE")
+            ]
+            seen_delete_before_save.append(len(deletes) > 0)
+            return 1, 1
+
+        monkeypatch.setattr(parse_service, "save_parse_result", tracking_save)
+
+        result = await task_parse_tender({}, str(PROJECT_ID), str(DOC_ID))
+        assert result["status"] == "success"
+        assert seen_delete_before_save == [True], "保存新结果前必须先清理该文档旧评分点"
+
+        # 清理语句限定本文档（score_points + doc_id 条件），避免误删同项目其他文档
+        delete_stmts = [
+            str(s)
+            for s in db.executed_statements
+            if str(s).lstrip().upper().startswith("DELETE")
+        ]
+        assert len(delete_stmts) == 1
+        assert "score_points" in delete_stmts[0]
+        assert "doc_id" in delete_stmts[0]
 
 
 class TestTaskParseTenderScorePointsOnly:

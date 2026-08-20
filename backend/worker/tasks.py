@@ -49,9 +49,18 @@ async def task_parse_tender(
                 text, include_tech_requirements=not score_points_only
             )
 
+            # 幂等：清理该文档旧评分点后再写入，重复解析/并发 reparse 不产生翻倍数据
+            # （技术需求由 reparse 端点负责清理，此处只管评分点）
+            from sqlalchemy import delete
+
+            from app.models.document import ScorePoint
+
+            doc_uuid = uuid.UUID(doc_id)
+            await db.execute(delete(ScorePoint).where(ScorePoint.doc_id == doc_uuid))
+
             # 保存结果
             sp_count, tr_count = await save_parse_result(
-                db, uuid.UUID(project_id), uuid.UUID(doc_id), parsed
+                db, uuid.UUID(project_id), doc_uuid, parsed
             )
 
             # 更新项目信息（空值或 mock 占位值不覆盖，避免污染真实项目名/编号）

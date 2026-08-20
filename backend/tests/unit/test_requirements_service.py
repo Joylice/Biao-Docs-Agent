@@ -140,6 +140,46 @@ class TestBuildRequirementRows:
         assert rows[0]["sp_id"] == sp_a.id
         assert rows[1]["sp_id"] == sp_b.id
 
+    def test_clause_no_multi_candidate_item_substring_match(self) -> None:
+        """LLM 仅写条款号且该条款号下多个评分项时，description 含评分项名则尽力匹配."""
+        from app.services.requirements_service import build_requirement_rows
+
+        sp_a = _sp("2.2.2(1)", "总体施工组织布置及规划")
+        sp_b = _sp("2.2.2(1)", "承包人项目管理方案")
+        clause_map = {_clause_key(sp_a): sp_a, _clause_key(sp_b): sp_b}
+        rows = build_requirement_rows(
+            [
+                {
+                    "seq": 1,
+                    "description": "总体施工组织布置及规划需完整可行",
+                    "sp_clause": "2.2.2(1)",
+                }
+            ],
+            clause_map,
+            project_id=sp_a.project_id,
+            fallback_doc_id=sp_a.doc_id,
+            seq_start=1,
+        )
+        assert rows[0]["sp_id"] == sp_a.id
+        assert rows[0]["source"] == "sp_derived"
+
+    def test_clause_no_multi_candidate_no_item_match_keeps_tender(self) -> None:
+        """条款号多候选且 description 不含任一评分项名：保守降级为通用需求（不误配）."""
+        from app.services.requirements_service import build_requirement_rows
+
+        sp_a = _sp("2.2.2(1)", "总体施工组织布置及规划")
+        sp_b = _sp("2.2.2(1)", "承包人项目管理方案")
+        clause_map = {_clause_key(sp_a): sp_a, _clause_key(sp_b): sp_b}
+        rows = build_requirement_rows(
+            [{"seq": 1, "description": "通用能力要求", "sp_clause": "2.2.2(1)"}],
+            clause_map,
+            project_id=sp_a.project_id,
+            fallback_doc_id=sp_a.doc_id,
+            seq_start=1,
+        )
+        assert rows[0]["sp_id"] is None
+        assert rows[0]["source"] == "tender"
+
 
 # ── generate_requirements：编排（幂等删除 / 入队写库 / 异常）──
 
@@ -226,6 +266,26 @@ async def test_generate_idempotent_deletes_previous_sp_derived(monkeypatch) -> N
     # 幂等策略：仅清理 source='sp_derived' 的旧衍生需求（字面量为绑定参数）
     assert "sp_derived" in str(deletes[0].compile().params)
     session.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_generate_idempotent_cleans_unmatched_tender_rows(monkeypatch) -> None:
+    """未匹配需求（source='tender'）也随下次 generate 清理，防重复生成积累."""
+    from app.services import requirements_service
+
+    sps = [_sp("1.1", "项A")]
+    session, _ = _gen_env(monkeypatch, sps)
+
+    await requirements_service.generate_requirements(session, sps[0].project_id)
+
+    deletes = [
+        c.args[0]
+        for c in session.execute.call_args_list
+        if str(c.args[0]).lstrip().upper().startswith("DELETE")
+    ]
+    assert len(deletes) == 1
+    params = str(deletes[0].compile().params)
+    assert "sp_derived" in params and "tender" in params
 
 
 @pytest.mark.asyncio
