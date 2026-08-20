@@ -54,9 +54,7 @@ async def resolve_assist_doc_ids(
     base_ids = await kb_base_service.resolve_mount_doc_ids(db, mounted_kb_ids, mounted_doc_ids)
     if base_ids is None:
         # 挂载未配置 = 项目全量：显式枚举项目文档，便于与个人库素材并集
-        result = await db.execute(
-            select(Document.id).where(Document.project_id == project_id)
-        )
+        result = await db.execute(select(Document.id).where(Document.project_id == project_id))
         base_ids = [row[0] for row in result.all()]
 
     personal_result = await db.execute(

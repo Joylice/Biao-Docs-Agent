@@ -40,9 +40,7 @@ def _member_row() -> ProjectMember:
     return ProjectMember(project_id=PROJECT_ID, user_id=MEMBER_ID)
 
 
-def _ann(
-    content: str = "请补充案例", created_by: uuid.UUID = AUTHOR_ID
-) -> ChapterAnnotation:
+def _ann(content: str = "请补充案例", created_by: uuid.UUID = AUTHOR_ID) -> ChapterAnnotation:
     return ChapterAnnotation(
         id=uuid.uuid4(),
         project_id=PROJECT_ID,
@@ -100,14 +98,10 @@ class TestListChapterAnnotations:
 
 class TestCreateChapterAnnotation:
     @pytest.mark.asyncio
-    async def test_editable_creates(
-        self, client: AsyncClient, override_db, monkeypatch
-    ) -> None:
+    async def test_editable_creates(self, client: AsyncClient, override_db, monkeypatch) -> None:
         """可编辑者新增批注：内容去空格 + 审计 annotation.create + commit."""
         session = override_db([_result(_project())])
-        monkeypatch.setattr(
-            annotations_api, "check_chapter_editable", AsyncMock(return_value=True)
-        )
+        monkeypatch.setattr(annotations_api, "check_chapter_editable", AsyncMock(return_value=True))
         resp = await client.post(
             _url(), json={"content": " 请补充实施案例 "}, headers=_headers(OWNER_ID)
         )
@@ -116,38 +110,29 @@ class TestCreateChapterAnnotation:
         assert data["content"] == "请补充实施案例"
         assert data["chapter_no"] == "1"
         actions = [
-            c.args[0].action for c in session.add.call_args_list
-            if hasattr(c.args[0], "action")
+            c.args[0].action for c in session.add.call_args_list if hasattr(c.args[0], "action")
         ]
         assert "annotation.create" in actions
         session.commit.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_not_editable_403(
-        self, client: AsyncClient, override_db, monkeypatch
-    ) -> None:
+    async def test_not_editable_403(self, client: AsyncClient, override_db, monkeypatch) -> None:
         """非负责人/非 owner 批注 403（复用 check_chapter_editable 口径）."""
         override_db([_result(_project())])
         monkeypatch.setattr(
             annotations_api, "check_chapter_editable", AsyncMock(return_value=False)
         )
-        resp = await client.post(
-            _url(), json={"content": "x"}, headers=_headers(OWNER_ID)
-        )
+        resp = await client.post(_url(), json={"content": "x"}, headers=_headers(OWNER_ID))
         assert resp.status_code == 403
 
 
 class TestUpdateChapterAnnotation:
     @pytest.mark.asyncio
-    async def test_author_updates(
-        self, client: AsyncClient, override_db, monkeypatch
-    ) -> None:
+    async def test_author_updates(self, client: AsyncClient, override_db, monkeypatch) -> None:
         """作者本人编辑批注."""
         ann = _ann(created_by=OWNER_ID)
         session = override_db([_result(_project()), _result(ann)])
-        monkeypatch.setattr(
-            annotations_api, "check_chapter_editable", AsyncMock(return_value=True)
-        )
+        monkeypatch.setattr(annotations_api, "check_chapter_editable", AsyncMock(return_value=True))
         resp = await client.put(
             f"{_url()}/{ann.id}",
             json={"content": "修改后的意见"},
@@ -156,8 +141,7 @@ class TestUpdateChapterAnnotation:
         assert resp.status_code == 200
         assert ann.content == "修改后的意见"
         actions = [
-            c.args[0].action for c in session.add.call_args_list
-            if hasattr(c.args[0], "action")
+            c.args[0].action for c in session.add.call_args_list if hasattr(c.args[0], "action")
         ]
         assert "annotation.update" in actions
         session.commit.assert_awaited()
@@ -176,9 +160,7 @@ class TestUpdateChapterAnnotation:
                 _result(_project()),  # owner 判定
             ]
         )
-        monkeypatch.setattr(
-            annotations_api, "check_chapter_editable", AsyncMock(return_value=True)
-        )
+        monkeypatch.setattr(annotations_api, "check_chapter_editable", AsyncMock(return_value=True))
         resp = await client.put(
             f"{_url()}/{ann.id}",
             json={"content": "x"},
@@ -189,22 +171,17 @@ class TestUpdateChapterAnnotation:
 
 class TestDeleteChapterAnnotation:
     @pytest.mark.asyncio
-    async def test_author_deletes(
-        self, client: AsyncClient, override_db, monkeypatch
-    ) -> None:
+    async def test_author_deletes(self, client: AsyncClient, override_db, monkeypatch) -> None:
         """作者删除批注 + 审计 annotation.delete."""
         ann = _ann(created_by=OWNER_ID)
         session = override_db([_result(_project()), _result(ann)])
-        monkeypatch.setattr(
-            annotations_api, "check_chapter_editable", AsyncMock(return_value=True)
-        )
+        monkeypatch.setattr(annotations_api, "check_chapter_editable", AsyncMock(return_value=True))
         resp = await client.delete(f"{_url()}/{ann.id}", headers=_headers(OWNER_ID))
         assert resp.status_code == 200
         # AsyncSession.delete 是协程，必须 await 否则静默无效
         session.delete.assert_awaited_once_with(ann)
         actions = [
-            c.args[0].action for c in session.add.call_args_list
-            if hasattr(c.args[0], "action")
+            c.args[0].action for c in session.add.call_args_list if hasattr(c.args[0], "action")
         ]
         assert "annotation.delete" in actions
         session.commit.assert_awaited()
@@ -214,10 +191,6 @@ class TestDeleteChapterAnnotation:
         self, client: AsyncClient, override_db, monkeypatch
     ) -> None:
         override_db([_result(_project()), _result(None)])
-        monkeypatch.setattr(
-            annotations_api, "check_chapter_editable", AsyncMock(return_value=True)
-        )
-        resp = await client.delete(
-            f"{_url()}/{uuid.uuid4()}", headers=_headers(OWNER_ID)
-        )
+        monkeypatch.setattr(annotations_api, "check_chapter_editable", AsyncMock(return_value=True))
+        resp = await client.delete(f"{_url()}/{uuid.uuid4()}", headers=_headers(OWNER_ID))
         assert resp.status_code == 404

@@ -208,9 +208,7 @@ async def upload_image(
     # 事务约定（BUG-1）：审计响应前显式提交
     await db.commit()
 
-    return success(
-        data={"storage_key": storage_key, "url": presigned_url(storage_key)}
-    )
+    return success(data={"storage_key": storage_key, "url": presigned_url(storage_key)})
 
 
 @router.get("/{project_id}/images/signed")

@@ -90,9 +90,7 @@ class TestListPermissions:
         assert resp.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_admin_lists_permission_catalog(
-        self, client: AsyncClient, override_db
-    ) -> None:
+    async def test_admin_lists_permission_catalog(self, client: AsyncClient, override_db) -> None:
         override_db([_result(_user(ADMIN_ID, "a@x.com", "admin"))])
         resp = await client.get("/api/v1/rbac/permissions", headers=_headers(ADMIN_ID))
         assert resp.status_code == 200
@@ -111,9 +109,7 @@ class TestGetRolePermissions:
     async def test_admin_reads_member_mapping(self, client: AsyncClient, override_db) -> None:
         """读路径走种子桩（不消耗额外 execute），返回 member 种子权限点."""
         override_db([_result(_user(ADMIN_ID, "a@x.com", "admin"))])
-        resp = await client.get(
-            "/api/v1/rbac/roles/member/permissions", headers=_headers(ADMIN_ID)
-        )
+        resp = await client.get("/api/v1/rbac/roles/member/permissions", headers=_headers(ADMIN_ID))
         assert resp.status_code == 200
         assert resp.json()["data"]["role"] == "member"
         assert set(resp.json()["data"]["codes"]) == SEED["member"]
@@ -171,9 +167,7 @@ class TestPutRolePermissions:
         assert rbac._role_permission_cache is None
 
     @pytest.mark.asyncio
-    async def test_admin_cannot_lose_system_manage(
-        self, client: AsyncClient, override_db
-    ) -> None:
+    async def test_admin_cannot_lose_system_manage(self, client: AsyncClient, override_db) -> None:
         """防自我锁死：admin 角色映射必须包含 system:manage."""
         override_db([_result(_user(ADMIN_ID, "a@x.com", "admin"))])
         resp = await client.put(
@@ -185,9 +179,7 @@ class TestPutRolePermissions:
         assert resp.json()["code"] == 4000
 
     @pytest.mark.asyncio
-    async def test_unknown_permission_code_rejected(
-        self, client: AsyncClient, override_db
-    ) -> None:
+    async def test_unknown_permission_code_rejected(self, client: AsyncClient, override_db) -> None:
         override_db([_result(_user(ADMIN_ID, "a@x.com", "admin"))])
         resp = await client.put(
             "/api/v1/rbac/roles/member/permissions",
@@ -234,9 +226,7 @@ class TestMeIncludesPermissions:
     """GET /auth/me 返回权限点列表（前端菜单权限点驱动）."""
 
     @pytest.mark.asyncio
-    async def test_me_returns_permissions_for_role(
-        self, client: AsyncClient, override_db
-    ) -> None:
+    async def test_me_returns_permissions_for_role(self, client: AsyncClient, override_db) -> None:
         """kb_admin 角色按种子映射返回权限点（无白名单）."""
         override_db([_result(_user(uuid.uuid4(), "kb@x.com", "kb_admin"))])
         resp = await client.get("/api/v1/auth/me", headers=_headers(MEMBER_ID))

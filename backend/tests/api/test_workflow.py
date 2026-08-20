@@ -638,9 +638,7 @@ class TestRedispatchFeedback:
             assigned_by=uuid.uuid4(),
             status="approved",
         )
-        env = self._env(
-            monkeypatch, assignment, [{"chapter_no": "1", "title": "项目概述"}]
-        )
+        env = self._env(monkeypatch, assignment, [{"chapter_no": "1", "title": "项目概述"}])
         try:
             resp = await client.post(
                 f"/api/v1/projects/{env['project_id']}/workflow/confirm-review",
@@ -672,9 +670,7 @@ class TestRedispatchFeedback:
             assigned_by=uuid.uuid4(),
             status="approved",
         )
-        env = self._env(
-            monkeypatch, assignment, [{"chapter_no": "2", "title": "技术方案"}]
-        )
+        env = self._env(monkeypatch, assignment, [{"chapter_no": "2", "title": "技术方案"}])
         try:
             resp = await client.post(
                 f"/api/v1/projects/{env['project_id']}/workflow/confirm-review",

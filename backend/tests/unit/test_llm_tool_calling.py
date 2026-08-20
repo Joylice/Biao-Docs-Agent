@@ -55,14 +55,15 @@ class TestToolLoop:
         fake_litellm = MagicMock()
         fake_litellm.acompletion = fake_acompletion
         monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
-        monkeypatch.setattr(
-            "app.services.llm_service._api_key_kwargs", AsyncMock(return_value={})
-        )
+        monkeypatch.setattr("app.services.llm_service._api_key_kwargs", AsyncMock(return_value={}))
 
         executor = AsyncMock(return_value='[{"content": "素材"}]')
         text, calls = await chat_with_tools(
-            "s", "u", tools=[{"type": "function", "function": {"name": "kb_search"}}],
-            executor=executor, mock=False,
+            "s",
+            "u",
+            tools=[{"type": "function", "function": {"name": "kb_search"}}],
+            executor=executor,
+            mock=False,
         )
 
         assert text == "最终答复"
@@ -91,13 +92,15 @@ class TestToolLoop:
         fake_litellm = MagicMock()
         fake_litellm.acompletion = fake_acompletion
         monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
-        monkeypatch.setattr(
-            "app.services.llm_service._api_key_kwargs", AsyncMock(return_value={})
-        )
+        monkeypatch.setattr("app.services.llm_service._api_key_kwargs", AsyncMock(return_value={}))
 
         executor = AsyncMock(side_effect=RuntimeError("boom"))
         text, calls = await chat_with_tools(
-            "s", "u", tools=[{"type": "function"}], executor=executor, mock=False,
+            "s",
+            "u",
+            tools=[{"type": "function"}],
+            executor=executor,
+            mock=False,
         )
         assert text == "降级答复"
         assert "工具执行失败" in calls[0]["result"]
@@ -117,14 +120,16 @@ class TestToolLoop:
         fake_litellm = MagicMock()
         fake_litellm.acompletion = fake_acompletion
         monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
-        monkeypatch.setattr(
-            "app.services.llm_service._api_key_kwargs", AsyncMock(return_value={})
-        )
+        monkeypatch.setattr("app.services.llm_service._api_key_kwargs", AsyncMock(return_value={}))
 
         executor = AsyncMock(return_value="[]")
         text, calls = await chat_with_tools(
-            "s", "u", tools=[{"type": "function"}], executor=executor,
-            max_rounds=3, mock=False,
+            "s",
+            "u",
+            tools=[{"type": "function"}],
+            executor=executor,
+            max_rounds=3,
+            mock=False,
         )
         assert text == "收敛答复"
         assert len(calls) == 3

@@ -124,9 +124,7 @@ class TestCreateProjectWithMembers:
         """member_ids 全部为已注册用户 → 写入 project_members（owner 额外一条）."""
         owner_id = uuid.uuid4()
         m1, m2 = uuid.uuid4(), uuid.uuid4()
-        session = self._session_with_users(
-            [_user_row(m1, "m1@x.com"), _user_row(m2, "m2@x.com")]
-        )
+        session = self._session_with_users([_user_row(m1, "m1@x.com"), _user_row(m2, "m2@x.com")])
         app.dependency_overrides[get_db] = lambda: session
         try:
             response = await client.post(
@@ -135,9 +133,7 @@ class TestCreateProjectWithMembers:
                 headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
             )
             assert response.status_code == 200
-            member_ids = {
-                m.user_id for m in session.added if isinstance(m, ProjectMember)
-            }
+            member_ids = {m.user_id for m in session.added if isinstance(m, ProjectMember)}
             assert member_ids == {owner_id, m1, m2}
             assert session.committed is True
         finally:

@@ -85,9 +85,7 @@ async def test_list_versions_no_auth(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_versions_member(
-    client: AsyncClient, override_db, monkeypatch
-) -> None:
+async def test_list_versions_member(client: AsyncClient, override_db, monkeypatch) -> None:
     """成员读取：version 倒序，created_by NULL 标记 auto."""
     session = override_db(
         [
@@ -120,9 +118,7 @@ async def test_create_version_owner(client: AsyncClient, override_db, monkeypatc
     record = _version(3, OWNER_ID)
     create = AsyncMock(return_value=record)
     monkeypatch.setattr(versions_api.version_service, "create_snapshot", create)
-    resp = await client.post(
-        _url(), headers=_headers(OWNER_ID), json={"snapshot_note": "评审定稿"}
-    )
+    resp = await client.post(_url(), headers=_headers(OWNER_ID), json={"snapshot_note": "评审定稿"})
     assert resp.status_code == 200
     assert resp.json()["data"]["version"] == 3
     create.assert_awaited_once()
@@ -142,9 +138,7 @@ async def test_create_version_non_owner_403(client: AsyncClient, override_db) ->
 
 
 @pytest.mark.asyncio
-async def test_download_version_docx(
-    client: AsyncClient, override_db, monkeypatch
-) -> None:
+async def test_download_version_docx(client: AsyncClient, override_db, monkeypatch) -> None:
     """成员下载 docx：返回签名 URL."""
     override_db(
         [
@@ -163,9 +157,7 @@ async def test_download_version_docx(
 
 
 @pytest.mark.asyncio
-async def test_download_version_source_key(
-    client: AsyncClient, override_db, monkeypatch
-) -> None:
+async def test_download_version_source_key(client: AsyncClient, override_db, monkeypatch) -> None:
     """type=source 下载 Markdown 源的 storage_key."""
     override_db([_result(_project()), _result(_version(1))])
     captured: list = []
@@ -182,9 +174,7 @@ async def test_download_version_source_key(
 
 
 @pytest.mark.asyncio
-async def test_archive_to_company_base(
-    client: AsyncClient, override_db, monkeypatch
-) -> None:
+async def test_archive_to_company_base(client: AsyncClient, override_db, monkeypatch) -> None:
     """归档公司库：登记全局素材（project_id NULL + kb_id）+ 入队向量化 + 审计."""
     base = _base("company")
     version = _version(2)
@@ -213,18 +203,14 @@ async def test_archive_to_company_base(
     assert doc.kb_id == base.id
     assert doc.doc_type == "kb_material"
     assert doc.storage_key == version.storage_key_docx
-    actions = [
-        c.args[0].action for c in session.add.call_args_list if hasattr(c.args[0], "action")
-    ]
+    actions = [c.args[0].action for c in session.add.call_args_list if hasattr(c.args[0], "action")]
     assert "proposal.archive" in actions
     session.commit.assert_awaited()
     enqueue.assert_awaited_once_with(None, doc.id)
 
 
 @pytest.mark.asyncio
-async def test_archive_personal_base_rejected(
-    client: AsyncClient, override_db
-) -> None:
+async def test_archive_personal_base_rejected(client: AsyncClient, override_db) -> None:
     """归档目标非公司级库 → 400."""
     override_db([_result(_project()), _result(_base("personal"))])
     resp = await client.post(
@@ -259,18 +245,14 @@ class TestRollbackVersion:
         session = override_db([_result(_project()), _result(version)])
         rollback = AsyncMock(return_value=3)
         monkeypatch.setattr(versions_api.version_service, "rollback_version", rollback)
-        resp = await client.post(
-            f"{_url()}/{version.id}/rollback", headers=_headers(OWNER_ID)
-        )
+        resp = await client.post(f"{_url()}/{version.id}/rollback", headers=_headers(OWNER_ID))
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["version"] == 2
         assert data["chapters_restored"] == 3
         rollback.assert_awaited_once()
         actions = [
-            c.args[0].action
-            for c in session.add.call_args_list
-            if hasattr(c.args[0], "action")
+            c.args[0].action for c in session.add.call_args_list if hasattr(c.args[0], "action")
         ]
         assert "version.rollback" in actions
         session.commit.assert_awaited()
@@ -287,18 +269,12 @@ class TestRollbackVersion:
             "rollback_version",
             AsyncMock(side_effect=ValidationError("该版本无结构化快照")),
         )
-        resp = await client.post(
-            f"{_url()}/{version.id}/rollback", headers=_headers(OWNER_ID)
-        )
+        resp = await client.post(f"{_url()}/{version.id}/rollback", headers=_headers(OWNER_ID))
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_rollback_non_owner_403(
-        self, client: AsyncClient, override_db
-    ) -> None:
+    async def test_rollback_non_owner_403(self, client: AsyncClient, override_db) -> None:
         """非 owner 回滚 403."""
         override_db([_result(_project())])
-        resp = await client.post(
-            f"{_url()}/{_version(1).id}/rollback", headers=_headers(MEMBER_ID)
-        )
+        resp = await client.post(f"{_url()}/{_version(1).id}/rollback", headers=_headers(MEMBER_ID))
         assert resp.status_code == 403

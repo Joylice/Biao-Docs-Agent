@@ -80,9 +80,7 @@ def _url() -> str:
 
 class TestListAssignments:
     @pytest.mark.asyncio
-    async def test_list_returns_items(
-        self, client: AsyncClient, override_db, monkeypatch
-    ) -> None:
+    async def test_list_returns_items(self, client: AsyncClient, override_db, monkeypatch) -> None:
         """成员读取分工列表：含负责人姓名、状态与 outline 子节（2 级目录）."""
         user = User(id=MEMBER_ID, email="m@x.com", password_hash="x", display_name="张三")
         session = override_db([])
@@ -301,9 +299,7 @@ class TestAssistGenerate:
         session.commit.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_assist_generate_requires_accept(
-        self, client: AsyncClient, override_db
-    ) -> None:
+    async def test_assist_generate_requires_accept(self, client: AsyncClient, override_db) -> None:
         """pending 未领取 → 4000."""
         assignment = _assignment("pending")
         session = override_db([])
@@ -589,8 +585,5 @@ class TestAnnotations:
     async def test_list_forbidden_for_non_member(self, client: AsyncClient, override_db) -> None:
         """非成员读取批注 → 403."""
         override_db([_project(), None])
-        resp = await client.get(
-            f"{_url()}/{uuid.uuid4()}/annotations", headers=_headers(OTHER_ID)
-        )
+        resp = await client.get(f"{_url()}/{uuid.uuid4()}/annotations", headers=_headers(OTHER_ID))
         assert resp.status_code == 403
-

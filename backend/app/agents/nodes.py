@@ -290,7 +290,7 @@ async def generate_outline_node(state: dict) -> dict:
     )
 
     try:
-        result = await call_llm_with_schema(
+        llm_result = await call_llm_with_schema(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             response_format={
@@ -327,7 +327,7 @@ async def generate_outline_node(state: dict) -> dict:
                 },
             },
         )
-        outline = result.get("chapters", [])
+        outline = llm_result.get("chapters", [])
         if not outline:
             return {
                 "error": "大纲生成为空",
@@ -565,9 +565,7 @@ async def write_node(state: dict) -> dict:
                 db, mounted_kb_ids, mounted_doc_ids
             )
             # 阶段 D（1.4）：高风险评分点应对策略注入本章提示词
-            high_risk = await benchmark_service.load_high_risk_points(
-                db, uuid.UUID(project_id)
-            )
+            high_risk = await benchmark_service.load_high_risk_points(db, uuid.UUID(project_id))
             # 阶段 F：Tool Calling 前置补充检索（仅真实模式；mock/异常降级保持原上下文）
             context = state.get("retrieved_context", "")
             if not await settings_service.is_mock_enabled():
@@ -981,9 +979,7 @@ async def export_node(state: dict) -> dict:
             for section_id, cits in sec_result.all():
                 if isinstance(cits, list) and cits:
                     citations_by_chapter.setdefault(section_id.split(".")[0], []).extend(cits)
-            benchmark_rows = await benchmark_service.build_benchmark(
-                db, uuid.UUID(project_id)
-            )
+            benchmark_rows = await benchmark_service.build_benchmark(db, uuid.UUID(project_id))
     except Exception:
         logger.exception("引用/对标数据读取失败，导出降级不附加")
 

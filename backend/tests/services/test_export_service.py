@@ -115,9 +115,7 @@ class TestStageEEnhancements:
     @pytest.mark.asyncio
     async def test_cover_page(self, capture_upload) -> None:
         """封面：项目名标题 + 公司名 + 编制日期占位."""
-        await export_service.export_to_word(
-            CHAPTERS, OUTLINE, "测试项目", company_name="投标公司"
-        )
+        await export_service.export_to_word(CHAPTERS, OUTLINE, "测试项目", company_name="投标公司")
         doc = _open(capture_upload)
         texts = [p.text for p in doc.paragraphs]
         assert texts[0] == "测试项目"
@@ -147,11 +145,7 @@ class TestStageEEnhancements:
         """分页控制：章节标题前分页（每章起始新页）."""
         await export_service.export_to_word(CHAPTERS, OUTLINE, "测试项目")
         doc = _open(capture_upload)
-        h1 = next(
-            p
-            for p in doc.paragraphs
-            if p.style.name == "Heading 1" and "项目概述" in p.text
-        )
+        h1 = next(p for p in doc.paragraphs if p.style.name == "Heading 1" and "项目概述" in p.text)
         assert h1.paragraph_format.page_break_before is True
 
     @pytest.mark.asyncio
@@ -167,9 +161,7 @@ class TestStageEEnhancements:
                 "strategy": "突出等保三级合规设计",
             }
         ]
-        await export_service.export_to_word(
-            CHAPTERS, OUTLINE, "测试项目", benchmark_rows=rows
-        )
+        await export_service.export_to_word(CHAPTERS, OUTLINE, "测试项目", benchmark_rows=rows)
         doc = _open(capture_upload)
         assert len(doc.tables) == 1
         table = doc.tables[0]
@@ -236,4 +228,3 @@ class TestImageEmbed:
         assert len(doc.inline_shapes) == 0
         texts = [p.text for p in doc.paragraphs]
         assert any("[图片: 架构图]" in t for t in texts)
-

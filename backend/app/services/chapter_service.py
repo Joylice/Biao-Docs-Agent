@@ -94,9 +94,7 @@ def numbered_sections(sections_tree: list, chapter_no: str) -> list[tuple[str, s
     return out
 
 
-def split_chapter_to_sections(
-    content_md: str, sections_tree: list, chapter_no: str
-) -> list[dict]:
+def split_chapter_to_sections(content_md: str, sections_tree: list, chapter_no: str) -> list[dict]:
     """按大纲嵌套树将整章正文切分为子节片段.
 
     仅当 sections_tree 含 dict 节点（嵌套树）时切分，否则返回 []（调用方保持
@@ -257,8 +255,7 @@ async def generate_chapter(
     if benchmark_high_risk:
         hr_text = redact(
             "\n".join(
-                f"- {p.get('clause_no', '')}: {p.get('strategy', '')}"
-                for p in benchmark_high_risk
+                f"- {p.get('clause_no', '')}: {p.get('strategy', '')}" for p in benchmark_high_risk
             )
         )
     else:

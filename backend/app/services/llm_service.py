@@ -209,9 +209,7 @@ async def chat_with_tools(
                     result = f"工具执行失败: {e}"
                 result = redact(result)  # 工具结果同属外发内容，回填前脱敏
                 calls.append({"name": name, "arguments": arguments, "result": result})
-                messages.append(
-                    {"role": "tool", "tool_call_id": tc.id, "content": result}
-                )
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
         # 轮数耗尽：不带 tools 收敛最终答复
         response = await acompletion(
             model=settings.llm_model,

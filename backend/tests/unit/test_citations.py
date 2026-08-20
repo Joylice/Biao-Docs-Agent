@@ -95,9 +95,7 @@ class TestUpsertSectionCitations:
     async def test_new_section_stores_citations(self) -> None:
         db = FakeDB()
         citations = [{"chunk_id": "c1", "doc_title": "材料", "page_no": 3}]
-        await nodes._upsert_section(
-            db, str(PROJECT_ID), "1", "概述", "正文", citations=citations
-        )
+        await nodes._upsert_section(db, str(PROJECT_ID), "1", "概述", "正文", citations=citations)
         assert db.added[0].citations == citations
 
     @pytest.mark.asyncio

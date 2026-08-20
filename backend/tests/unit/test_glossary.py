@@ -24,9 +24,7 @@ class TestParseSchemaGlossary:
             captured["schema"] = response_format["json_schema"]["schema"]
             return {
                 "score_points": [{"clause_no": "1", "item": "方案"}],
-                "glossary": [
-                    {"term": "AI", "canonical": "人工智能", "desc": "统一用全称"}
-                ],
+                "glossary": [{"term": "AI", "canonical": "人工智能", "desc": "统一用全称"}],
             }
 
         from app.services import llm_service
@@ -112,9 +110,7 @@ class TestIntegrateNodeGlossary:
         with (
             patch.object(nodes, "async_session_factory", lambda: FakeDB()),
             patch.object(nodes, "publish_event", AsyncMock()),
-            patch.object(
-                nodes.settings_service, "is_mock_enabled", AsyncMock(return_value=True)
-            ),
+            patch.object(nodes.settings_service, "is_mock_enabled", AsyncMock(return_value=True)),
         ):
             result = await nodes.integrate_node(state)
         assert result["chapters"]["1"] == "本方案采用AI技术。"
@@ -137,9 +133,7 @@ class TestIntegrateNodeGlossary:
         with (
             patch.object(nodes, "async_session_factory", lambda: FakeDB()),
             patch.object(nodes, "publish_event", AsyncMock()),
-            patch.object(
-                nodes.settings_service, "is_mock_enabled", AsyncMock(return_value=False)
-            ),
+            patch.object(nodes.settings_service, "is_mock_enabled", AsyncMock(return_value=False)),
         ):
             result = await nodes.integrate_node(state)
         assert result["chapters"]["1"] == "本方案采用人工智能技术。"

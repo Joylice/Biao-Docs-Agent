@@ -255,8 +255,11 @@ async def save_section_edit(
             from app.services.chapter_service import numbered_sections
 
             title = next(
-                (t for no, t in numbered_sections(chapter.get("sections", []) or [], parent_no)
-                 if no == chapter_no),
+                (
+                    t
+                    for no, t in numbered_sections(chapter.get("sections", []) or [], parent_no)
+                    if no == chapter_no
+                ),
                 "",
             )
         await _upsert_section(db, str(project_id), chapter_no, title, content, status="review")

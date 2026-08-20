@@ -63,9 +63,7 @@ async def assign_chapters(
     expanded: list[dict[str, Any]] = []
     for item in items:
         chapter_no = str(item.get("chapter_no") or "").strip()
-        chapter = next(
-            (c for c in outline if str(c.get("chapter_no", "")) == chapter_no), None
-        )
+        chapter = next((c for c in outline if str(c.get("chapter_no", "")) == chapter_no), None)
         subs = numbered_sections((chapter or {}).get("sections", []) or [], chapter_no)
         if chapter is not None and subs:
             for no, title in subs:

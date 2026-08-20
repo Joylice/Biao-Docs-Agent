@@ -333,9 +333,7 @@ class TestUpdateDeleteKbBase:
     """PATCH / DELETE /kb-bases/{id} 写权限."""
 
     @pytest.mark.asyncio
-    async def test_patch_by_owner(
-        self, client: AsyncClient, session_override, headers
-    ) -> None:
+    async def test_patch_by_owner(self, client: AsyncClient, session_override, headers) -> None:
         """个人库 owner 编辑名称/描述成功."""
         base = _base("personal", "旧名", owner_id=USER_ID)
         session_override([_full_result([base])])
@@ -361,9 +359,7 @@ class TestUpdateDeleteKbBase:
         assert resp.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_delete_not_found(
-        self, client: AsyncClient, session_override, headers
-    ) -> None:
+    async def test_delete_not_found(self, client: AsyncClient, session_override, headers) -> None:
         session_override([_full_result([])])
         resp = await client.delete(f"/api/v1/kb-bases/{uuid.uuid4()}", headers=headers)
         assert resp.status_code == 404

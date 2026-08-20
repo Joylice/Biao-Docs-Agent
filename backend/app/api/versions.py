@@ -35,9 +35,7 @@ async def _get_project(db: AsyncSession, project_id: uuid.UUID) -> Project:
 async def _get_version(
     db: AsyncSession, project_id: uuid.UUID, version_id: uuid.UUID
 ) -> ProposalVersion:
-    result = await db.execute(
-        select(ProposalVersion).where(ProposalVersion.id == version_id)
-    )
+    result = await db.execute(select(ProposalVersion).where(ProposalVersion.id == version_id))
     version = result.scalar_one_or_none()
     if version is None or version.project_id != project_id:
         raise NotFoundError("版本记录")

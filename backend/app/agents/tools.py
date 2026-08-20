@@ -80,9 +80,7 @@ def get_tool_definitions(names: list[str]) -> list[dict]:
 # ───────────────────────── 工具实现 ─────────────────────────
 
 
-async def kb_search(
-    project_id: str, query: str, doc_ids: list[str] | None = None
-) -> list[dict]:
+async def kb_search(project_id: str, query: str, doc_ids: list[str] | None = None) -> list[dict]:
     """资料库检索：mock 确定性桩 / 真实走 rag_service 召回+rerank."""
     if await settings_service.is_mock_enabled():
         # 确定性分支：E2E 可断言（内容含 query，结构稳定）
@@ -153,9 +151,7 @@ async def list_sections(project_id: str) -> list[dict]:
         ]
 
 
-def update_glossary(
-    glossary: list[dict], term: str, canonical: str, desc: str = ""
-) -> list[dict]:
+def update_glossary(glossary: list[dict], term: str, canonical: str, desc: str = "") -> list[dict]:
     """合并术语条目（同名覆盖），返回新列表（纯函数，不直写 DB/state）."""
     merged = [g for g in glossary if g.get("term") != term]
     return [*merged, {"term": term, "canonical": canonical, "desc": desc}]

@@ -198,9 +198,7 @@ class TestUploadMaterialKbAttribution:
     """POST /kb/materials 知识库归属（kb_id，阶段 1）."""
 
     def _personal_base(self) -> KnowledgeBase:
-        base = KnowledgeBase(
-            project_id=None, owner_id=USER_ID, scope="personal", name="我的库"
-        )
+        base = KnowledgeBase(project_id=None, owner_id=USER_ID, scope="personal", name="我的库")
         base.id = uuid.uuid4()
         return base
 
@@ -617,9 +615,7 @@ class TestMaterialDownload:
     ) -> None:
         """登录用户下载全局素材 → 200 字节 + Content-Disposition."""
         override_db([_global_doc()])
-        monkeypatch.setattr(
-            "app.services.storage_service.download_file", lambda key: b"KB-BYTES"
-        )
+        monkeypatch.setattr("app.services.storage_service.download_file", lambda key: b"KB-BYTES")
         resp = await client.get(f"/api/v1/kb/materials/{DOC_ID}/download", headers=headers)
         assert resp.status_code == 200
         assert resp.content == b"KB-BYTES"
@@ -634,9 +630,7 @@ class TestMaterialDownload:
         doc = _global_doc()
         doc.project_id = uuid.uuid4()
         override_db([doc])
-        monkeypatch.setattr(
-            "app.services.storage_service.download_file", lambda key: b"X"
-        )
+        monkeypatch.setattr("app.services.storage_service.download_file", lambda key: b"X")
         resp = await client.get(f"/api/v1/kb/materials/{DOC_ID}/download", headers=headers)
         assert resp.status_code == 404
         assert resp.json()["code"] == 4004

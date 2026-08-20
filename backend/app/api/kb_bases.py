@@ -51,7 +51,9 @@ async def _get_base_or_404(db: AsyncSession, base_id: uuid.UUID) -> KnowledgeBas
     return base
 
 
-def _base_out(base: KnowledgeBase, material_count: int = 0, project_name: str | None = None) -> dict:
+def _base_out(
+    base: KnowledgeBase, material_count: int = 0, project_name: str | None = None
+) -> dict:
     return {
         "id": str(base.id),
         "name": base.name,

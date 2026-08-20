@@ -147,9 +147,7 @@ async def confirm_outline(
     )
     targets = {str(uid) for uid in members_result.scalars().all()} | {str(user_id)}
     for uid in targets:
-        await publish_user_event(
-            uid, {"type": "workbench_refresh", "project_id": str(project_id)}
-        )
+        await publish_user_event(uid, {"type": "workbench_refresh", "project_id": str(project_id)})
     return success(data={"status": "confirmed", "next_phase": "generate"})
 
 

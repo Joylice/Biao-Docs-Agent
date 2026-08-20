@@ -69,9 +69,7 @@ async def workbench_summary(
         proj["total"] += 1
         if assignment.status == "approved":
             proj["approved"] += 1
-        proj["status_dist"][assignment.status] = (
-            proj["status_dist"].get(assignment.status, 0) + 1
-        )
+        proj["status_dist"][assignment.status] = proj["status_dist"].get(assignment.status, 0) + 1
 
     def _upsert_project(project_id: uuid.UUID, project_name: str) -> dict[str, Any]:
         """项目聚合行幂等 upsert（我参与 ∪ owner 名下共用）."""
@@ -105,16 +103,12 @@ async def workbench_summary(
         proj["total"] += 1
         if assignment.status == "approved":
             proj["approved"] += 1
-        proj["status_dist"][assignment.status] = (
-            proj["status_dist"].get(assignment.status, 0) + 1
-        )
+        proj["status_dist"][assignment.status] = proj["status_dist"].get(assignment.status, 0) + 1
 
     # 项目阶段（proposal_workflows.phase，无工作流行 → 空串）
     if projects:
         wf_result = await db.execute(
-            select(ProposalWorkflow).where(
-                ProposalWorkflow.project_id.in_(list(projects.keys()))
-            )
+            select(ProposalWorkflow).where(ProposalWorkflow.project_id.in_(list(projects.keys())))
         )
         for wf in wf_result.scalars().all():
             if wf.project_id in projects:

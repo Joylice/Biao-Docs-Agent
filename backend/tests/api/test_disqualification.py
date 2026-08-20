@@ -225,9 +225,7 @@ class TestExportGate:
         assert resp.json()["code"] == 4012
 
     @pytest.mark.asyncio
-    async def test_export_passes_when_all_confirmed(
-        self, client: AsyncClient, override_db
-    ) -> None:
+    async def test_export_passes_when_all_confirmed(self, client: AsyncClient, override_db) -> None:
         count_result = MagicMock()
         count_result.scalar.return_value = 0
         override_db([_result(_project()), count_result])

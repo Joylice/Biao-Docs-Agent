@@ -387,9 +387,7 @@ class TestCheckChapterEditable:
                 _result(_assignment("1", MEMBER_ID)),  # 父章 1 有分工
             ]
         )
-        assert await division_service.check_chapter_editable(
-            session, PROJECT_ID, "1.1", MEMBER_ID
-        )
+        assert await division_service.check_chapter_editable(session, PROJECT_ID, "1.1", MEMBER_ID)
 
     @pytest.mark.asyncio
     async def test_subsection_other_member_forbidden(self) -> None:
@@ -427,6 +425,4 @@ class TestCheckChapterEditable:
                 _result(_project()),  # owner 兜底（非 owner）
             ]
         )
-        assert not await division_service.check_chapter_editable(
-            session, PROJECT_ID, "1", OTHER_ID
-        )
+        assert not await division_service.check_chapter_editable(session, PROJECT_ID, "1", OTHER_ID)

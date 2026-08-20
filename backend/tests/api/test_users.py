@@ -358,9 +358,7 @@ class TestCreateUser:
     @pytest.mark.asyncio
     async def test_duplicate_email_rejected(self, client: AsyncClient, override_db) -> None:
         """邮箱已存在 → BizError 4000."""
-        override_db(
-            [_user(ADMIN_ID, "admin@x.com", "admin"), _user(MEMBER_ID, "new@x.com")]
-        )
+        override_db([_user(ADMIN_ID, "admin@x.com", "admin"), _user(MEMBER_ID, "new@x.com")])
         resp = await client.post("/api/v1/users", json=_CREATE_BODY, headers=_headers(ADMIN_ID))
         assert resp.status_code == 400
         assert resp.json()["code"] == 4000
@@ -439,9 +437,7 @@ class TestUpdateUser:
     async def test_empty_body_rejected(self, client: AsyncClient, override_db) -> None:
         """无任何可更新字段 → 400."""
         override_db([_user(ADMIN_ID, "admin@x.com", "admin")])
-        resp = await client.patch(
-            f"/api/v1/users/{MEMBER_ID}", json={}, headers=_headers(ADMIN_ID)
-        )
+        resp = await client.patch(f"/api/v1/users/{MEMBER_ID}", json={}, headers=_headers(ADMIN_ID))
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
@@ -559,7 +555,9 @@ class TestDeleteUser:
     @pytest.mark.asyncio
     async def test_delete_member_success(self, client: AsyncClient, override_db) -> None:
         """删除无项目 member：db.delete + 审计 user.delete + commit."""
-        session = override_db([_user(ADMIN_ID, "admin@x.com", "admin"), _user(MEMBER_ID, "m@x.com"), 0])
+        session = override_db(
+            [_user(ADMIN_ID, "admin@x.com", "admin"), _user(MEMBER_ID, "m@x.com"), 0]
+        )
         recorded: list = []
 
         async def fake_record(db, user_id, action, **kwargs):

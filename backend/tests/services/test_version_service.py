@@ -60,9 +60,7 @@ async def test_create_snapshot_version_increment(monkeypatch) -> None:
     )
     export_mock = AsyncMock(return_value="versions/pid/x.docx")
     monkeypatch.setattr(version_service, "export_to_word", export_mock)
-    monkeypatch.setattr(
-        version_service, "upload_file", MagicMock(return_value="versions/pid/p.md")
-    )
+    monkeypatch.setattr(version_service, "upload_file", MagicMock(return_value="versions/pid/p.md"))
     monkeypatch.setattr(
         version_service, "_latest_format_requirements", AsyncMock(return_value=None)
     )
@@ -102,9 +100,7 @@ async def test_create_snapshot_requires_chapters(monkeypatch) -> None:
 async def test_maybe_auto_snapshot_blocked_by_in_progress(monkeypatch) -> None:
     """存在 pending/in_progress/submitted → 不触发."""
     session = AsyncMock()
-    session.execute = AsyncMock(
-        return_value=_rows_result([("approved",), ("submitted",)])
-    )
+    session.execute = AsyncMock(return_value=_rows_result([("approved",), ("submitted",)]))
     create = AsyncMock()
     monkeypatch.setattr(version_service, "create_snapshot", create)
     assert await version_service.maybe_auto_snapshot(session, uuid.uuid4(), "项目") is None
@@ -126,9 +122,7 @@ async def test_maybe_auto_snapshot_requires_approved(monkeypatch) -> None:
 async def test_maybe_auto_snapshot_triggers(monkeypatch) -> None:
     """满足条件 → 自动快照（created_by NULL）并 commit."""
     session = AsyncMock()
-    session.execute = AsyncMock(
-        return_value=_rows_result([("approved",), ("approved",)])
-    )
+    session.execute = AsyncMock(return_value=_rows_result([("approved",), ("approved",)]))
     record = MagicMock()
     create = AsyncMock(return_value=record)
     monkeypatch.setattr(version_service, "create_snapshot", create)
@@ -214,9 +208,7 @@ async def test_rollback_version_creates_missing_section(monkeypatch) -> None:
     session = AsyncMock()
     session.add = MagicMock()
     session.execute = AsyncMock(return_value=result)
-    monkeypatch.setattr(
-        version_service.workflow_runtime, "update_state", AsyncMock()
-    )
+    monkeypatch.setattr(version_service.workflow_runtime, "update_state", AsyncMock())
     record = _version_record(
         pid,
         {
@@ -237,6 +229,4 @@ async def test_rollback_version_requires_snapshot_json() -> None:
     """旧版本无结构化快照 → 拒绝回滚."""
     pid = uuid.uuid4()
     with pytest.raises(ValidationError):
-        await version_service.rollback_version(
-            AsyncMock(), pid, _version_record(pid, None)
-        )
+        await version_service.rollback_version(AsyncMock(), pid, _version_record(pid, None))

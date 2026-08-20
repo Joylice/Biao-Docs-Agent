@@ -194,9 +194,7 @@ async def resolve_doc_ids(db: AsyncSession, base_ids: list[uuid.UUID]) -> list[u
     if not base_ids:
         return []
     result = await db.execute(
-        select(Document.id).where(
-            Document.doc_type == "kb_material", Document.kb_id.in_(base_ids)
-        )
+        select(Document.id).where(Document.doc_type == "kb_material", Document.kb_id.in_(base_ids))
     )
     return [row[0] for row in result.all()]
 

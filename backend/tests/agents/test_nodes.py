@@ -7,6 +7,7 @@ import pytest
 
 from app.agents import nodes
 from app.models.document import Document
+from app.models.project import Project
 
 PROJECT_ID = uuid.uuid4()
 
@@ -313,9 +314,7 @@ class TestRetrieveNode:
             captured["doc_ids"] = kwargs.get("doc_ids", "<missing>")
             return []
 
-        monkeypatch.setattr(
-            nodes, "async_session_factory", lambda: FakeDB({Document: [(doc_a,)]})
-        )
+        monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB({Document: [(doc_a,)]}))
         monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
         monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
 
@@ -342,9 +341,7 @@ class TestRetrieveNode:
             captured["doc_ids"] = kwargs.get("doc_ids", "<missing>")
             return []
 
-        monkeypatch.setattr(
-            nodes, "async_session_factory", lambda: FakeDB({Document: [(doc_kb,)]})
-        )
+        monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB({Document: [(doc_kb,)]}))
         monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
         monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
 
@@ -868,8 +865,6 @@ class TestOutlineProjectContextAndIsolation:
 
     @staticmethod
     def _project(project_id) -> "Project":
-        from app.models.project import Project
-
         return Project(
             id=project_id,
             name="智慧水务一体化平台项目",

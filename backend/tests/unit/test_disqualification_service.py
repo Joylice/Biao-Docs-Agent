@@ -83,8 +83,12 @@ class TestScanProjectSections:
         section = SimpleNamespace(section_id="ch03", title="资质章节", content_md="我方资质齐全")
         db = AsyncMock()
         db.execute.side_effect = [
-            MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[clause])))),
-            MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[section])))),
+            MagicMock(
+                scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[clause])))
+            ),
+            MagicMock(
+                scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[section])))
+            ),
         ]
         risks = await dq.scan_project_sections(db, uuid.uuid4())
         assert "ch03" in risks
@@ -118,9 +122,7 @@ class TestCheckChapterContent:
         session.execute.return_value = MagicMock(
             scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[clause])))
         )
-        with patch.object(
-            dq, "async_session_factory", MagicMock(return_value=_ctx(session))
-        ):
+        with patch.object(dq, "async_session_factory", MagicMock(return_value=_ctx(session))):
             hits = await dq.check_chapter_content(str(uuid.uuid4()), "我方资质齐全")
         assert len(hits) == 1
 

@@ -20,9 +20,7 @@ logger = logging.getLogger(__name__)
 _BLOCKING_STATUSES = frozenset({"pending", "in_progress", "submitted"})
 
 
-def build_markdown_source(
-    project_name: str, outline: list[dict], chapters: dict[str, str]
-) -> str:
+def build_markdown_source(project_name: str, outline: list[dict], chapters: dict[str, str]) -> str:
     """按大纲结构拼装 Markdown 源（章标题 + 子节列表 + 正文）."""
     lines: list[str] = [f"# {project_name}", ""]
     for c in outline:

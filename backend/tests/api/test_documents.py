@@ -521,9 +521,7 @@ class TestDownloadProxy:
         assert response.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_download_success_streams_bytes(
-        self, client: AsyncClient, download_env
-    ) -> None:
+    async def test_download_success_streams_bytes(self, client: AsyncClient, download_env) -> None:
         """成员下载 → 200 流式字节 + Content-Disposition 附件文件名."""
         response = await client.get(
             f"/api/v1/projects/{download_env['project_id']}/documents/"

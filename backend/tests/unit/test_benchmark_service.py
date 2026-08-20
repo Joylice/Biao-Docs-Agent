@@ -107,9 +107,7 @@ class TestBuildBenchmark:
         result.scalars.return_value = scalars
         db.execute = AsyncMock(return_value=result)
 
-        with patch.object(
-            benchmark_service, "compute_item_coverage", AsyncMock(return_value=0.2)
-        ):
+        with patch.object(benchmark_service, "compute_item_coverage", AsyncMock(return_value=0.2)):
             items = await benchmark_service.build_benchmark(db, PROJECT_ID)
 
         assert [i["clause_no"] for i in items] == ["1", "3", "2"]
@@ -117,7 +115,13 @@ class TestBuildBenchmark:
         assert items[0]["risk"] == "high"  # score=8 ≥6 且 coverage=0.2 <0.3
         assert all(sp.risk_level is not None for sp in sps)
         assert set(items[0].keys()) >= {
-            "clause_no", "item", "score", "criteria", "strategy", "risk", "coverage",
+            "clause_no",
+            "item",
+            "score",
+            "criteria",
+            "strategy",
+            "risk",
+            "coverage",
         }
 
     @pytest.mark.asyncio
@@ -131,9 +135,7 @@ class TestBuildBenchmark:
         result.scalars.return_value = scalars
         db.execute = AsyncMock(return_value=result)
 
-        with patch.object(
-            benchmark_service, "compute_item_coverage", AsyncMock(return_value=0.0)
-        ):
+        with patch.object(benchmark_service, "compute_item_coverage", AsyncMock(return_value=0.0)):
             items = await benchmark_service.build_benchmark(db, PROJECT_ID)
         assert items[0]["risk"] == "high"
         assert sp.risk_level == "high"

@@ -195,7 +195,9 @@ class ProposalVersion(Base):
     storage_key_docx: Mapped[str] = mapped_column(Text, nullable=False)
     storage_key_source: Mapped[str] = mapped_column(Text, nullable=False)
     created_by: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True  # NULL = 自动快照
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,  # NULL = 自动快照
     )
     # 结构化快照 {"outline": [...], "chapters": {...}}（阶段 E5 回滚数据源；旧版本为 NULL）
     snapshot_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
