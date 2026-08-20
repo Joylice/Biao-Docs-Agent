@@ -594,6 +594,7 @@ const FORMAT_CATEGORIES: { value: string; label: string }[] = [
   { value: 'binding', label: '装订' },
   { value: 'page_number', label: '页码' },
   { value: 'toc', label: '目录' },
+  { value: 'chapter_format', label: '章节格式要求' },
   { value: 'other', label: '其他' },
 ]
 

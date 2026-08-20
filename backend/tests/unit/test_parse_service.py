@@ -345,6 +345,58 @@ class TestFormatRequirementsSchema:
         parsed = await parse_service.parse_tender_with_llm("招标正文")
         assert parsed.format_requirements == []
 
+    @pytest.mark.asyncio
+    async def test_prompt_declares_chapter_format_category(self, monkeypatch) -> None:
+        """阶段5：提示词枚举含 chapter_format（技术方案章节格式要求）."""
+        from app.services import llm_service, parse_service
+
+        captured: dict = {}
+
+        async def fake_call(
+            system_prompt: str,
+            user_prompt: str,
+            response_format: dict | None = None,
+            mock: bool | None = None,
+        ) -> dict:
+            captured["system"] = system_prompt
+            return {"score_points": [{"clause_no": "1", "item": "方案"}]}
+
+        monkeypatch.setattr(llm_service, "call_llm_with_schema", fake_call)
+
+        await parse_service.parse_tender_with_llm("招标正文")
+        assert "chapter_format" in captured["system"]
+
+    @pytest.mark.asyncio
+    async def test_chapter_format_items_passthrough(self, monkeypatch) -> None:
+        """阶段5：chapter_format 条目原样透传落 meta（不参与排版映射）."""
+        from app.services import llm_service, parse_service
+
+        async def fake_call(
+            system_prompt: str,
+            user_prompt: str,
+            response_format: dict | None = None,
+            mock: bool | None = None,
+        ) -> dict:
+            return {
+                "score_points": [{"clause_no": "1", "item": "方案"}],
+                "format_requirements": [
+                    {
+                        "category": "chapter_format",
+                        "requirement": "章节编号采用1.1/1.2两级，每章篇幅不超过50页",
+                    }
+                ],
+            }
+
+        monkeypatch.setattr(llm_service, "call_llm_with_schema", fake_call)
+
+        parsed = await parse_service.parse_tender_with_llm("招标正文")
+        assert parsed.format_requirements == [
+            {
+                "category": "chapter_format",
+                "requirement": "章节编号采用1.1/1.2两级，每章篇幅不超过50页",
+            }
+        ]
+
 
 class TestSaveParseResultFormatRequirements:
     """格式要求落库：写入招标文件 Document.meta.format_requirements."""

@@ -86,3 +86,24 @@ class TestMargins:
     def test_mm_unit_converted_to_cm(self) -> None:
         spec = build_format_spec([{"category": "margin", "requirement": "上边距25毫米"}])
         assert spec.margins_cm == {"top": 2.5}
+
+
+class TestChapterFormat:
+    """阶段5：chapter_format（章节格式要求）仅展示，不参与排版映射."""
+
+    def test_chapter_format_not_mapped_to_layout(self) -> None:
+        spec = build_format_spec(
+            [
+                {
+                    "category": "chapter_format",
+                    "requirement": "章节编号采用1.1/1.2两级，层级不超过三级，每章篇幅不超过50页",
+                },
+                {"category": "font_body", "requirement": "正文宋体小四"},
+            ]
+        )
+        # chapter_format 不影响任何排版参数；其余分类正常生效
+        assert spec.body_font == "宋体"
+        assert spec.body_size_pt == 12.0
+        assert spec.heading_size_pt is None
+        assert spec.line_spacing == 1.5
+        assert spec.margins_cm == {}
