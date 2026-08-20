@@ -4,6 +4,72 @@
       title="方案生成与分工"
       subtitle="拖拽卡片切换状态，点击卡片编辑章节内容"
     >
+      <!-- 章节分工（仅 owner 可见）：为章节指定负责人并推送分工 -->
+      <a-card
+        v-if="isOwner"
+        title="章节分工"
+        class="division-view__assign-card"
+      >
+        <template #extra>
+          <a-button
+            type="primary"
+            size="small"
+            :disabled="changedCount === 0"
+            :loading="assigning"
+            @click="handleAssign"
+          >
+            {{ changedCount > 0 ? `推送分工（${changedCount} 项）` : '推送分工' }}
+          </a-button>
+        </template>
+        <EmptyState
+          v-if="outline.length === 0"
+          description="暂无大纲，请先到「方案大纲生成」页确认大纲"
+        >
+          <template #action>
+            <a-button
+              type="primary"
+              @click="goToGenerate"
+            >
+              前往方案大纲生成
+            </a-button>
+          </template>
+        </EmptyState>
+        <a-table
+          v-else
+          :columns="assignColumns"
+          :data-source="assignRows"
+          :pagination="false"
+          row-key="chapter_no"
+          size="middle"
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'chapter'">
+              {{ record.chapter_no }} {{ record.title }}
+            </template>
+            <template v-else-if="column.key === 'assignee'">
+              <a-select
+                v-model:value="draftAssignees[record.chapter_no]"
+                :options="memberOptions"
+                placeholder="选择负责人"
+                allow-clear
+                show-search
+                :filter-option="filterMember"
+                style="width: 180px"
+              />
+            </template>
+            <template v-else-if="column.key === 'status'">
+              <a-tag
+                v-if="record.status && TASK_STATUS_META[record.status as TaskStatus]"
+                :color="TASK_STATUS_META[record.status as TaskStatus].color"
+              >
+                {{ TASK_STATUS_META[record.status as TaskStatus].text }}
+              </a-tag>
+              <span v-else>—</span>
+            </template>
+          </template>
+        </a-table>
+      </a-card>
+
       <!-- 工具栏 -->
       <div class="division-view__toolbar">
         <a-space wrap>
@@ -14,26 +80,54 @@
             style="width: 180px"
             :options="assigneeFilterOptions"
           />
-          <a-tag color="blue">共 {{ filteredItems.length }} 个章节</a-tag>
-          <a-tag v-if="myTaskCount > 0" color="processing">我的任务 {{ myTaskCount }}</a-tag>
+          <a-tag color="blue">
+            共 {{ filteredItems.length }} 个章节
+          </a-tag>
+          <a-tag
+            v-if="myTaskCount > 0"
+            color="processing"
+          >
+            我的任务 {{ myTaskCount }}
+          </a-tag>
         </a-space>
         <a-space>
-          <a-button @click="fetchAll" :loading="loading">
-            <template #icon><ReloadOutlined /></template>
+          <a-button
+            :loading="loading"
+            @click="fetchAll"
+          >
+            <template #icon>
+              <ReloadOutlined />
+            </template>
             刷新
           </a-button>
-          <a-button type="primary" @click="goToGenerate">
-            <template #icon><ArrowLeftOutlined /></template>
+          <a-button
+            type="primary"
+            @click="goToGenerate"
+          >
+            <template #icon>
+              <ArrowLeftOutlined />
+            </template>
             返回大纲
           </a-button>
         </a-space>
       </div>
 
       <!-- 加载/错误状态 -->
-      <LoadingSkeleton v-if="loading" :rows="6" />
-      <ErrorState v-else-if="loadError" :description="loadError">
+      <LoadingSkeleton
+        v-if="loading"
+        :rows="6"
+      />
+      <ErrorState
+        v-else-if="loadError"
+        :description="loadError"
+      >
         <template #action>
-          <a-button type="primary" @click="fetchAll">重试</a-button>
+          <a-button
+            type="primary"
+            @click="fetchAll"
+          >
+            重试
+          </a-button>
         </template>
       </ErrorState>
 
@@ -65,14 +159,24 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import api from '@/api/client'
+import { fetchWorkflowStatus } from '@/api/workflow'
 import PageContainer from '@/components/PageContainer.vue'
 import ErrorState from '@/components/ErrorState.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 import DivisionKanban from './components/DivisionKanban.vue'
 import ChapterEditorDrawer from './components/ChapterEditorDrawer.vue'
 import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
 import { usePermission } from '@/composables/usePermission'
-import type { AssignmentItem, TaskStatus, AssignmentNode } from '@/types'
+import { TASK_STATUS_META } from '@/types'
+import type {
+  AssignmentItem,
+  TaskStatus,
+  AssignmentNode,
+  ProjectMember,
+  OutlineItem,
+  OutlineSection,
+} from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -86,6 +190,13 @@ const loadError = ref('')
 const items = ref<AssignmentItem[]>([])
 const projectOwnerId = ref('')
 
+// 分配面板（仅 owner）：大纲主干、树形分工数据、成员列表、分配草稿与提交态
+const outline = ref<OutlineItem[]>([])
+const assignTree = ref<AssignmentNode[]>([])
+const members = ref<ProjectMember[]>([])
+const draftAssignees = ref<Record<string, string | undefined>>({})
+const assigning = ref(false)
+
 // 筛选
 const filterAssignee = ref<string | undefined>(undefined)
 
@@ -94,6 +205,116 @@ const editorOpen = ref(false)
 const editingTask = ref<AssignmentItem | null>(null)
 
 const isOwner = computed(() => isProjectOwner(projectOwnerId.value))
+
+// 分配表格列
+const assignColumns = [
+  { title: '章节', key: 'chapter', dataIndex: 'chapter_no' },
+  { title: '负责人', key: 'assignee', width: 220 },
+  { title: '状态', key: 'status', width: 120 },
+]
+
+/** 分配表格行：以大纲章/节为主干，按 chapter_no 合并已有分工数据 */
+interface AssignRow {
+  chapter_no: string
+  title: string
+  id?: string
+  assignee_id?: string
+  assignee_name?: string
+  status?: TaskStatus | string
+  children?: AssignRow[]
+}
+
+const memberOptions = computed(() =>
+  members.value.map((m) => ({
+    value: m.user_id,
+    label: m.display_name ? `${m.display_name}（${m.email}）` : m.email,
+  })),
+)
+
+const filterMember = (input: string, option: { label: string }) =>
+  option.label.toLowerCase().includes(input.toLowerCase())
+
+/** 分工树递归拍平：章行 + 子节 children */
+const flattenAssignmentNodes = (nodes: AssignmentNode[]): AssignmentNode[] =>
+  nodes.flatMap((n) => [n, ...(n.children?.length ? flattenAssignmentNodes(n.children) : [])])
+
+/** 大纲子节标题：字符串（LLM 原始）或 { title } 对象（编辑产物） */
+const sectionTitleOf = (section: OutlineSection): string =>
+  typeof section === 'string' ? section : section.title
+
+/**
+ * 分配表格数据源：以大纲章行为主干（章行 + 子节行），按 chapter_no 合并已有分工。
+ * chapter-assignments 仅返回已分配章节，无分工记录时须以大纲为主干，owner 才能首次分配；
+ * 大纲外的孤儿分工记录追加末尾（容错脏数据）。
+ */
+const assignRows = computed<AssignRow[]>(() => {
+  const flat = flattenAssignmentNodes(assignTree.value)
+  const byNo = new Map(flat.map((n) => [n.chapter_no, n]))
+  const rows: AssignRow[] = []
+  const pushed = new Set<string>()
+
+  const mergeFrom = (no: string, title: string): AssignRow => {
+    const a = byNo.get(no)
+    return {
+      chapter_no: no,
+      title,
+      id: a?.id ?? undefined,
+      assignee_id: a?.assignee_id ?? undefined,
+      assignee_name: a?.assignee_name ?? undefined,
+      status: a?.status ?? undefined,
+    }
+  }
+
+  const pushChapter = (chapterNo: string, title: string, sections: OutlineSection[]) => {
+    const row = mergeFrom(chapterNo, title)
+    // 子节编号规则与大纲树一致：`${chapter_no}.${i+1}`
+    const children = sections.map((s, i) => mergeFrom(`${chapterNo}.${i + 1}`, sectionTitleOf(s)))
+    const covered = new Set(children.map((c) => c.chapter_no))
+    // 追加大纲子节未覆盖的节级分工记录（编号超出大纲范围的历史分工）
+    flat.forEach((a) => {
+      if (a.chapter_no.startsWith(`${chapterNo}.`) && !covered.has(a.chapter_no)) {
+        children.push(mergeFrom(a.chapter_no, a.title))
+        covered.add(a.chapter_no)
+      }
+    })
+    row.children = children.length ? children : undefined
+    rows.push(row)
+    pushed.add(chapterNo)
+    children.forEach((c) => pushed.add(c.chapter_no))
+  }
+
+  // 主干：大纲章行
+  outline.value.forEach((c) => pushChapter(c.chapter_no, c.title, c.sections ?? []))
+
+  // 孤儿分工记录（不在大纲内）：追加为顶层行
+  assignTree.value.forEach((node) => {
+    if (pushed.has(node.chapter_no)) return
+    // 子节级记录若父章已展示，则已并入其 children，不再重复提升为顶层
+    if (node.chapter_no.includes('.') && pushed.has(node.chapter_no.split('.')[0])) return
+    const row = mergeFrom(node.chapter_no, node.title)
+    const children = (node.children ?? []).map((c) => mergeFrom(c.chapter_no, c.title))
+    row.children = children.length ? children : undefined
+    rows.push(row)
+    pushed.add(node.chapter_no)
+    children.forEach((c) => pushed.add(c.chapter_no))
+  })
+
+  return rows
+})
+
+/** 可分配行：章行 + 其子节行（粒度与树形接口一致） */
+const assignableRows = computed<AssignRow[]>(() =>
+  assignRows.value.flatMap((row) => [row, ...(row.children?.length ? row.children : [])]),
+)
+
+/** 待推送的变更条目：草稿与已推送值不一致且非空 */
+const changedItems = computed(() =>
+  assignableRows.value.filter((row) => {
+    const next = draftAssignees.value[row.chapter_no]
+    return !!next && next !== row.assignee_id
+  }),
+)
+const changedCount = computed(() => changedItems.value.length)
 
 const assigneeFilterOptions = computed(() => {
   const map = new Map<string, string>()
@@ -117,10 +338,27 @@ const myTaskCount = computed(() =>
 )
 
 /* ---------------- 数据加载 ---------------- */
+
+/** 同步分配草稿基线（owner 下拉初值 = 已推送的 assignee_id） */
+const syncDraftBaseline = (nodes: AssignmentNode[]) => {
+  const draft: Record<string, string | undefined> = {}
+  const walk = (list: AssignmentNode[]) => {
+    list.forEach((node) => {
+      draft[node.chapter_no] = node.assignee_id ?? undefined
+      if (node.children?.length) walk(node.children)
+    })
+  }
+  walk(nodes)
+  draftAssignees.value = draft
+}
+
 const fetchAssignments = async () => {
   try {
     const { data } = await api.get(`/projects/${projectId}/chapter-assignments`)
     if (data.code === 0) {
+      const tree: AssignmentNode[] = data.data?.items || []
+      assignTree.value = tree
+      syncDraftBaseline(tree)
       // 拍平树形结构
       const flat: AssignmentItem[] = []
       const flatten = (nodes: AssignmentNode[]) => {
@@ -131,11 +369,23 @@ const fetchAssignments = async () => {
           if (node.children?.length) flatten(node.children)
         })
       }
-      flatten(data.data?.items || [])
+      flatten(tree)
       items.value = flat
     }
   } catch {
     loadError.value = '分工数据加载失败'
+  }
+}
+
+/** 拉取工作流状态中的大纲（分配表格主干数据源） */
+const fetchOutline = async () => {
+  try {
+    const { data } = await fetchWorkflowStatus(projectId)
+    if (data.code === 0) {
+      outline.value = data.data?.outline || []
+    }
+  } catch {
+    // 静默失败：大纲缺失仅影响分配表格主干，由空态提示引导
   }
 }
 
@@ -150,13 +400,58 @@ const fetchProjectOwner = async () => {
   }
 }
 
+const fetchMembers = async () => {
+  try {
+    const { data } = await api.get(`/projects/${projectId}/members`)
+    if (data.code === 0) {
+      members.value = data.data?.items || []
+    }
+  } catch {
+    // 静默失败
+  }
+}
+
 const fetchAll = async () => {
   loading.value = true
   loadError.value = ''
   try {
-    await Promise.all([fetchAssignments(), fetchProjectOwner()])
+    await Promise.all([
+      fetchAssignments(),
+      fetchOutline(),
+      fetchProjectOwner(),
+      fetchMembers(),
+    ])
   } finally {
     loading.value = false
+  }
+}
+
+/* ---------------- 分工推送（仅 owner） ---------------- */
+const handleAssign = async () => {
+  const payload = changedItems.value.map((row) => ({
+    chapter_no: row.chapter_no,
+    title: row.title,
+    assignee_id: draftAssignees.value[row.chapter_no] as string,
+  }))
+  if (payload.length === 0) return
+  assigning.value = true
+  try {
+    // 后端幂等 upsert，响应同为树形结构
+    const { data } = await api.post(`/projects/${projectId}/chapter-assignments`, payload)
+    if (data.code === 0) {
+      const tree: AssignmentNode[] = data.data?.items || []
+      assignTree.value = tree
+      syncDraftBaseline(tree)
+      await fetchAssignments()
+      message.success(`已推送 ${payload.length} 个章节的分工任务`)
+    } else {
+      message.error(data.message || '分工推送失败')
+    }
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '分工推送失败')
+  } finally {
+    assigning.value = false
   }
 }
 
@@ -216,6 +511,10 @@ onMounted(() => {
 <style scoped>
 .division-view {
   width: 100%;
+}
+
+.division-view__assign-card {
+  margin-bottom: 16px;
 }
 
 .division-view__toolbar {
