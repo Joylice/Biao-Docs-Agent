@@ -549,12 +549,23 @@ async def write_node(state: dict) -> dict:
             high_risk = await benchmark_service.load_high_risk_points(
                 db, uuid.UUID(project_id)
             )
+            # 阶段 F：Tool Calling 前置补充检索（仅真实模式；mock/异常降级保持原上下文）
+            context = state.get("retrieved_context", "")
+            if not await settings_service.is_mock_enabled():
+                from app.agents.tools import write_tool_preflight
+
+                try:
+                    context = await write_tool_preflight(
+                        project_id, chapter.get("title", ""), context, doc_ids
+                    )
+                except Exception as e:
+                    logger.warning("write 工具前置检索失败（降级原上下文）: %s", e)
             content = await generate_chapter(
                 chapter=chapter,
                 score_points=state.get("score_points", []),
                 tech_requirements=state.get("tech_requirements", []),
                 project_id=uuid.UUID(project_id),
-                context=state.get("retrieved_context", ""),
+                context=context,
                 db=db,
                 doc_ids=doc_ids,
                 on_delta=on_delta,
@@ -639,6 +650,17 @@ async def validate_node(state: dict) -> dict:
 
     # 阶段 E1：★ 评分点参数断言 vs 正文（param_mismatch 走同一重试链路）
     issues.extend(await check_chapter_params(content, score_points))
+
+    # 阶段 F：真实模式下 tool calling 辅助取证复核（mock/异常保留原 issues）
+    if issues and not await settings_service.is_mock_enabled():
+        from app.agents.tools import validate_tool_recheck
+
+        try:
+            issues = await validate_tool_recheck(
+                state.get("project_id", ""), chapter_no, content, issues, score_points
+            )
+        except Exception as e:
+            logger.warning("校验问题工具复核失败（保留原 issues）: %s", e)
 
     if issues and retries < MAX_VALIDATE_RETRIES:
         return {"validation_ok": False, "validate_retries": retries + 1}

@@ -6,7 +6,7 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from app.core.config import settings
@@ -152,6 +152,76 @@ async def call_llm_text(
         return response.choices[0].message.content
     except Exception as e:
         raise LLMServiceError(f"LLM 调用失败: {e}") from None
+
+
+async def chat_with_tools(
+    system_prompt: str,
+    user_prompt: str,
+    tools: list[dict],
+    executor: Callable[[str, dict[str, Any]], Awaitable[str]],
+    *,
+    max_rounds: int = 3,
+    temperature: float = 0.3,
+    mock: bool | None = None,
+) -> tuple[str, list[dict]]:
+    """Tool Calling 对话（阶段 F）：解析 tool_calls 循环 ≤ max_rounds 轮.
+
+    mock 模式直通纯文本分支（不触发任何工具，行为等价 call_llm_text）；
+    真实模式：acompletion(tools=...) → 解析 tool_calls → executor 执行 →
+    结果脱敏后回填续问，直到纯文本收敛或轮数耗尽（不带 tools 强收敛）。
+    返回 (最终文本, 调用历史 [{name, arguments, result}])。
+    单个工具执行异常回填「工具执行失败」继续对话，不中断循环。
+    """
+    if await settings_service.is_mock_enabled(mock):
+        text = await call_llm_text(system_prompt, user_prompt, temperature, mock=True)
+        return text, []
+    user_prompt = redact(user_prompt)  # 外发 LLM 脱敏（安全铁律，出口兜底，无开关）
+    try:
+        from litellm import acompletion
+
+        messages: list[Any] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        calls: list[dict] = []
+        for _ in range(max_rounds):
+            response = await acompletion(
+                model=settings.llm_model,
+                messages=messages,
+                tools=tools,
+                temperature=temperature,
+                **await _api_key_kwargs(settings.llm_model),
+            )
+            message = response.choices[0].message
+            tool_calls = getattr(message, "tool_calls", None)
+            if not tool_calls:
+                return (message.content or ""), calls
+            messages.append(message)
+            for tc in tool_calls:
+                name = tc.function.name
+                try:
+                    arguments = json.loads(tc.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    arguments = {}
+                try:
+                    result = await executor(name, arguments)
+                except Exception as e:  # 工具异常回填继续，不中断对话
+                    result = f"工具执行失败: {e}"
+                result = redact(result)  # 工具结果同属外发内容，回填前脱敏
+                calls.append({"name": name, "arguments": arguments, "result": result})
+                messages.append(
+                    {"role": "tool", "tool_call_id": tc.id, "content": result}
+                )
+        # 轮数耗尽：不带 tools 收敛最终答复
+        response = await acompletion(
+            model=settings.llm_model,
+            messages=messages,
+            temperature=temperature,
+            **await _api_key_kwargs(settings.llm_model),
+        )
+        return (response.choices[0].message.content or ""), calls
+    except Exception as e:
+        raise LLMServiceError(f"Tool Calling 调用失败: {e}") from None
 
 
 _MOCK_STREAM_SLICE = 20  # mock 流式切片长度（字符）

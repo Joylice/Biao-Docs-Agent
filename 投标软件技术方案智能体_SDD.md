@@ -694,13 +694,15 @@ graph.add_edge("export", END)
 
 ### 6.3 工具注册
 
-| 工具 | 用途 | 授权 |
-|---|---|---|
-| kb_search | 资料库检索（embedding 相似度） | 自动 |
-| get_score_points | 读取当前项目评分点 | 自动 |
-| list_sections | 读取已生成章节 | 自动 |
-| update_glossary | 更新术语表 | 自动 |
-| web_search | 行业公开资料检索 | 二期（需人工授权） |
+| 工具 | 用途 | 授权 | 落地状态 |
+|---|---|---|---|
+| kb_search | 资料库检索（embedding 相似度+rerank） | 自动 | 阶段 F 已落地（`app/agents/tools.py`） |
+| get_score_points | 读取当前项目评分点 | 自动 | 阶段 F 已落地 |
+| list_sections | 读取已生成章节 | 自动 | 阶段 F 已落地（section_id/title/≤200 字摘要） |
+| update_glossary | 更新术语表 | 自动 | 阶段 F 已落地（纯函数合并，同名覆盖，经节点返回写回 state.glossary） |
+| web_search | 行业公开资料检索 | 二期（需人工授权） | 未实现（不在本轮范围） |
+
+**Tool Calling 链路（阶段 F）**：`llm_service.chat_with_tools`（LiteLLM `tools` 参数 + tool_call 解析循环 ≤3 轮，工具结果 redact 脱敏后回填续问，工具异常回填「工具执行失败」不中断，轮数耗尽不带 tools 强收敛；mock 模式直通纯文本分支不触发任何工具）；工具注册表 `app/agents/tools.py`（TOOL_SCHEMAS + `execute_tool` 按名调度，kb_search 含 mock 确定性桩分支）。**节点接入（保守，图拓扑不动）**：write_node 生成前真实模式下经 `write_tool_preflight` 绑定 kb_search/get_score_points 由 LLM 自主决定补充检索（命中素材追加到 retrieve 基础上下文，异常降级原上下文）；validate_node 存在 issues 时经 `validate_tool_recheck` 绑定 list_sections/get_score_points 取证复核（输出 `{"keep": [...]}` 过滤误报，解析失败保守保留全部）。mock 模式行为与现版本逐字节等价（tool 分支不触发）。
 
 ### 6.4 提示词体系（MVP 五件套）
 

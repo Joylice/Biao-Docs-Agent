@@ -63,6 +63,14 @@ _NO_PARAM_ISSUE = patch(
 )
 
 
+@pytest.fixture(autouse=True)
+def _mock_llm_on(monkeypatch):
+    """节点测试默认 mock 语义：阶段 F 工具分支仅真实模式触发，测试内可覆写为 False."""
+    monkeypatch.setattr(
+        "app.services.settings_service.is_mock_enabled", AsyncMock(return_value=True)
+    )
+
+
 class TestValidateNode:
     """validate 节点规则校验."""
 
@@ -793,3 +801,124 @@ class TestOutlineNodeCoveredClauses:
         assert skeleton.tree[0]["covered_clauses"] == ["4.2.1", "4.2.2"], (
             "covered_clauses 应随 tree 持久化到 proposal_skeletons"
         )
+
+
+class TestWriteNodeToolPreflight:
+    """阶段 F：write_node 工具前置补充检索（仅真实模式，mock/异常降级原上下文）."""
+
+    def _state(self) -> dict:
+        return {
+            "project_id": str(PROJECT_ID),
+            "current_chapter": "1",
+            "outline": [{"chapter_no": "1", "title": "概述", "sections": []}],
+            "chapters": {},
+            "score_points": [],
+            "tech_requirements": [],
+            "retrieved_context": "基础素材",
+        }
+
+    def _patch_common(self, monkeypatch, captured: dict) -> None:
+        async def fake_generate(**kwargs):
+            captured.update(kwargs)
+            return "# 章节\n\n" + "内容" * 100
+
+        monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
+        monkeypatch.setattr(nodes, "publish_event", AsyncMock())
+        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+
+    @pytest.mark.asyncio
+    async def test_mock_mode_skips_preflight(self, monkeypatch) -> None:
+        """mock 模式行为与现版本等价：preflight 不触发，上下文原样传入."""
+        captured: dict = {}
+        self._patch_common(monkeypatch, captured)
+        preflight = AsyncMock(return_value="不应被调用")
+        monkeypatch.setattr("app.agents.tools.write_tool_preflight", preflight)
+        await nodes.write_node(self._state())
+        preflight.assert_not_called()
+        assert captured["context"] == "基础素材"
+
+    @pytest.mark.asyncio
+    async def test_real_mode_enriches_context(self, monkeypatch) -> None:
+        """真实模式：preflight 返回的补充素材拼入 generate_chapter 上下文."""
+        captured: dict = {}
+        self._patch_common(monkeypatch, captured)
+        monkeypatch.setattr(
+            "app.services.settings_service.is_mock_enabled", AsyncMock(return_value=False)
+        )
+        monkeypatch.setattr(
+            "app.agents.tools.write_tool_preflight",
+            AsyncMock(return_value="基础素材\n\n---\n\n补充素材"),
+        )
+        await nodes.write_node(self._state())
+        assert "补充素材" in captured["context"]
+
+    @pytest.mark.asyncio
+    async def test_preflight_failure_degrades(self, monkeypatch) -> None:
+        """preflight 异常降级：不阻塞生成，上下文保持原样."""
+        captured: dict = {}
+        self._patch_common(monkeypatch, captured)
+        monkeypatch.setattr(
+            "app.services.settings_service.is_mock_enabled", AsyncMock(return_value=False)
+        )
+        monkeypatch.setattr(
+            "app.agents.tools.write_tool_preflight", AsyncMock(side_effect=RuntimeError("boom"))
+        )
+        result = await nodes.write_node(self._state())
+        assert captured["context"] == "基础素材"
+        assert result["chapters"]["1"]
+
+
+class TestValidateNodeToolRecheck:
+    """阶段 F：validate_node 工具辅助取证复核（仅真实模式且存在 issues）."""
+
+    @_NO_PARAM_ISSUE
+    @pytest.mark.asyncio
+    async def test_recheck_filters_false_positive(self, monkeypatch) -> None:
+        """真实模式：复核后 issues 清空 → 校验通过."""
+        monkeypatch.setattr(
+            "app.services.settings_service.is_mock_enabled", AsyncMock(return_value=False)
+        )
+        monkeypatch.setattr("app.agents.tools.validate_tool_recheck", AsyncMock(return_value=[]))
+        state = {
+            "project_id": str(PROJECT_ID),
+            "current_chapter": "1",
+            "chapters": {"1": "短"},
+            "validate_retries": 0,
+        }
+        result = await nodes.validate_node(state)
+        assert result["validation_ok"] is True
+
+    @_NO_PARAM_ISSUE
+    @pytest.mark.asyncio
+    async def test_mock_mode_skips_recheck(self, monkeypatch) -> None:
+        """mock 模式：复核不触发，规则 issues 保持."""
+        recheck = AsyncMock(return_value=[])
+        monkeypatch.setattr("app.agents.tools.validate_tool_recheck", recheck)
+        state = {
+            "project_id": str(PROJECT_ID),
+            "current_chapter": "1",
+            "chapters": {"1": "短"},
+            "validate_retries": 0,
+        }
+        result = await nodes.validate_node(state)
+        recheck.assert_not_called()
+        assert result["validation_ok"] is False
+
+    @_NO_PARAM_ISSUE
+    @pytest.mark.asyncio
+    async def test_recheck_failure_keeps_issues(self, monkeypatch) -> None:
+        """复核异常降级：保留原 issues，校验仍失败."""
+        monkeypatch.setattr(
+            "app.services.settings_service.is_mock_enabled", AsyncMock(return_value=False)
+        )
+        monkeypatch.setattr(
+            "app.agents.tools.validate_tool_recheck", AsyncMock(side_effect=RuntimeError("boom"))
+        )
+        state = {
+            "project_id": str(PROJECT_ID),
+            "current_chapter": "1",
+            "chapters": {"1": "短"},
+            "validate_retries": 0,
+        }
+        result = await nodes.validate_node(state)
+        assert result["validation_ok"] is False
