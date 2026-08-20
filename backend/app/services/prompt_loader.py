@@ -30,8 +30,11 @@ def load_parse_prompt(tender_text: str) -> tuple[str, str]:
 def load_outline_prompt(
     score_points: list[dict],
     tech_requirements: list[dict],
+    project_name: str = "",
+    tender_no: str = "",
+    industry: str = "",
 ) -> tuple[str, str]:
-    """加载大纲生成提示词模板."""
+    """加载大纲生成提示词模板（阶段6：注入项目上下文）."""
     config = _load_template("outline")
     system_prompt = config.get("system_prompt", "")
     user_prompt_template = config.get("user_prompt", "")
@@ -44,7 +47,20 @@ def load_outline_prompt(
         f"- [{tr.get('category', '')}] {tr.get('description', '')}" for tr in tech_requirements
     )
 
-    user_prompt = user_prompt_template.format(score_points=sp_text, tech_requirements=tr_text)
+    ctx_lines: list[str] = []
+    if project_name:
+        ctx_lines.append(f"- 项目名称：{project_name}")
+    if tender_no:
+        ctx_lines.append(f"- 招标编号：{tender_no}")
+    if industry:
+        ctx_lines.append(f"- 所属行业：{industry}")
+    project_context = "\n".join(ctx_lines) or "- （无项目信息，仅依据技术需求）"
+
+    user_prompt = user_prompt_template.format(
+        score_points=sp_text,
+        tech_requirements=tr_text,
+        project_context=project_context,
+    )
     return system_prompt, user_prompt
 
 

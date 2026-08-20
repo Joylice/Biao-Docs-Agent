@@ -769,11 +769,17 @@ class TestNodeCommits:
         assert "error" not in result
         assert result["outline"], "mock LLM 应返回大纲"
         assert dbs, "generate_outline_node 应打开 DB session"
-        assert dbs[0].commit_count >= 1, "大纲落库后未 commit（skeleton 将静默回滚）"
-        # 大纲确实写入 session
-        assert any(obj.__class__.__name__ == "ProposalSkeleton" for obj in dbs[0].added), (
-            "大纲应写入 proposal_skeletons"
+        # 阶段6 后首个 session 为项目上下文只读查询；写库 session 含 skeleton 且必须 commit
+        write_db = next(
+            (
+                db
+                for db in dbs
+                if any(obj.__class__.__name__ == "ProposalSkeleton" for obj in db.added)
+            ),
+            None,
         )
+        assert write_db is not None, "大纲应写入 proposal_skeletons"
+        assert write_db.commit_count >= 1, "大纲落库后未 commit（skeleton 将静默回滚）"
 
 
 class TestOutlineNodeCoveredClauses:
@@ -854,6 +860,122 @@ class TestOutlineNodeCoveredClauses:
         skeleton = next(o for o in db.added if isinstance(o, ProposalSkeleton))
         assert skeleton.tree[0]["covered_clauses"] == ["4.2.1", "4.2.2"], (
             "covered_clauses 应随 tree 持久化到 proposal_skeletons"
+        )
+
+
+class TestOutlineProjectContextAndIsolation:
+    """阶段6：大纲注入项目上下文（名称/标书号/行业）+ 项目间隔离回归."""
+
+    @staticmethod
+    def _project(project_id) -> "Project":
+        from app.models.project import Project
+
+        return Project(
+            id=project_id,
+            name="智慧水务一体化平台项目",
+            tender_no="ZB-2026-001",
+            industry="智慧水务",
+            owner_id=uuid.uuid4(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_outline_prompt_injects_project_context(self, monkeypatch) -> None:
+        """大纲提示词应含项目名称/标书号/行业，且系统提示词要求结合项目具体化."""
+        from app.models.project import Project
+        from app.services import llm_service
+
+        captured: dict = {}
+
+        async def fake_llm(**kwargs) -> dict:
+            captured["system_prompt"] = kwargs.get("system_prompt")
+            captured["user_prompt"] = kwargs.get("user_prompt")
+            return {
+                "chapters": [
+                    {"chapter_no": "1", "title": "概述", "sections": [], "covered_clauses": []}
+                ]
+            }
+
+        async def fake_publish(_project_id: str, _event: dict) -> None:
+            pass
+
+        monkeypatch.setattr(
+            nodes, "async_session_factory", lambda: FakeDB({Project: [self._project(PROJECT_ID)]})
+        )
+        monkeypatch.setattr(nodes, "publish_event", fake_publish)
+        monkeypatch.setattr(llm_service, "call_llm_with_schema", fake_llm)
+
+        state = {
+            "project_id": str(PROJECT_ID),
+            "score_points": [{"clause_no": "1", "item": "技术方案"}],
+            "tech_requirements": [{"seq": 1, "description": "巡检管理", "category": "软件"}],
+        }
+        result = await nodes.generate_outline_node(state)
+        assert "error" not in result
+        assert "智慧水务一体化平台项目" in captured["user_prompt"]
+        assert "ZB-2026-001" in captured["user_prompt"]
+        assert "智慧水务" in captured["user_prompt"]
+        # 系统提示词强化：章节标题必须结合项目具体化，禁止通用模板
+        assert "具体化" in captured["system_prompt"]
+
+    @pytest.mark.asyncio
+    async def test_context_missing_degrades_not_blocking(self, monkeypatch) -> None:
+        """项目不存在 → 降级照常生成大纲（不阻塞）."""
+
+        async def fake_llm(**kwargs) -> dict:
+            return {
+                "chapters": [
+                    {"chapter_no": "1", "title": "概述", "sections": [], "covered_clauses": []}
+                ]
+            }
+
+        async def fake_publish(_project_id: str, _event: dict) -> None:
+            pass
+
+        monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
+        monkeypatch.setattr(nodes, "publish_event", fake_publish)
+        monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", fake_llm)
+
+        state = {"project_id": str(PROJECT_ID), "score_points": [], "tech_requirements": []}
+        result = await nodes.generate_outline_node(state)
+        assert "error" not in result
+        assert result["outline"]
+
+    @pytest.mark.asyncio
+    async def test_two_projects_outline_isolated(self, monkeypatch) -> None:
+        """双项目先后生成大纲：各自按 project_id 落库互不串扰."""
+        from app.models.proposal import ProposalSkeleton
+
+        pid_a, pid_b = uuid.uuid4(), uuid.uuid4()
+        dbs: list[FakeDB] = []
+
+        def factory():
+            db = FakeDB()
+            dbs.append(db)
+            return db
+
+        async def fake_llm(**kwargs) -> dict:
+            return {
+                "chapters": [
+                    {"chapter_no": "1", "title": "概述", "sections": [], "covered_clauses": []}
+                ]
+            }
+
+        async def fake_publish(_project_id: str, _event: dict) -> None:
+            pass
+
+        monkeypatch.setattr(nodes, "async_session_factory", factory)
+        monkeypatch.setattr(nodes, "publish_event", fake_publish)
+        monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", fake_llm)
+
+        for pid in (pid_a, pid_b):
+            result = await nodes.generate_outline_node(
+                {"project_id": str(pid), "score_points": [], "tech_requirements": []}
+            )
+            assert "error" not in result
+
+        skeletons = [o for db in dbs for o in db.added if isinstance(o, ProposalSkeleton)]
+        assert {s.project_id for s in skeletons} == {pid_a, pid_b}, (
+            "每个项目的大纲应各自落到自己的 project_id，不得串扰"
         )
 
 

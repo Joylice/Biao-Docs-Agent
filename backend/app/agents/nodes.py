@@ -265,9 +265,28 @@ async def generate_outline_node(state: dict) -> dict:
     score_points = state.get("score_points", [])
     tech_requirements = state.get("tech_requirements", [])
 
+    # 阶段6：注入项目上下文（名称/招标编号/行业）；查询失败降级不阻塞生成
+    project_name = tender_no = industry = ""
+    if project_id:
+        try:
+            async with async_session_factory() as db:
+                result = await db.execute(
+                    select(Project).where(Project.id == uuid.UUID(project_id))
+                )
+                project = result.scalar_one_or_none()
+                if project is not None:
+                    project_name = project.name or ""
+                    tender_no = project.tender_no or ""
+                    industry = project.industry or ""
+        except Exception:
+            logger.warning("获取项目上下文失败，降级为无上下文生成大纲")
+
     system_prompt, user_prompt = load_outline_prompt(
         score_points=score_points,
         tech_requirements=tech_requirements,
+        project_name=project_name,
+        tender_no=tender_no,
+        industry=industry,
     )
 
     try:
