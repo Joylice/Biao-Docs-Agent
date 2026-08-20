@@ -602,7 +602,6 @@ CREATE TABLE proposal_versions (
 | GET | /projects/{pid}/requirements | 技术需求列表（LEFT JOIN score_points 携带 related_sp；only_mapped=true 仅返回已映射需求） |
 | GET | /projects/{pid}/benchmark | 评分对标报告（阶段 D：项目成员可读；confirmed 评分点懒计算 coverage/risk 并回写 risk_level；返回 items[{clause_no,item,score,criteria,strategy,coverage,risk}] 按 score×(1-coverage) 降序） |
 | PUT | /projects/{pid}/benchmark/{clause_no}/strategy | 编辑评分点应对策略（阶段 D：**仅 owner**；body.strategy ≤2000 字，空白置 NULL；评分点不存在 4004；审计 benchmark.strategy） |
-| POST | /projects/{pid}/generate | 触发方案生成（返回 task_id） |
 | POST | /projects/{pid}/workflow/start | 启动方案生成工作流（API 进程后台任务推进，遇 HITL interrupt 停下；在途重复启动被拒 4009） |
 | GET | /projects/{pid}/workflow/status | 工作流状态（phase/progress/interrupt/score_points/outline/chapters/error） |
 | POST | /projects/{pid}/workflow/confirm-score-points | 确认评分点，resume 工作流进入大纲阶段（前置校验 interrupt 类型） |
@@ -618,12 +617,6 @@ CREATE TABLE proposal_versions (
 | POST | /projects/{pid}/workflow/outline-suggest | 大纲优化建议（2026-08-17：仅 confirm_outline 挂起时可用；mock 模式确定性规则建议（覆盖矩阵缺口→add_section/add_chapter），生产模式 LLM schema 建议（外发前 redact，失败降级规则建议）；建议为瞬态数据不落库） |
 | POST | /projects/{pid}/workflow/outline-suggest/apply | 应用大纲建议（2026-08-17：body.adopted 为 suggestion_id 列表；纯函数应用返回调整后大纲供人工核对，不写 state——最终执行仍由 confirm-outline 人工确认） |
 | POST | /projects/{pid}/workflow/section-suggest | 内容改进建议（2026-08-17：body.chapter_no 可选；mock 规则建议/生产 LLM schema（redact，失败降级空列表）；采纳执行复用 rewrite-chapter） |
-| GET | /projects/{pid}/skeleton | 方案骨架 |
-| GET | /projects/{pid}/sections | 章节列表（含状态/内容） |
-| PUT | /projects/{pid}/sections/{sid} | 章节编辑（人工直接改） |
-| POST | /projects/{pid}/sections/{sid}/review | 审阅动作（approve/rewrite+意见） |
-| POST | /projects/{pid}/export | 导出 Word（返回下载 URL） |
-| GET | /tasks/{tid} | 任务进度轮询 |
 | GET | /users | 用户列表（三期：**仅管理员** role=admin 或白名单；查询参数 keyword（邮箱/姓名 ilike）/role 枚举过滤/page；返回 email/display_name/role/created_at，不含 password_hash） |
 | PUT | /users/{user_id}/role | 角色变更（三期：**仅管理员**；role ∈ member/kb_admin/admin；不可变更自己 4000；降级 admin 时至少保留 1 名 admin 4000；审计 user.role_change 记 from/to） |
 | GET | /rbac/permissions | 权限点目录（阶段 A：**仅 system:manage**；返回 items[{code,name,category}]，供权限矩阵列头） |
@@ -650,6 +643,8 @@ CREATE TABLE proposal_versions (
 | POST | /projects/{pid}/versions/{id}/archive | 归档公司知识库（2026-08-18：**仅 owner**；body.kb_id 限公司级库否则 400；登记全局素材（project_id=NULL）+ 入队分块向量化；审计 proposal.archive） |
 | POST | /projects/{pid}/versions/{id}/rollback | 版本回滚（阶段 E5：**仅 owner**；按 snapshot_json 回写章级 proposal_sections（status=draft）并同步图状态，返回 chapters_restored；无结构化快照 400；审计 version.rollback） |
 | GET | /workbench/summary | 工作台汇总（2026-08-20：登录即可；单端点返回双视图数据——我的任务分桶（待领取/编制中/被打回/已提审/已通过，含项目名与章节号）、我的参与项目进度（total/approved/percent/状态分布 + phase 附注）；owner 额外返回 owner_review_pending 待审核清单，非 owner 返空） |
+
+注：早期草案中的 `/generate`、`/skeleton`、`/sections/{sid}`、`/sections/{sid}/review`、`/projects/{pid}/export`、`/tasks/{tid}` 为 legacy 占位，从未实现，现分别由 workflow/start、workflow/status（outline/chapters）、workflow/sections/{chapter_no} + chapters/{chapter_no}/annotations、workflow/confirm-review、workflow/export 取代（阶段 Z 清理）。
 
 **前端 HITL 交互契约**（2026-08-16 补）：所有 confirm 端点均校验 pending interrupt，前端不得直接调用，须先确保工作流停在对应 interrupt：
 - 招标解析页（ParseView 内嵌 ParseConfirmView）：「确认并生成大纲」先 GET workflow/status，无挂起 interrupt 则 POST workflow/start，轮询（1s×60）直到 interrupt.type=confirm_score_points 再调 confirm-score-points；state.error 非空时展示解析失败原因。**短路引导（2026-08-16）**：status 已挂起其他类型 interrupt（大纲确认/章节审阅）或 phase 已推进到 outline 之后（generate/review/done）时，不重复 start（在途重复启动被后端 4009 拒绝）也不盲等，立即提示「工作流已进入后续阶段，请前往方案生成页继续操作」；phase=confirm 无 interrupt 时（parse 节点刚完成、interrupt 即将挂起）仅轮询等待不 start。页面存在 uploaded/parsing 状态招标文件时每 5s 自动轮询解析状态。
