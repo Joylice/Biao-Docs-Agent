@@ -31,7 +31,7 @@
       </ErrorState>
       <EmptyState
         v-else-if="chapterKeys.length === 0"
-        description="暂无章节内容，请先在「方案生成」页生成技术方案"
+        description="暂无章节内容，请先在「方案大纲生成」页生成技术方案"
       />
       <template v-else>
         <!-- 左章节树 + 右内容 分栏 -->

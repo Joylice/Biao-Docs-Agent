@@ -1,7 +1,7 @@
 <template>
   <div class="division">
     <PageContainer
-      title="分工协作"
+      title="方案生成"
       subtitle="负责人分配章节并审核，成员领取编制并提交"
     >
       <LoadingSkeleton
@@ -118,7 +118,7 @@
           </template>
           <a-empty
             v-if="chapterRows.length === 0"
-            description="暂无大纲章节，请先在「方案生成」页确认大纲"
+            description="暂无大纲章节，请先在「方案大纲生成」页确认大纲"
           />
           <a-table
             v-else

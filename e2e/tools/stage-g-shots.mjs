@@ -1,6 +1,6 @@
 /**
  * 阶段 G UI 整改截图留存脚本（一次性工具，运行于 e2e 环境）.
- * 关键页面：工作台/项目列表/分工协作/方案生成/用户管理。
+ * 关键页面：工作台/项目列表/方案生成（分工）/方案大纲生成/用户管理。
  * 用法：node tools/stage-g-shots.mjs（前置：vite dev 5174 + 后端 8000）
  */
 import { chromium } from 'playwright';
@@ -39,18 +39,18 @@ await modal.getByRole('button', { name: /确\s*定/ }).click();
 await page.waitForTimeout(1500);
 await page.screenshot({ path: `${OUT}/02-projects-after-create.png`, fullPage: true });
 
-// 3. 进入项目 → 分工协作（名称含空格，用正则兼容 autoInsertSpace）
+// 3. 进入项目 → 方案生成（分工页，名称含空格，用正则兼容 autoInsertSpace）
 await page.getByText(/UI\s*快\s*照\s*验\s*证\s*项\s*目/).first().click();
 await page.waitForTimeout(1500);
-const divisionLink = page.getByText('分工协作', { exact: true }).first();
+const divisionLink = page.getByText('方案生成', { exact: true }).first();
 if (await divisionLink.count()) {
   await divisionLink.click();
   await page.waitForTimeout(1200);
 }
 await page.screenshot({ path: `${OUT}/03-division.png`, fullPage: true });
 
-// 4. 方案生成页
-const genLink = page.getByText('方案生成', { exact: true }).first();
+// 4. 方案大纲生成页
+const genLink = page.getByText('方案大纲生成', { exact: true }).first();
 if (await genLink.count()) {
   await genLink.click();
   await page.waitForTimeout(1200);

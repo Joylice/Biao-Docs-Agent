@@ -1,7 +1,7 @@
 <template>
   <div class="generate-view">
     <PageContainer
-      title="方案生成"
+      title="方案大纲生成"
       :subtitle="`进度: ${Math.round(progress * 100)}%`"
     >
       <!-- 高风险废标条款预警（阶段 H：引导去招标解析确认页逐条人工确认） -->
@@ -1759,7 +1759,7 @@ const canCompileSelectedChapter = computed(() => {
   return canEditChapter(ids, isProjectOwner(projectOwnerId.value))
 })
 
-/** 跳转分工协作页（「去编制」入口） */
+/** 跳转方案生成页（「去编制」入口） */
 const goToDivision = () => {
   router.push({ name: 'Division', params: { projectId } })
 }

@@ -828,7 +828,7 @@ const ensureScorePointInterrupt = async (): Promise<boolean> => {
   // 已挂起其他类型 interrupt（大纲确认/章节审阅）：工作流已推进到后续阶段，
   // 直接引导去方案生成页，避免盲目轮询空转（此前会一直转圈到 60s 超时）
   if (status?.interrupt) {
-    message.warning('工作流已进入后续阶段，请前往「方案生成」页继续操作')
+    message.warning('工作流已进入后续阶段，请前往「方案大纲生成」页继续操作')
     return false
   }
   // 无 interrupt：phase=init 才启动；phase=confirm 时 parse 节点刚完成、
@@ -837,7 +837,7 @@ const ensureScorePointInterrupt = async (): Promise<boolean> => {
   if (phase === 'init') {
     await api.post(`/projects/${projectId}/workflow/start`)
   } else if (phase !== 'confirm') {
-    message.warning('工作流已进入后续阶段，请前往「方案生成」页继续操作')
+    message.warning('工作流已进入后续阶段，请前往「方案大纲生成」页继续操作')
     return false
   }
   // 轮询等待 interrupt 就绪（parse 节点后台异步执行；error 提前终止）
@@ -847,7 +847,7 @@ const ensureScorePointInterrupt = async (): Promise<boolean> => {
     if (status?.interrupt?.type === 'confirm_score_points') return true
     // 轮询期间进入其他阶段（如大纲确认/审阅）：停止等待并引导
     if (status?.interrupt) {
-      message.warning('工作流已进入后续阶段，请前往「方案生成」页继续操作')
+      message.warning('工作流已进入后续阶段，请前往「方案大纲生成」页继续操作')
       return false
     }
     if (status?.error) {

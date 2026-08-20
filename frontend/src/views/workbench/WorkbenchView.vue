@@ -271,7 +271,7 @@ const fetchSummary = async (silent = false) => {
   }
 }
 
-/** 条目点击 → 对应项目的分工协作页 */
+/** 条目点击 → 对应项目的方案生成页 */
 const goDivision = (projectId: string) => {
   router.push({ name: 'Division', params: { projectId } })
 }

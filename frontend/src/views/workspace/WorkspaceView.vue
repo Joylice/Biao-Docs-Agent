@@ -221,7 +221,7 @@ const routeMenuKeys: Record<string, string> = {
   Division: 'division',
 }
 
-// 按投标流程步骤先后排列：招标解析 → 方案生成 → 审阅 → 分工协作
+// 按投标流程步骤先后排列：招标解析 → 方案大纲生成 → 审阅 → 方案生成
 const menuItems: MenuProps['items'] = [
   {
     key: 'parse',
@@ -231,7 +231,7 @@ const menuItems: MenuProps['items'] = [
   {
     key: 'generate',
     icon: () => h('span', { class: 'workspace__step' }, '2'),
-    label: '方案生成',
+    label: '方案大纲生成',
   },
   {
     key: 'review',
@@ -241,7 +241,7 @@ const menuItems: MenuProps['items'] = [
   {
     key: 'division',
     icon: () => h('span', { class: 'workspace__step' }, '4'),
-    label: '分工协作',
+    label: '方案生成',
   },
   {
     key: 'members',
