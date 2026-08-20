@@ -51,7 +51,15 @@
         <div class="workbench__section-title">
           我的待办
         </div>
-        <div class="workbench__buckets">
+        <EmptyState
+          v-if="totalTaskCount === 0"
+          illustration="board"
+          description="暂无待办任务，推送分工或领取任务后将出现在这里"
+        />
+        <div
+          v-else
+          class="workbench__buckets"
+        >
           <a-card
             v-for="bucket in BUCKET_ORDER"
             :key="bucket"
@@ -199,12 +207,13 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { PlusOutlined, FolderOpenOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
 import api from '@/api/client'
 import { currentUserId } from '@/stores/currentUser'
 import PageContainer from '@/components/PageContainer.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 
@@ -268,6 +277,11 @@ const router = useRouter()
 const loading = ref(false)
 const loadError = ref('')
 const summary = ref<WorkbenchSummary>(emptySummary())
+
+/** 全部待办条目总数：为 0 时展示看板空态插画 */
+const totalTaskCount = computed(() =>
+  BUCKET_ORDER.reduce((sum, bucket) => sum + summary.value.tasks[bucket].length, 0),
+)
 
 /** 拉取工作台聚合数据（单端点双视图；非 owner 的待审核清单为空；silent 时不触发骨架屏闪烁） */
 const fetchSummary = async (silent = false) => {
@@ -434,14 +448,14 @@ onUnmounted(closeUserWebSocket)
 .workbench__buckets {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-3);
   margin-bottom: 20px;
 }
 
 .workbench__bucket {
   flex: 1 1 200px;
   min-width: 200px;
-  background: var(--card-bg);
+  background: var(--bg-surface);
 }
 
 .workbench__bucket-name {
@@ -450,13 +464,13 @@ onUnmounted(closeUserWebSocket)
 }
 
 .workbench__bucket-count {
-  margin-left: 8px;
+  margin-left: var(--space-2);
 }
 
 .workbench__bucket-empty {
   padding: 12px 0;
   font-size: 12px;
-  color: var(--text-secondary, #999);
+  color: var(--text-secondary);
   text-align: center;
 }
 
@@ -471,7 +485,7 @@ onUnmounted(closeUserWebSocket)
 }
 
 .workbench__task:hover {
-  background: var(--bg-hover);
+  background: var(--bg-surface-hover);
 }
 
 .workbench__task-text {
@@ -484,17 +498,17 @@ onUnmounted(closeUserWebSocket)
 }
 
 .workbench__task-proj {
-  color: var(--text-secondary, #999);
+  color: var(--text-secondary);
 }
 
 .workbench__board-card {
-  background: var(--card-bg);
+  background: var(--bg-surface);
   height: 100%;
 }
 
 .workbench__project {
   padding: 10px 0;
-  border-bottom: 1px solid var(--border-color, #f0f0f0);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .workbench__project:last-child {
@@ -504,7 +518,7 @@ onUnmounted(closeUserWebSocket)
 .workbench__project-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   margin-bottom: 6px;
   min-width: 0;
 }
@@ -520,7 +534,7 @@ onUnmounted(closeUserWebSocket)
   margin-left: auto;
   flex-shrink: 0;
   font-size: 12px;
-  color: var(--text-secondary, #999);
+  color: var(--text-secondary);
 }
 
 .workbench__project-dist {

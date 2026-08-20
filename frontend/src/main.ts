@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import piniaPluginPersistedState from 'pinia-plugin-persistedstate'
 import Antd from 'ant-design-vue'
 import 'ant-design-vue/dist/reset.css'
 
@@ -14,6 +15,9 @@ import './styles/utilities.css'
 
 const app = createApp(App)
 const pinia = createPinia()
+
+// UI 状态（主题/侧边栏折叠）持久化：各 store 按需声明 persist 配置
+pinia.use(piniaPluginPersistedState)
 
 app.use(pinia)
 app.use(router)

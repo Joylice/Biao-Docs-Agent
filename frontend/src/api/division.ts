@@ -30,25 +30,31 @@ export const batchAssignChapters = (
 ) =>
   api.post<ApiResponse<void>>(`/projects/${projectId}/assignments/batch`, { assignments })
 
-/** 领取任务 */
+/** 领取任务：pending/rejected → in_progress（仅 assignee） */
 export const acceptAssignment = (projectId: string, assignmentId: string) =>
-  api.post<ApiResponse<AssignmentItem>>(`/projects/${projectId}/assignments/${assignmentId}/accept`)
+  api.post<ApiResponse<{ id: string; status: string }>>(
+    `/projects/${projectId}/chapter-assignments/${assignmentId}/accept`,
+  )
 
-/** 提交审核 */
+/** 提交审核：in_progress/rejected → submitted（仅 assignee） */
 export const submitAssignment = (projectId: string, assignmentId: string) =>
-  api.post<ApiResponse<AssignmentItem>>(`/projects/${projectId}/assignments/${assignmentId}/submit`)
+  api.post<ApiResponse<{ id: string; status: string }>>(
+    `/projects/${projectId}/chapter-assignments/${assignmentId}/submit`,
+  )
 
-/** 审核通过 */
-export const approveAssignment = (projectId: string, assignmentId: string, comment?: string) =>
-  api.post<ApiResponse<AssignmentItem>>(`/projects/${projectId}/assignments/${assignmentId}/approve`, {
-    comment,
-  })
+/** 审核通过：submitted → approved（仅 owner；body 对齐后端 ReviewBody） */
+export const approveAssignment = (projectId: string, assignmentId: string, comment = '') =>
+  api.post<ApiResponse<{ id: string; status: string }>>(
+    `/projects/${projectId}/chapter-assignments/${assignmentId}/review`,
+    { action: 'approved', comment },
+  )
 
-/** 审核打回 */
+/** 审核打回：submitted → rejected（仅 owner；body 对齐后端 ReviewBody） */
 export const rejectAssignment = (projectId: string, assignmentId: string, comment: string) =>
-  api.post<ApiResponse<AssignmentItem>>(`/projects/${projectId}/assignments/${assignmentId}/reject`, {
-    comment,
-  })
+  api.post<ApiResponse<{ id: string; status: string }>>(
+    `/projects/${projectId}/chapter-assignments/${assignmentId}/review`,
+    { action: 'rejected', comment },
+  )
 
 /** 获取章节内容 */
 export const fetchChapterContent = (projectId: string, chapterNo: string) =>

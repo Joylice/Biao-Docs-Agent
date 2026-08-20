@@ -51,14 +51,12 @@
               :score-points="scorePoints"
               :selected-row-keys="selectedRowKeys"
               :saving-id="savingId"
-              :confirm-all-loading="confirmAllLoading"
               :reparse-loading="reparseLoading"
               :download-tender-loading="downloadTenderLoading"
               :tender-doc="tenderDoc"
               :can-reparse="canReparse"
               @update:selected-row-keys="selectedRowKeys = $event"
               @save-row="handleSaveRow"
-              @confirm-all="handleConfirmAll"
               @open-batch-strategy="batchStrategyOpen = true"
               @reparse="handleReparse"
               @download-tender="handleDownloadTender"
@@ -131,6 +129,18 @@
         placeholder="输入统一的应对策略模板，将应用到所有评分点"
       />
     </a-modal>
+
+    <!-- 批量操作浮动栏：评分点 Tab 且有勾选时浮现 -->
+    <transition name="batch-bar">
+      <BatchActionBar
+        v-if="activeTab === 'score' && selectedRowKeys.length > 0"
+        :count="selectedRowKeys.length"
+        :loading="confirmAllLoading"
+        :success="confirmSuccess"
+        @confirm="handleConfirmAll"
+        @clear="selectedRowKeys = []"
+      />
+    </transition>
   </div>
 </template>
 
@@ -143,11 +153,13 @@ import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
+import { useSuccessButton } from '@/composables/useSuccessButton'
 import ParseSummaryCard from './components/ParseSummaryCard.vue'
 import ParseScoreTable from './components/ParseScoreTable.vue'
 import ParseTechTable from './components/ParseTechTable.vue'
 import ParseFormatPanel from './components/ParseFormatPanel.vue'
 import ParseDisqualificationPanel from './components/ParseDisqualificationPanel.vue'
+import BatchActionBar from './components/BatchActionBar.vue'
 
 interface ScorePoint {
   id: string
@@ -214,6 +226,9 @@ const disqualificationClauses = ref<DisqualificationClause[]>([])
 const disqualificationSaving = ref(false)
 const downloadTenderLoading = ref(false)
 let formatKeySeq = 0
+
+// 批量确认成功反馈：按钮短暂显示 success 样式 + 勾选图标
+const { isSuccess: confirmSuccess, runWithSuccess: runBatchConfirm } = useSuccessButton()
 
 const confirmedCount = computed(() => scorePoints.value.filter((p) => p.confirmed).length)
 const confirmedPercent = computed(() =>
@@ -360,19 +375,35 @@ const handleSaveRow = async (row: ScorePoint) => {
   finally { savingId.value = '' }
 }
 
+/** 批量确认：作用于浮动栏勾选的评分点（仅处理其中未确认项） */
 const handleConfirmAll = async () => {
-  const pending = scorePoints.value.filter((p) => !p.confirmed)
-  if (pending.length === 0) { message.info('评分点已全部确认'); return }
+  const selected = new Set(selectedRowKeys.value)
+  const pending = scorePoints.value.filter((p) => !p.confirmed && selected.has(p.id))
+  if (pending.length === 0) {
+    message.info('所选评分点已全部确认')
+    selectedRowKeys.value = []
+    return
+  }
   confirmAllLoading.value = true
-  try {
+  let errMsg = '批量确认失败，请重试'
+  const ok = await runBatchConfirm(async () => {
     for (const p of pending) {
       const res = await api.put(`/projects/${projectId}/score-points/${p.id}`, { confirmed: true })
-      if (res.data?.code !== 0) { message.error(res.data?.message || '确认失败'); return }
+      if (res.data?.code !== 0) {
+        errMsg = res.data?.message || '确认失败'
+        throw new Error(errMsg)
+      }
       p.confirmed = true
     }
+  })
+  confirmAllLoading.value = false
+  if (ok) {
     message.success(`已确认 ${pending.length} 条评分点`)
-  } catch { message.error('批量确认失败，请重试') }
-  finally { confirmAllLoading.value = false }
+    // 延迟清空勾选：让浮动栏按钮短暂展示成功态（1.5s）后再收起
+    window.setTimeout(() => { selectedRowKeys.value = [] }, 1500)
+  } else {
+    message.error(errMsg)
+  }
 }
 
 const handleApplyBatchStrategy = async () => {
@@ -451,5 +482,23 @@ onMounted(fetchData)
   gap: 12px;
   justify-content: flex-end;
   margin-top: 24px;
+}
+
+/* 批量操作浮动栏进入/退出过渡：淡入 + 上移（transform 需保留 translateX(-50%) 居中） */
+.batch-bar-enter-active,
+.batch-bar-leave-active {
+  transition: opacity var(--transition-normal), transform var(--transition-normal);
+}
+
+.batch-bar-enter-from,
+.batch-bar-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 16px);
+}
+
+.batch-bar-enter-to,
+.batch-bar-leave-from {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 </style>

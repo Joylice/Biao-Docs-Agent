@@ -23,6 +23,7 @@
         </template>
         <EmptyState
           v-if="outline.length === 0"
+          illustration="board"
           description="暂无大纲，请先到「方案大纲生成」页确认大纲"
         >
           <template #action>
@@ -131,7 +132,13 @@
         </template>
       </ErrorState>
 
-      <!-- 5列泳道看板 -->
+      <!-- 5列泳道看板（无任务时展示空态插画） -->
+      <EmptyState
+        v-else-if="items.length === 0"
+        illustration="board"
+        description="暂无分工任务，确认大纲并推送分工后任务将出现在看板"
+      />
+
       <template v-else>
         <DivisionKanban
           :items="filteredItems"
@@ -168,6 +175,8 @@ import DivisionKanban from './components/DivisionKanban.vue'
 import ChapterEditorDrawer from './components/ChapterEditorDrawer.vue'
 import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
 import { usePermission } from '@/composables/usePermission'
+import { useHotkeys } from '@/composables/useHotkeys'
+import { useUndoRedo } from '@/composables/useUndoRedo'
 import { TASK_STATUS_META } from '@/types'
 import type {
   AssignmentItem,
@@ -187,7 +196,12 @@ const { isProjectOwner } = usePermission()
 // 状态
 const loading = ref(false)
 const loadError = ref('')
-const items = ref<AssignmentItem[]>([])
+/**
+ * 看板撤销/重做：items 即快照栈的 state。拖拽移动前 push 快照，
+ * 移动成功后后端刷新数据但保留历史（撤销仅恢复本地视图，不回滚后端状态）。
+ */
+const kanbanHistory = useUndoRedo<AssignmentItem[]>([])
+const items = kanbanHistory.state
 const projectOwnerId = ref('')
 
 // 分配面板（仅 owner）：大纲主干、树形分工数据、成员列表、分配草稿与提交态
@@ -423,6 +437,8 @@ const fetchAll = async () => {
     ])
   } finally {
     loading.value = false
+    // 全量刷新（初次加载/手动刷新）：以后端数据为基线，清空撤销历史
+    kanbanHistory.reset(items.value)
   }
 }
 
@@ -461,41 +477,94 @@ const handleSelectTask = (item: AssignmentItem) => {
   editorOpen.value = true
 }
 
+/** 拖拽移动动作描述：合法状态转换 → 对应后端接口；非法返回 null */
+interface MoveAction {
+  url: string
+  body?: Record<string, unknown>
+  successText: string
+}
+
+const resolveMoveAction = (item: AssignmentItem, targetStatus: TaskStatus): MoveAction | null => {
+  // 后端真实路由（backend/app/api/division.py）：chapter-assignments；审核统一走 review
+  const base = `/projects/${projectId}/chapter-assignments/${item.id}`
+  if (targetStatus === 'in_progress' && item.status === 'pending') {
+    // 领取
+    return { url: `${base}/accept`, successText: `已领取：${item.title}` }
+  }
+  if (targetStatus === 'submitted' && item.status === 'in_progress') {
+    // 提交
+    return { url: `${base}/submit`, successText: `已提交：${item.title}` }
+  }
+  if (targetStatus === 'approved' && item.status === 'submitted') {
+    // 审核通过（review 端点，body 对齐后端 ReviewBody：{ action, comment }）
+    return {
+      url: `${base}/review`,
+      body: { action: 'approved' },
+      successText: `已通过：${item.title}`,
+    }
+  }
+  if (targetStatus === 'rejected' && item.status === 'submitted') {
+    // 打回（默认原因；review 端点，body 对齐后端 ReviewBody：{ action, comment }）
+    return {
+      url: `${base}/review`,
+      body: { action: 'rejected', comment: '看板拖拽打回，请在编辑抽屉中查看详情' },
+      successText: `已打回：${item.title}`,
+    }
+  }
+  return null
+}
+
 const handleMoveTask = async (item: AssignmentItem, targetStatus: TaskStatus) => {
   // 拖拽状态变更：根据目标状态执行对应操作
+  const action = resolveMoveAction(item, targetStatus)
+  if (!action) {
+    message.warning('该状态转换不支持，请通过卡片按钮操作')
+    return
+  }
+  // 变更前推快照：Ctrl+Z 可撤销（仅恢复本地视图，不回滚后端状态）
+  kanbanHistory.push(items.value)
   try {
-    if (targetStatus === 'in_progress' && item.status === 'pending') {
-      // 领取
-      await api.post(`/projects/${projectId}/assignments/${item.id}/accept`)
-      message.success(`已领取：${item.title}`)
-    } else if (targetStatus === 'submitted' && item.status === 'in_progress') {
-      // 提交
-      await api.post(`/projects/${projectId}/assignments/${item.id}/submit`)
-      message.success(`已提交：${item.title}`)
-    } else if (targetStatus === 'approved' && item.status === 'submitted') {
-      // 审核通过
-      await api.post(`/projects/${projectId}/assignments/${item.id}/approve`)
-      message.success(`已通过：${item.title}`)
-    } else if (targetStatus === 'rejected' && item.status === 'submitted') {
-      // 打回（需要原因，这里用默认原因）
-      await api.post(`/projects/${projectId}/assignments/${item.id}/reject`, {
-        comment: '看板拖拽打回，请在编辑抽屉中查看详情',
-      })
-      message.success(`已打回：${item.title}`)
-    } else {
-      message.warning('该状态转换不支持，请通过卡片按钮操作')
-      return
-    }
+    await api.post(action.url, action.body)
+    message.success(action.successText)
     await fetchAssignments()
   } catch (err) {
     const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
     message.error(msg || '状态变更失败')
     await fetchAssignments() // 刷新回原状态
+    // 后端数据已回滚为原状，清掉本次移动产生的过期历史，避免误撤销
+    kanbanHistory.reset(items.value)
   }
 }
 
-const handleTaskUpdated = () => {
-  fetchAssignments()
+/** 撤销：恢复移动前的本地视图（后端状态不变，刷新后以后端为准） */
+const handleKanbanUndo = () => {
+  if (!kanbanHistory.undo()) {
+    message.info('没有可撤销的看板操作')
+    return
+  }
+  message.success('已撤销上一步移动（仅恢复本地视图，刷新后以后端数据为准）')
+}
+
+/** 重做：恢复被撤销的移动 */
+const handleKanbanRedo = () => {
+  if (!kanbanHistory.redo()) {
+    message.info('没有可重做的看板操作')
+    return
+  }
+  message.success('已重做看板移动（仅恢复本地视图，刷新后以后端数据为准）')
+}
+
+/* 快捷键：看板页挂载时生效；焦点在输入控件内不触发（useHotkeys 默认行为） */
+useHotkeys([
+  { combo: 'ctrl+z', handler: handleKanbanUndo },
+  { combo: 'ctrl+shift+z', handler: handleKanbanRedo },
+  { combo: 'ctrl+y', handler: handleKanbanRedo },
+])
+
+const handleTaskUpdated = async () => {
+  await fetchAssignments()
+  // 抽屉内的状态/内容变更同样来自后端，重置基线避免撤销覆盖无关更新
+  kanbanHistory.reset(items.value)
 }
 
 const goToGenerate = () => {

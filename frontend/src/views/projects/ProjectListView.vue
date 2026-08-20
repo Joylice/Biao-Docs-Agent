@@ -23,10 +23,13 @@
     >
       <a-space wrap>
         <a-input-search
+          id="project-search-input"
           v-model:value="searchKeyword"
           placeholder="搜索项目名称 / 招标编号"
           allow-clear
           style="width: 280px"
+          @change="onSearchChange"
+          @search="onSearchSubmit"
         />
         <a-select
           v-model:value="industryFilter"
@@ -48,7 +51,8 @@
 
     <LoadingSkeleton
       v-if="loading"
-      :rows="4"
+      :columns="4"
+      :rows="3"
     />
     <ErrorState
       v-else-if="loadError"
@@ -63,42 +67,60 @@
       </template>
     </ErrorState>
     <!-- 新用户 5 步引导（无项目时显示，按项目状态自动勾选） -->
-    <a-card
-      v-if="projects.length === 0 && !loading && !loadError"
-      class="guide-card mb-4"
-    >
-      <template #title>
-        <RocketOutlined /> 快速上手：5 步完成第一份技术方案
-      </template>
-      <a-steps
-        :current="guideCurrent"
-        size="small"
-        responsive
-      >
-        <a-step
-          v-for="(s, i) in guideSteps"
-          :key="i"
-          :title="s.title"
-          :status="guideStepStatus(i)"
+    <template v-else-if="projects.length === 0">
+      <a-card class="guide-card mb-4">
+        <template #title>
+          <RocketOutlined /> 快速上手：5 步完成第一份技术方案
+        </template>
+        <a-steps
+          :current="guideCurrent"
+          size="small"
+          responsive
         >
-          <template #description>
-            <div class="guide-step">
-              <span>{{ s.description }}</span>
-              <a-button
-                v-if="i === guideCurrent"
-                size="small"
-                @click="s.action"
-              >
-                去完成
-              </a-button>
-            </div>
-          </template>
-        </a-step>
-      </a-steps>
-    </a-card>
+          <a-step
+            v-for="(s, i) in guideSteps"
+            :key="i"
+            :title="s.title"
+            :status="guideStepStatus(i)"
+          >
+            <template #description>
+              <div class="guide-step">
+                <span>{{ s.description }}</span>
+                <a-button
+                  v-if="i === guideCurrent"
+                  size="small"
+                  @click="s.action"
+                >
+                  去完成
+                </a-button>
+              </div>
+            </template>
+          </a-step>
+        </a-steps>
+      </a-card>
+
+      <EmptyState
+        illustration="folder"
+        description="还没有项目，创建第一个项目开始使用"
+      >
+        <template #action>
+          <a-button
+            v-if="can('project:create')"
+            type="primary"
+            @click="openCreateModal"
+          >
+            <template #icon>
+              <PlusOutlined />
+            </template>
+            新建项目
+          </a-button>
+        </template>
+      </EmptyState>
+    </template>
 
     <EmptyState
       v-else-if="filteredProjects.length === 0"
+      illustration="folder"
       description="没有匹配的项目，调整搜索或筛选条件试试"
     />
 
@@ -224,7 +246,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { FolderOutlined, PlusOutlined, RocketOutlined } from '@ant-design/icons-vue'
@@ -235,6 +257,8 @@ import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
 import { usePermission } from '@/composables/usePermission'
+import { useHotkeys } from '@/composables/useHotkeys'
+import { debounce } from '@/utils/debounce'
 
 const { can } = usePermission()
 
@@ -256,6 +280,8 @@ const showCreateModal = ref(false)
 const creating = ref(false)
 const projects = ref<ProjectItem[]>([])
 const searchKeyword = ref('')
+/** 防抖后生效的搜索词：输入停顿 300ms 后参与过滤；回车 / 点击搜索即时生效 */
+const debouncedKeyword = ref('')
 const industryFilter = ref<string | undefined>(undefined)
 const sortBy = ref('created_desc')
 
@@ -373,8 +399,29 @@ const formatTime = (time?: string): string => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/* ---------------- 搜索防抖 + 快捷键 ---------------- */
+const applySearchKeyword = debounce((kw: string) => {
+  debouncedKeyword.value = kw
+}, 300)
+
+const onSearchChange = () => {
+  applySearchKeyword(searchKeyword.value)
+}
+
+const onSearchSubmit = (value: string) => {
+  applySearchKeyword.cancel()
+  debouncedKeyword.value = value
+}
+
+/** 快捷键 Ctrl+K：聚焦页面主搜索框 */
+const focusMainSearch = () => {
+  document.getElementById('project-search-input')?.focus()
+}
+
+useHotkeys([{ combo: 'ctrl+k', handler: focusMainSearch }])
+
 const filteredProjects = computed(() => {
-  const kw = searchKeyword.value.trim().toLowerCase()
+  const kw = debouncedKeyword.value.trim().toLowerCase()
   let list = projects.value.filter((p) => {
     const matchKw =
       !kw ||
@@ -519,53 +566,57 @@ onMounted(() => {
   // 同步当前用户 ID（「我创建」标记比对 owner_id）
   fetchCurrentUserRole()
 })
+
+onUnmounted(() => {
+  applySearchKeyword.cancel()
+})
 </script>
 
 <style scoped>
 .toolbar-card {
-  margin-bottom: 16px;
-  background: var(--card-bg);
+  margin-bottom: var(--space-4);
+  background: var(--bg-surface);
 }
 
 .guide-card {
-  background: var(--card-bg);
+  background: var(--bg-surface);
 }
 
 .guide-step {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   font-size: 12px;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
 }
 
 .toolbar-count {
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
 .project-card {
-  background: var(--card-bg);
+  background: var(--bg-surface);
   height: 100%;
 }
 
 .project-card__header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .project-card__avatar {
   background: var(--color-primary);
-  color: #fff;
+  color: var(--text-inverse);
   flex-shrink: 0;
 }
 
 .project-card__title-wrap {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -582,19 +633,19 @@ onMounted(() => {
   flex-direction: column;
   gap: 6px;
   font-size: 13px;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
 }
 
 .project-card__meta-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .project-card__label {
   width: 64px;
   flex-shrink: 0;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
 }
 
 .project-card__progress {

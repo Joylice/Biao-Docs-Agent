@@ -62,9 +62,13 @@
           <a-button
             size="small"
             :loading="saving"
+            :class="{ 'chapter-editor__save--success': saveSuccess }"
             @click="handleSave"
           >
-            保存
+            <template #icon>
+              <CheckOutlined v-if="saveSuccess" />
+            </template>
+            {{ saveSuccess ? '已保存' : '保存' }}
           </a-button>
         </a-space>
       </div>
@@ -153,10 +157,13 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
+import { CheckOutlined } from '@ant-design/icons-vue'
 import type { AssignmentItem } from '@/types'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import api from '@/api/client'
 import { currentUserId } from '@/stores/currentUser'
+import { useHotkeys } from '@/composables/useHotkeys'
+import { useSuccessButton } from '@/composables/useSuccessButton'
 
 const props = defineProps<{
   visible: boolean
@@ -184,6 +191,9 @@ const submitting = ref(false)
 const approving = ref(false)
 const rejecting = ref(false)
 const assisting = ref(false)
+
+// 保存成功反馈：短暂切换 success 样式 + CheckOutlined 图标
+const { isSuccess: saveSuccess, runWithSuccess } = useSuccessButton()
 
 // AI 辅助
 const assistPrompt = ref('')
@@ -253,26 +263,40 @@ const handleClose = () => {
 }
 
 const handleSave = async () => {
-  if (!props.task) return
+  const task = props.task
+  if (!task) return
   saving.value = true
-  try {
-    await api.put(`/projects/${props.projectId}/chapters/${props.task.chapter_no}/content`, {
+  const ok = await runWithSuccess(async () => {
+    await api.put(`/projects/${props.projectId}/chapters/${task.chapter_no}/content`, {
       content: editorContent.value,
     })
+  })
+  saving.value = false
+  if (ok) {
     message.success('保存成功')
     emit('updated')
-  } catch {
+  } else {
     message.error('保存失败')
-  } finally {
-    saving.value = false
   }
 }
+
+/* 快捷键：Ctrl+S 保存章节内容（输入框聚焦时同样生效）。
+   a-drawer 默认支持 Esc 关闭（未禁用 keyboard），无需额外处理。 */
+useHotkeys([
+  {
+    combo: 'ctrl+s',
+    allowInInput: true,
+    handler: () => {
+      if (props.visible) void handleSave()
+    },
+  },
+])
 
 const handleAccept = async () => {
   if (!props.task) return
   accepting.value = true
   try {
-    await api.post(`/projects/${props.projectId}/assignments/${props.task.id}/accept`)
+    await api.post(`/projects/${props.projectId}/chapter-assignments/${props.task.id}/accept`)
     message.success('已领取任务')
     emit('updated')
   } catch {
@@ -287,7 +311,7 @@ const handleSubmit = async () => {
   await handleSave()
   submitting.value = true
   try {
-    await api.post(`/projects/${props.projectId}/assignments/${props.task.id}/submit`)
+    await api.post(`/projects/${props.projectId}/chapter-assignments/${props.task.id}/submit`)
     message.success('已提交审核')
     emit('updated')
   } catch {
@@ -301,7 +325,9 @@ const handleApprove = async () => {
   if (!props.task) return
   approving.value = true
   try {
-    await api.post(`/projects/${props.projectId}/assignments/${props.task.id}/approve`)
+    await api.post(`/projects/${props.projectId}/chapter-assignments/${props.task.id}/review`, {
+      action: 'approved',
+    })
     message.success('审核通过')
     emit('updated')
   } catch {
@@ -315,7 +341,8 @@ const handleReject = async () => {
   if (!props.task) return
   rejecting.value = true
   try {
-    await api.post(`/projects/${props.projectId}/assignments/${props.task.id}/reject`, {
+    await api.post(`/projects/${props.projectId}/chapter-assignments/${props.task.id}/review`, {
+      action: 'rejected',
       comment: rejectComment.value,
     })
     message.success('已打回')
@@ -366,9 +393,9 @@ const handleAssist = async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 12px;
+  padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--border-color);
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
 }
 
 .chapter-editor__meta {
@@ -384,14 +411,21 @@ const handleAssist = async () => {
 }
 
 .chapter-editor__toolbar {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
+}
+
+/* 保存成功短暂反馈：success 底色（双主题走 CSS 变量） */
+.chapter-editor__save--success {
+  background: var(--color-success);
+  border-color: var(--color-success);
+  color: var(--text-inverse);
 }
 
 .chapter-editor__assist {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .chapter-editor__assist-mode {
@@ -411,8 +445,8 @@ const handleAssist = async () => {
 }
 
 .chapter-editor__preview {
-  margin-top: 12px;
-  padding: 16px;
+  margin-top: var(--space-3);
+  padding: var(--space-4);
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -421,7 +455,7 @@ const handleAssist = async () => {
 }
 
 .chapter-editor__mode-switch {
-  margin-top: 12px;
+  margin-top: var(--space-3);
   display: flex;
   justify-content: center;
 }

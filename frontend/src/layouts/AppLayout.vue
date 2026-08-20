@@ -5,6 +5,7 @@
         class="app-layout__brand"
         role="button"
         title="返回工作台"
+        aria-label="返回工作台"
         @click="router.push({ name: 'Workbench' })"
       >
         <span class="app-layout__logo">
@@ -90,6 +91,7 @@
           <a-button
             type="text"
             block
+            :aria-label="uiStore.siderCollapsed ? '展开菜单' : '收起菜单'"
             @click="uiStore.toggleSider"
           >
             <template #icon>
@@ -242,7 +244,7 @@ onMounted(fetchCurrentUser)
   align-items: center;
   justify-content: space-between;
   height: 60px;
-  padding: 0 24px;
+  padding: 0 var(--space-6);
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-color);
   backdrop-filter: blur(12px);
@@ -251,7 +253,7 @@ onMounted(fetchCurrentUser)
 .app-layout__brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   cursor: pointer;
 }
 
@@ -263,7 +265,7 @@ onMounted(fetchCurrentUser)
   height: 36px;
   border-radius: var(--radius-lg);
   background: linear-gradient(135deg, var(--color-primary), var(--color-info));
-  color: #fff;
+  color: var(--text-inverse);
   font-size: 20px;
   box-shadow: var(--shadow-sm);
 }
@@ -278,7 +280,7 @@ onMounted(fetchCurrentUser)
 .app-layout__actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .app-layout__user {
@@ -297,7 +299,7 @@ onMounted(fetchCurrentUser)
 
 .app-layout__avatar {
   background: linear-gradient(135deg, var(--color-primary), var(--color-info));
-  color: #fff;
+  color: var(--text-inverse);
   font-size: 14px;
   font-weight: 600;
 }
@@ -335,7 +337,7 @@ onMounted(fetchCurrentUser)
 }
 
 .app-layout__sider-footer {
-  padding: 8px;
+  padding: var(--space-2);
   border-top: 1px solid var(--border-color);
 }
 
@@ -347,7 +349,7 @@ onMounted(fetchCurrentUser)
 .app-layout__page {
   max-width: var(--content-max-width);
   margin: 0 auto;
-  padding: 24px;
+  padding: var(--space-6);
 }
 
 .app-layout__logout {

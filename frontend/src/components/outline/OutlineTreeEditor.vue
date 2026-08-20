@@ -228,27 +228,27 @@ const onClausesInput = (node: OutlineTreeNode, e: Event) => {
 
 <style scoped>
 .ote-node {
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
 }
 
 .ote-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border: 1px solid var(--border-color, #f0f0f0);
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .ote-row:hover {
-  background: var(--bg-hover, #f5f7fa);
+  background: var(--bg-surface-hover);
 }
 
 .ote-row--active {
-  background: var(--bg-block, rgba(27, 110, 243, 0.06));
-  border-color: var(--color-primary, #1b6ef3);
+  background: var(--bg-block);
+  border-color: var(--color-primary);
 }
 
 .ote-no {
@@ -256,7 +256,7 @@ const onClausesInput = (node: OutlineTreeNode, e: Event) => {
   min-width: 36px;
   font-weight: 600;
   font-size: 13px;
-  color: var(--color-primary, #1b6ef3);
+  color: var(--color-primary);
 }
 
 .ote-title {

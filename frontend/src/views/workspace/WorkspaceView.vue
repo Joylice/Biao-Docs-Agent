@@ -172,6 +172,7 @@ import {
 } from '@ant-design/icons-vue'
 import api from '@/api/client'
 import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
+import { useHotkeys } from '@/composables/useHotkeys'
 
 interface ProjectDetail {
   id: string
@@ -220,18 +221,19 @@ const candidateOptions = computed(() => {
 const isOwner = computed(() => projectOwnerId.value === currentUserId.value)
 
 /* ---------------- 步骤条配置 ---------------- */
+// 业务主线顺序：招标解析 → 大纲生成 → 方案生成（分工） → 审阅导出
 const steps = [
   { key: 'parse', label: '招标解析', route: 'Parse', icon: h(FileSearchOutlined) },
   { key: 'generate', label: '大纲生成', route: 'Generate', icon: h(BulbOutlined) },
-  { key: 'review', label: '审阅', route: 'Review', icon: h(EyeOutlined) },
   { key: 'division', label: '方案生成', route: 'Division', icon: h(EditOutlined) },
+  { key: 'review', label: '审阅', route: 'Review', icon: h(EyeOutlined) },
 ]
 
 const routeToStepIndex: Record<string, number> = {
   Parse: 0,
   Generate: 1,
-  Review: 2,
-  Division: 3,
+  Division: 2,
+  Review: 3,
 }
 
 const currentStepIndex = computed(() => {
@@ -264,6 +266,21 @@ const handleStepChange = (idx: number) => {
     router.push({ name: step.route, params: { projectId } })
   }
 }
+
+/* ---------------- 快捷键：←/→ 切换步骤条（仅工作区四页内生效，输入框聚焦时不触发） ---------------- */
+const WORKSPACE_STEP_ROUTES = new Set(['Parse', 'Generate', 'Division', 'Review'])
+
+const switchStep = (delta: number) => {
+  if (!WORKSPACE_STEP_ROUTES.has(String(route.name))) return
+  const next = currentStepIndex.value + delta
+  if (next < 0 || next >= steps.length) return
+  handleStepChange(next)
+}
+
+useHotkeys([
+  { combo: 'arrowleft', handler: () => switchStep(-1) },
+  { combo: 'arrowright', handler: () => switchStep(1) },
+])
 
 /* ---------------- 数据加载 ---------------- */
 const fetchProject = async () => {
@@ -397,17 +414,17 @@ watch(
 .workspace__header-inner {
   max-width: var(--content-max-width);
   margin: 0 auto;
-  padding: 12px 24px;
+  padding: var(--space-3) var(--space-6);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .workspace__project-info {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   min-width: 0;
   flex: 1;
 }
@@ -456,7 +473,7 @@ watch(
 .workspace__steps-inner {
   max-width: var(--content-max-width);
   margin: 0 auto;
-  padding: 12px 24px;
+  padding: var(--space-3) var(--space-6);
 }
 
 .workspace__steps {
@@ -485,7 +502,7 @@ watch(
 .workspace__content-inner {
   max-width: var(--content-max-width);
   margin: 0 auto;
-  padding: 24px;
+  padding: var(--space-6);
 }
 
 /* 成员抽屉 */
@@ -494,7 +511,7 @@ watch(
 }
 
 .member-tag {
-  margin-left: 8px;
+  margin-left: var(--space-2);
 }
 
 .member-joined {
@@ -505,6 +522,6 @@ watch(
 
 .member-add {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 </style>

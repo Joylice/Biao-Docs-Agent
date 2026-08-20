@@ -277,7 +277,7 @@ onUnmounted(stopPolling)
 
 <style scoped>
 .parse-card {
-  background: var(--card-bg);
+  background: var(--bg-surface);
 }
 
 .mb-4 {

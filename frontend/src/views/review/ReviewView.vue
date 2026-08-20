@@ -723,6 +723,18 @@ onUnmounted(() => stopPolling())
   min-width: 0;
 }
 
+/* 窄屏：左右分栏改纵向堆叠，侧栏占满宽度 */
+@media (max-width: 1200px) {
+  .review-view__split {
+    flex-direction: column;
+  }
+  .review-view__sider {
+    width: 100%;
+    position: static;
+    max-height: none;
+  }
+}
+
 .review-view__actions {
   display: flex;
   gap: 12px;

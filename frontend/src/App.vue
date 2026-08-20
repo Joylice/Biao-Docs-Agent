@@ -49,6 +49,9 @@ const uiStore = useUiStore()
 const themeConfig = computed(() => ({
   algorithm: uiStore.isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
   token: {
+    // 注意：以下色值为 variables.css 同名 token 的镜像。antd 主题算法需要真实色值
+    // 做派生计算（调色板/对比度），无法接受 var(--xxx)，故保留字面量；
+    // 修改 variables.css 对应 token 时须同步此处。
     colorPrimary: uiStore.isDark ? '#60a5fa' : '#3b82f6',
     colorSuccess: uiStore.isDark ? '#34d399' : '#10b981',
     colorWarning: uiStore.isDark ? '#fbbf24' : '#f59e0b',
@@ -102,29 +105,31 @@ watch(
 </script>
 
 <style>
-/* 全局过渡动画 */
+/* 全局过渡动画：fade + 轻微上浮（200ms ease-out） */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity var(--transition-normal);
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
 }
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+  transform: translateY(8px);
 }
 
 /* Ant Design Vue 组件深色模式适配覆盖 */
 [data-theme='dark'] {
-  --ant-color-bg-container: #111827;
-  --ant-color-bg-layout: #0a0e1a;
-  --ant-color-bg-spotlight: rgba(255, 255, 255, 0.05);
-  --ant-color-text: #f1f5f9;
-  --ant-color-text-secondary: #94a3b8;
-  --ant-color-text-tertiary: #64748b;
-  --ant-color-border: #1e293b;
-  --ant-color-border-secondary: #1e293b;
-  --ant-color-fill: rgba(255, 255, 255, 0.06);
-  --ant-color-fill-secondary: rgba(255, 255, 255, 0.04);
-  --ant-color-fill-tertiary: rgba(255, 255, 255, 0.03);
+  /* 统一引用 variables.css 深色 token，不再硬编码（--text-tertiary 提亮后此处自动同步） */
+  --ant-color-bg-container: var(--bg-surface);
+  --ant-color-bg-layout: var(--bg-app);
+  --ant-color-bg-spotlight: var(--bg-spotlight);
+  --ant-color-text: var(--text-primary);
+  --ant-color-text-secondary: var(--text-secondary);
+  --ant-color-text-tertiary: var(--text-tertiary);
+  --ant-color-border: var(--border-color);
+  --ant-color-border-secondary: var(--border-color-light);
+  --ant-color-fill: var(--fill);
+  --ant-color-fill-secondary: var(--fill-secondary);
+  --ant-color-fill-tertiary: var(--fill-tertiary);
 }
 
 /* 卡片统一边框样式 */
@@ -140,6 +145,30 @@ watch(
   border-color: var(--border-color-strong);
 }
 
+/* 卡片三级状态样式（供列表/看板等交互态复用）：
+   default=常规卡片；hover=加深边框+shadow-md；selected=主色边框+主色浅底 */
+.card--default {
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast),
+    background-color var(--transition-fast);
+}
+.card--hover {
+  border: 1px solid var(--border-color-strong);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast),
+    background-color var(--transition-fast);
+}
+.card--selected {
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary-light);
+  box-shadow: var(--shadow-md);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
 /* 表格表头 */
 .ant-table-thead > tr > th {
   background: var(--bg-surface-hover) !important;
@@ -151,6 +180,24 @@ watch(
 .ant-btn {
   border-radius: var(--radius-md);
   font-weight: 500;
+}
+
+/* antd cssinjs 会为 .ant-btn:not(:disabled):focus-visible 注入固定色 outline（#2b4059），
+   以更高特异性选择器压过（不用 !important），统一为主色焦点环 */
+body .ant-btn:not(:disabled):not(.ant-btn-link):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* 按钮按压反馈：轻微缩放。antd cssinjs 的 transition 仅声明在其类选择器上，
+   此处以 body 前缀提升特异性补齐 transform 过渡（含原色彩/边框过渡项，不破坏 loading 态） */
+body .ant-btn {
+  transition: color var(--transition-fast), background-color var(--transition-fast),
+    border-color var(--transition-fast), box-shadow var(--transition-fast),
+    opacity var(--transition-fast), transform var(--transition-fast);
+}
+body .ant-btn:not(:disabled):not(.ant-btn-loading):active {
+  transform: scale(0.97);
 }
 
 /* 输入框优化 */
@@ -173,7 +220,7 @@ watch(
 /* 菜单项优化 */
 .ant-menu-item {
   border-radius: var(--radius-md);
-  margin: 2px 8px !important;
+  margin: 2px var(--space-2) !important;
 }
 .ant-menu-item-selected {
   background: var(--color-primary-light) !important;

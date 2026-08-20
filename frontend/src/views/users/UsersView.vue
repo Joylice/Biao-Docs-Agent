@@ -42,6 +42,7 @@
             :columns="columns"
             :pagination="pagination"
             :loading="loading"
+            :scroll="{ x: 980 }"
             row-key="id"
             size="middle"
             @change="handleTableChange"
@@ -69,11 +70,17 @@
                   >
                     <span class="action-disabled">删除</span>
                   </a-tooltip>
-                  <a
+                  <a-popconfirm
                     v-else
-                    class="danger-link"
-                    @click="handleDelete(record)"
-                  >删除</a>
+                    :title="`删除用户「${record.display_name || record.email}」？`"
+                    description="删除后该用户无法登录；名下有项目的用户不可删除，需先转移项目负责人。"
+                    ok-text="确认删除"
+                    cancel-text="取消"
+                    :ok-button-props="{ danger: true }"
+                    @confirm="handleDelete(record)"
+                  >
+                    <a class="danger-link">删除</a>
+                  </a-popconfirm>
                 </a-space>
               </template>
             </template>
@@ -303,7 +310,7 @@ const activeTab = ref('users')
 /* ---------------- Tab「用户列表」 ---------------- */
 
 const columns = [
-  { title: '邮箱', dataIndex: 'email', key: 'email' },
+  { title: '邮箱', dataIndex: 'email', key: 'email', width: 260, fixed: 'left' as const },
   { title: '姓名', dataIndex: 'display_name', key: 'display_name', width: 160 },
   { title: '角色', dataIndex: 'role', key: 'role', width: 170 },
   { title: '注册时间', dataIndex: 'created_at', key: 'created_at', width: 180 },
@@ -511,27 +518,19 @@ const submitResetPwd = async () => {
   }
 }
 
-const handleDelete = (record: UserItem) => {
-  Modal.confirm({
-    title: `删除用户「${record.display_name || record.email}」？`,
-    content: '删除后该用户无法登录；名下有项目的用户不可删除，需先转移项目负责人。',
-    okText: '确认删除',
-    okType: 'danger',
-    cancelText: '取消',
-    onOk: async () => {
-      try {
-        const { data } = await api.delete(`/users/${record.id}`)
-        if (data.code === 0) {
-          message.success('用户已删除')
-          fetchUsers()
-        } else {
-          message.error(data.message || '删除失败')
-        }
-      } catch (e) {
-        message.error(errMsg(e, '删除用户失败'))
-      }
-    },
-  })
+/** 删除用户（Popconfirm 轻量二次确认，无需填写理由；角色变更确认仍保留 Modal） */
+const handleDelete = async (record: UserItem) => {
+  try {
+    const { data } = await api.delete(`/users/${record.id}`)
+    if (data.code === 0) {
+      message.success('用户已删除')
+      fetchUsers()
+    } else {
+      message.error(data.message || '删除失败')
+    }
+  } catch (e) {
+    message.error(errMsg(e, '删除用户失败'))
+  }
 }
 
 const formatTime = (iso?: string) => {
@@ -691,18 +690,18 @@ onMounted(fetchUsers)
 
 <style scoped>
 .users-card {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 .users-toolbar {
   display: flex;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 .users-toolbar__create {
   margin-left: auto;
 }
 .danger-link {
-  color: var(--ant-color-error, #ff4d4f);
+  color: var(--color-error);
 }
 .action-disabled {
   color: var(--text-secondary);
@@ -731,7 +730,7 @@ onMounted(fetchUsers)
   color: var(--text-secondary);
 }
 .rbac-role-cell__code {
-  margin-left: 8px;
+  margin-left: var(--space-2);
   font-size: 12px;
   color: var(--text-secondary);
 }

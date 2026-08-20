@@ -111,16 +111,16 @@ const handleLogin = async () => {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  padding: 24px;
-  background: linear-gradient(135deg, #0d47a1 0%, #1565c0 50%, #1e88e5 100%);
+  padding: var(--space-6);
+  background: var(--bg-login-gradient);
 }
 
 .login-page__card {
   width: 400px;
   padding: 40px 36px 28px;
   border-radius: 10px;
-  background: var(--card-bg);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-deep);
 }
 
 .login-page__brand {
@@ -134,10 +134,10 @@ const handleLogin = async () => {
   justify-content: center;
   width: 56px;
   height: 56px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
   border-radius: 12px;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: 28px;
 }
 

@@ -110,7 +110,7 @@
             <a-alert
               type="info"
               show-icon
-              message="标题编号按层级自动重算；可增删子节、调整顺序与层级；编辑内容自动保存草稿"
+              message="标题编号按层级自动重算；可增删子节、调整顺序与层级；编辑内容自动保存草稿；Ctrl+Z 撤销 / Ctrl+Shift+Z 重做结构化操作"
               class="mb-4"
             />
             <OutlineTreeEditor
@@ -263,6 +263,8 @@ import { message } from 'ant-design-vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import api from '@/api/client'
 import { usePermission } from '@/composables/usePermission'
+import { useHotkeys } from '@/composables/useHotkeys'
+import { useUndoRedo } from '@/composables/useUndoRedo'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -295,7 +297,12 @@ const generating = ref(false)
 const generated = ref(false)
 const regeneratingOutline = ref(false)
 const outline = ref<OutlineItem[]>([])
-const editedTree = ref<OutlineTreeNode[]>([])
+/**
+ * 大纲结构化编辑撤销/重做：editedTree 即快照栈的 state。
+ * 增/删/移动/升降级操作前 push 快照；纯文本输入不入栈（交给浏览器原生撤销）。
+ */
+const outlineHistory = useUndoRedo<OutlineTreeNode[]>([])
+const editedTree = outlineHistory.state
 const activeNodeKey = ref('')
 const chapters = ref<Record<string, string>>({})
 const currentChapter = ref('')
@@ -420,6 +427,8 @@ const syncTreeFromOutline = () => {
   suppressDraftWatch = true
   editedTree.value = outlineToTree(outline.value)
   activeNodeKey.value = editedTree.value[0]?.key ?? ''
+  // 外部（后端）大纲同步：以新树为基线，清空撤销历史
+  outlineHistory.reset(editedTree.value)
   nextTick(() => { suppressDraftWatch = false })
 }
 
@@ -457,6 +466,7 @@ const nodeListAndIndex = (path: number[] | null): [OutlineTreeNode[], number] | 
 }
 
 const handleAddChapter = () => {
+  outlineHistory.push(editedTree.value)
   editedTree.value.push({ key: nextNodeKey(), title: '', covered_clauses: [] })
 }
 
@@ -465,6 +475,7 @@ const handleAddChild = (key: string) => {
   const node = nodeAt(path)
   if (!node || !path) return
   if (path.length >= 4) { message.warning('最多支持 4 级层级'); return }
+  outlineHistory.push(editedTree.value)
   node.children = node.children ?? []
   node.children.push({ key: nextNodeKey(), title: '' })
 }
@@ -472,6 +483,7 @@ const handleAddChild = (key: string) => {
 const handleRemoveNode = (key: string) => {
   const pair = nodeListAndIndex(findNodePath(editedTree.value, key))
   if (!pair) return
+  outlineHistory.push(editedTree.value)
   pair[0].splice(pair[1], 1)
   if (activeNodeKey.value === key) activeNodeKey.value = ''
 }
@@ -482,6 +494,7 @@ const handleMoveNode = (key: string, dir: -1 | 1) => {
   const [list, idx] = pair
   const j = idx + dir
   if (j < 0 || j >= list.length) return
+  outlineHistory.push(editedTree.value)
   const tmp = list[idx]; list[idx] = list[j]; list[j] = tmp
 }
 
@@ -490,6 +503,7 @@ const handlePromoteNode = (key: string) => {
   if (!path || path.length >= 4) return
   const pair = nodeListAndIndex(path)
   if (!pair || pair[1] === 0) return
+  outlineHistory.push(editedTree.value)
   const [list, idx] = pair
   const prev = list[idx - 1]
   prev.children = prev.children ?? []
@@ -503,6 +517,7 @@ const handleDemoteNode = (key: string) => {
   const parent = nodeAt(path.slice(0, -1))
   const grand = nodeListAndIndex(path.slice(0, -1))
   if (!parent || !grand) return
+  outlineHistory.push(editedTree.value)
   const node = parent.children!.splice(path[path.length - 1], 1)[0]
   grand[0].splice(grand[1] + 1, 0, node)
 }
@@ -519,6 +534,39 @@ const handleUpdateClauses = (key: string, text: string) => {
 }
 
 const onEditSelect = (key: string) => { activeNodeKey.value = key }
+
+/* ---------------- 大纲撤销/重做 ---------------- */
+/** 撤销后校正选中节点（快照中可能不含当前选中项） */
+const validateActiveNode = () => {
+  if (activeNodeKey.value && !findNodePath(editedTree.value, activeNodeKey.value)) {
+    activeNodeKey.value = ''
+  }
+}
+
+const handleOutlineUndo = () => {
+  if (!outlineHistory.undo()) {
+    message.info('没有可撤销的大纲操作')
+    return
+  }
+  validateActiveNode()
+  message.success('已撤销上一步大纲操作')
+}
+
+const handleOutlineRedo = () => {
+  if (!outlineHistory.redo()) {
+    message.info('没有可重做的大纲操作')
+    return
+  }
+  validateActiveNode()
+  message.success('已重做大纲操作')
+}
+
+/* 快捷键：焦点在输入控件内不触发（useHotkeys 默认行为），纯文本输入走浏览器原生撤销 */
+useHotkeys([
+  { combo: 'ctrl+z', handler: handleOutlineUndo },
+  { combo: 'ctrl+shift+z', handler: handleOutlineRedo },
+  { combo: 'ctrl+y', handler: handleOutlineRedo },
+])
 
 /* ---------------- 草稿保存 ---------------- */
 const scheduleDraftSave = () => {
@@ -564,6 +612,8 @@ const applyDraft = () => {
   if (!d) return
   suppressDraftWatch = true
   editedTree.value = outlineToTree(d.outline)
+  // 草稿恢复为新基线，清空撤销历史
+  outlineHistory.reset(editedTree.value)
   nextTick(() => { suppressDraftWatch = false })
   draftRestoreVisible.value = false
   pendingDraft.value = null
@@ -877,6 +927,18 @@ onUnmounted(() => {
 .generate-view__main {
   flex: 1;
   min-width: 0;
+}
+
+/* 窄屏：左右分栏改纵向堆叠，侧栏占满宽度 */
+@media (max-width: 1200px) {
+  .generate-view__split {
+    flex-direction: column;
+  }
+  .generate-view__sider {
+    width: 100%;
+    position: static;
+    max-height: none;
+  }
 }
 
 .generate-view__tabs {

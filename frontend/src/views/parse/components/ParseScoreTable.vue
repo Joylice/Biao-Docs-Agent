@@ -9,13 +9,6 @@
           批量修改策略
         </a-button>
         <a-button
-          size="small"
-          :loading="confirmAllLoading"
-          @click="$emit('confirm-all')"
-        >
-          一键全确认
-        </a-button>
-        <a-button
           v-if="tenderDoc"
           size="small"
           :loading="downloadTenderLoading"
@@ -40,13 +33,19 @@
       </a-space>
     </template>
 
+    <!-- P2-1 虚拟滚动：行数 >100 时传 :virtual="true" + :scroll="{ y: 480, x: 1100 }"（列宽合计 1100）。
+         实测核实（2026-08）：npmjs / npmmirror 双源 ant-design-vue 4.x 已发布最高版本为 4.2.6，
+         其 Table 尚无 virtual 实现（随 ≥4.3 引入，暂未发布）。该绑定为前向兼容：4.2.6 下被忽略，
+         升级至含 virtual 的版本后自动生效；≤100 行保持现状。 -->
     <a-table
+      aria-label="评分点列表"
       :columns="scoreColumns"
       :data-source="scorePoints"
       :pagination="{ pageSize: 20, showTotal: (t: number) => `共 ${t} 条` }"
       :row-class-name="scoreRowClassName"
       :row-selection="{ selectedRowKeys, onChange: onSelectionChange }"
-      :scroll="{ x: 1100 }"
+      :virtual="useVirtual"
+      :scroll="useVirtual ? { y: 480, x: 1100 } : { x: 1100 }"
       row-key="id"
       size="middle"
     >
@@ -96,6 +95,8 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+
 interface ScorePoint {
   id: string
   clause_no: string
@@ -114,11 +115,10 @@ interface TenderDocItem {
   status: string
 }
 
-defineProps<{
+const props = defineProps<{
   scorePoints: ScorePoint[]
   selectedRowKeys: string[]
   savingId: string
-  confirmAllLoading: boolean
   reparseLoading: boolean
   downloadTenderLoading: boolean
   tenderDoc: TenderDocItem | null
@@ -128,20 +128,23 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'update:selectedRowKeys', keys: string[]): void
   (e: 'save-row', record: ScorePoint): void
-  (e: 'confirm-all'): void
   (e: 'open-batch-strategy'): void
   (e: 'reparse'): void
   (e: 'download-tender'): void
 }>()
 
+/** 行数 >100 时启用虚拟滚动开关（ant-design-vue Table :virtual，随支持版本自动生效） */
+const useVirtual = computed(() => props.scorePoints.length > 100)
+
 const isHighScore = (score: number | null): boolean => (score ?? 0) >= 20
 const scoreRowClassName = (record: ScorePoint): string => (isHighScore(record.score) ? 'parse-row--high' : '')
 
+// 列宽合计 1100（scroll.x）：窄屏横向滚动 + 评分项列固定左侧
 const scoreColumns = [
   { title: '条款号', dataIndex: 'clause_no', key: 'clause_no', width: 100 },
-  { title: '评分项', dataIndex: 'item', key: 'item' },
+  { title: '评分项', dataIndex: 'item', key: 'item', width: 160, fixed: 'left' as const },
   { title: '分值', dataIndex: 'score', key: 'score', width: 90, sorter: (a: ScorePoint, b: ScorePoint) => (a.score ?? 0) - (b.score ?? 0) },
-  { title: '评分标准', dataIndex: 'criteria', key: 'criteria', ellipsis: { showTitle: true } },
+  { title: '评分标准', dataIndex: 'criteria', key: 'criteria', width: 250, ellipsis: { showTitle: true } },
   { title: '要求级别', key: 'is_star', width: 90 },
   { title: '风险', key: 'risk_level', width: 80 },
   { title: '确认', key: 'confirmed', width: 60 },
@@ -162,5 +165,5 @@ const onSelectionChange = (keys: string[] | number[]) => {
 <style scoped>
 .parse-score { font-weight: 600; }
 .parse-score--high { color: var(--color-error); font-weight: 700; }
-.parse-row--high td { background: var(--color-error-bg) !important; }
+.parse-row--high td { background: var(--color-error-light) !important; }
 </style>

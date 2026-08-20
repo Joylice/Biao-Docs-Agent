@@ -63,26 +63,36 @@
           </template>
           新建知识库
         </a-button>
-        <a-button
+        <a-popconfirm
           v-if="canDeleteSelectedBase"
-          type="link"
-          danger
-          @click="handleDeleteBase"
+          :title="`删除知识库「${selectedBase?.name ?? ''}」？`"
+          :description="`库内 ${selectedBase?.material_count ?? 0} 份素材将一并删除，不可恢复。`"
+          ok-text="删除"
+          cancel-text="取消"
+          :ok-button-props="{ danger: true }"
+          @confirm="handleDeleteBase"
         >
-          删除当前知识库
-        </a-button>
+          <a-button
+            type="link"
+            danger
+          >
+            删除当前知识库
+          </a-button>
+        </a-popconfirm>
       </a-space>
     </a-card>
 
     <!-- 检索测试 -->
     <a-card class="kb-card">
       <a-input-search
+        id="materials-search-input"
         v-model:value="searchQuery"
         placeholder="检索资料内容（RAG 命中验证）"
         enter-button="检索"
         allow-clear
         :loading="searching"
-        @search="handleSearch"
+        @change="onSearchInputChange"
+        @search="onSearchSubmit"
       />
       <a-list
         v-if="searchResults.length > 0"
@@ -127,7 +137,7 @@
             placeholder="按标签筛选"
             allow-clear
             style="width: 160px"
-            @press-enter="handleFilterChange"
+            @press-enter="onTagFilterEnter"
             @change="onTagInputChange"
           />
         </a-space>
@@ -135,6 +145,7 @@
 
       <EmptyState
         v-if="!loading && materials.length === 0"
+        illustration="box"
         description="还没有资料，点击右上角「上传资料」开始建设素材库"
       />
       <LoadingSkeleton
@@ -146,6 +157,7 @@
         :data-source="materials"
         :columns="columns"
         :pagination="pagination"
+        :scroll="{ x: 1060 }"
         row-key="id"
         size="middle"
         @change="handleTableChange"
@@ -215,14 +227,22 @@
               >
                 编辑
               </a-button>
-              <a-button
-                type="link"
-                danger
-                size="small"
-                @click="handleDelete(record)"
+              <a-popconfirm
+                title="删除该资料？"
+                description="删除后不可恢复，已挂载到项目方案的素材将无法检索。"
+                ok-text="删除"
+                cancel-text="取消"
+                :ok-button-props="{ danger: true }"
+                @confirm="handleDelete(record)"
               >
-                删除
-              </a-button>
+                <a-button
+                  type="link"
+                  danger
+                  size="small"
+                >
+                  删除
+                </a-button>
+              </a-popconfirm>
             </template>
           </template>
         </template>
@@ -352,13 +372,25 @@
               v-model:value="companySearchKeyword"
               placeholder="搜索公司库资料"
               allow-clear
-              @search="fetchCompanyMaterials"
+              @search="onCompanySearchSubmit"
               @change="onCompanySearchChange"
             />
             <div class="company-material-list">
-              <a-spin :spinning="companyMaterialsLoading">
+              <div
+                v-if="companyMaterialsLoading"
+                class="company-material-skeleton"
+              >
+                <a-skeleton
+                  v-for="i in 4"
+                  :key="i"
+                  active
+                  :title="false"
+                  :paragraph="{ rows: 1, width: '100%' }"
+                />
+              </div>
+              <template v-else>
                 <a-empty
-                  v-if="!companyMaterialsLoading && companyMaterials.length === 0"
+                  v-if="companyMaterials.length === 0"
                   description="暂无公司库资料"
                 />
                 <a-checkbox-group
@@ -386,7 +418,7 @@
                     </a-checkbox>
                   </div>
                 </a-checkbox-group>
-              </a-spin>
+              </template>
             </div>
             <div class="company-select-hint">
               已选择 {{ selectedCompanyDocIds.length }} 份资料，将复制到目标知识库
@@ -433,8 +465,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { message, Modal } from 'ant-design-vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { message } from 'ant-design-vue'
 import {
   FileTextOutlined,
   InboxOutlined,
@@ -447,8 +479,18 @@ import EmptyState from '@/components/EmptyState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 import { isKbAdmin, currentUserId } from '@/stores/currentUser'
 import { usePermission } from '@/composables/usePermission'
+import { useHotkeys } from '@/composables/useHotkeys'
+import { debounce } from '@/utils/debounce'
 
 const { canUploadMaterial, canEditMaterial } = usePermission()
+
+/* 快捷键：Ctrl+K 聚焦页面主搜索框 */
+useHotkeys([
+  {
+    combo: 'ctrl+k',
+    handler: () => document.getElementById('materials-search-input')?.focus(),
+  },
+])
 
 interface Material {
   id: string
@@ -497,7 +539,7 @@ const statusMeta: Record<string, { badge: string; text: string }> = {
 }
 
 const columns = [
-  { title: '文件', key: 'file', dataIndex: 'title' },
+  { title: '文件', key: 'file', dataIndex: 'title', width: 220, fixed: 'left' as const },
   { title: '分类', key: 'category', dataIndex: 'category', width: 110 },
   { title: '标签', key: 'tags', dataIndex: 'tags', width: 180 },
   { title: '上传者', key: 'uploader_name', dataIndex: 'uploader_name', width: 100 },
@@ -589,6 +631,7 @@ const writableBaseOptions = computed(() =>
           : `${b.name}（${b.scope === 'company' ? '公司' : '个人'}）`,
     })),
 )
+const selectedBase = computed(() => kbBases.value.find((b) => b.id === selectedKbId.value))
 const canDeleteSelectedBase = computed(() => {
   const base = kbBases.value.find((b) => b.id === selectedKbId.value)
   if (!base) return false
@@ -667,30 +710,22 @@ const handleCreateBase = async () => {
   }
 }
 
-const handleDeleteBase = () => {
+/** 删除知识库（Popconfirm 二次确认，无需填写理由） */
+const handleDeleteBase = async () => {
   const base = kbBases.value.find((b) => b.id === selectedKbId.value)
   if (!base) return
-  Modal.confirm({
-    title: `删除知识库「${base.name}」？`,
-    content: `库内 ${base.material_count} 份素材将一并删除，不可恢复。`,
-    okText: '删除',
-    okType: 'danger',
-    cancelText: '取消',
-    onOk: async () => {
-      try {
-        const { data } = await api.delete(`/kb-bases/${base.id}`)
-        if (data.code === 0) {
-          message.success('已删除知识库')
-          selectedKbId.value = ''
-          await fetchBases()
-          fetchMaterials()
-        }
-      } catch (e) {
-        const err = e as { response?: { data?: { message?: string } } }
-        message.error(err?.response?.data?.message || '删除失败')
-      }
-    },
-  })
+  try {
+    const { data } = await api.delete(`/kb-bases/${base.id}`)
+    if (data.code === 0) {
+      message.success('已删除知识库')
+      selectedKbId.value = ''
+      await fetchBases()
+      fetchMaterials()
+    }
+  } catch (e) {
+    const err = e as { response?: { data?: { message?: string } } }
+    message.error(err?.response?.data?.message || '删除失败')
+  }
 }
 
 const pagination = reactive({
@@ -728,11 +763,14 @@ const handleFilterChange = () => {
   fetchMaterials()
 }
 
-let tagInputTimer: ReturnType<typeof setTimeout> | undefined
+/** 标签筛选输入防抖（沿用 500ms；回车立即过滤） */
+const debouncedTagFilter = debounce(handleFilterChange, 500)
 const onTagInputChange = () => {
-  // 输入防抖：停顿 500ms 后自动过滤，回车立即过滤
-  if (tagInputTimer) clearTimeout(tagInputTimer)
-  tagInputTimer = setTimeout(handleFilterChange, 500)
+  debouncedTagFilter()
+}
+const onTagFilterEnter = () => {
+  debouncedTagFilter.cancel()
+  handleFilterChange()
 }
 
 // ---- 上传（弹窗式：文件 + 分类 + 标签） ----
@@ -786,10 +824,15 @@ const fetchCompanyMaterials = async () => {
   }
 }
 
-let companySearchTimer: ReturnType<typeof setTimeout> | undefined
+const debouncedCompanySearch = debounce(() => {
+  void fetchCompanyMaterials()
+}, 500)
 const onCompanySearchChange = () => {
-  if (companySearchTimer) clearTimeout(companySearchTimer)
-  companySearchTimer = setTimeout(fetchCompanyMaterials, 500)
+  debouncedCompanySearch()
+}
+const onCompanySearchSubmit = () => {
+  debouncedCompanySearch.cancel()
+  void fetchCompanyMaterials()
 }
 
 // 切换到公司库选取Tab时加载资料
@@ -927,30 +970,25 @@ const handleEditSubmit = async () => {
   }
 }
 
-const handleDelete = (record: Material) => {
-  Modal.confirm({
-    title: `删除资料「${record.title}」？`,
-    content: '删除后不可恢复，已挂载到项目方案的素材将无法检索。',
-    okText: '删除',
-    okType: 'danger',
-    cancelText: '取消',
-    onOk: async () => {
-      try {
-        const { data } = await api.delete(`/kb/materials/${record.id}`)
-        if (data.code === 0) {
-          message.success('已删除')
-          fetchMaterials()
-        }
-      } catch {
-        message.error('删除失败')
-      }
-    },
-  })
+/** 删除资料（Popconfirm 二次确认，无需填写理由） */
+const handleDelete = async (record: Material) => {
+  try {
+    const { data } = await api.delete(`/kb/materials/${record.id}`)
+    if (data.code === 0) {
+      message.success('已删除')
+      fetchMaterials()
+    }
+  } catch {
+    message.error('删除失败')
+  }
 }
 
 const handleSearch = async () => {
   const q = searchQuery.value.trim()
-  if (!q) return
+  if (!q) {
+    searchResults.value = []
+    return
+  }
   searching.value = true
   searchResults.value = []
   try {
@@ -966,6 +1004,20 @@ const handleSearch = async () => {
   } finally {
     searching.value = false
   }
+}
+
+/** 主搜索输入 300ms 防抖；回车 / 点击「检索」即时触发 */
+const debouncedSearch = debounce(() => {
+  void handleSearch()
+}, 300)
+
+const onSearchInputChange = () => {
+  debouncedSearch()
+}
+
+const onSearchSubmit = () => {
+  debouncedSearch.cancel()
+  void handleSearch()
 }
 
 const handleTableChange = (pag: { current: number; pageSize: number }) => {
@@ -986,18 +1038,24 @@ onMounted(() => {
   fetchBases()
   fetchMaterials()
 })
+
+onUnmounted(() => {
+  debouncedSearch.cancel()
+  debouncedTagFilter.cancel()
+  debouncedCompanySearch.cancel()
+})
 </script>
 
 <style scoped>
 .kb-card {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 .kb-search-results {
-  margin-top: 12px;
+  margin-top: var(--space-3);
 }
 .kb-file-icon {
   color: var(--color-primary);
-  margin-right: 8px;
+  margin-right: var(--space-2);
 }
 .kb-file-name {
   max-width: 360px;
@@ -1018,18 +1076,25 @@ onMounted(() => {
 }
 
 /* 从公司库选取 */
+.company-material-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-1) var(--space-2);
+}
+
 .company-material-list {
   max-height: 320px;
   overflow-y: auto;
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  padding: 8px;
+  padding: var(--space-2);
 }
 
 .company-checkbox-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .company-material-item {
@@ -1045,7 +1110,7 @@ onMounted(() => {
 .company-material-item__content {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .company-material-item__icon {

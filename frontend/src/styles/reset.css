@@ -63,3 +63,14 @@ button { cursor: pointer; }
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 * { scrollbar-width: thin; scrollbar-color: var(--border-color-strong) transparent; }
+
+/* 减弱动态效果偏好：近乎瞬时完成全部动画/过渡（无障碍） */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
