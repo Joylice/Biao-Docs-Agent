@@ -9,9 +9,12 @@ role ∈ {kb_admin, admin}，白名单兼容并存）。
 
 import contextlib
 import io
+import mimetypes
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Query, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import cast, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -236,6 +239,40 @@ async def update_material(
     )
     await db.commit()
     return success(data=DocumentListOut.model_validate(doc).model_dump(mode="json"))
+
+
+@router.get("/materials/{doc_id}/download")
+async def download_material(
+    doc_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """素材下载代理（阶段 2）：登录即可下载全局素材；项目级文档不可经本接口（隔离）."""
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc or doc.project_id is not None or doc.doc_type != "kb_material":
+        raise BizError(code=4004, message="资料不存在")
+
+    data = storage_service.download_file(doc.storage_key)
+
+    # 审计埋点：素材下载（security.md §4）
+    await audit.record(
+        db,
+        user_id,
+        "kb.material_download",
+        target_type="document",
+        target_id=str(doc.id),
+    )
+    await db.commit()
+
+    filename = doc.title or doc_id.hex
+    encoded = quote(filename)
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"},
+    )
 
 
 @router.get("/materials/search")

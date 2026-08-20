@@ -55,6 +55,8 @@ services:
       BID_DATABASE_URL: postgresql+psycopg://bid:bid@postgres:5432/bid
       BID_REDIS_URL: redis://redis:6379/0
       BID_MINIO_ENDPOINT: minio:9000
+      # 浏览器可达的公共端点（presigned URL host 重写，阶段 2）
+      BID_MINIO_PUBLIC_ENDPOINT: localhost:9000
       BID_DEBUG: "true"
       BID_LLM_MOCK: "false"
       # Embedding 模型（litellm provider 前缀必带，否则报 "LLM Provider NOT provided"）；
@@ -86,6 +88,7 @@ services:
       BID_DATABASE_URL: postgresql+psycopg://bid:bid@postgres:5432/bid
       BID_REDIS_URL: redis://redis:6379/0
       BID_MINIO_ENDPOINT: minio:9000
+      BID_MINIO_PUBLIC_ENDPOINT: localhost:9000
       BID_DEBUG: "true"
       BID_LLM_MOCK: "false"
       # Embedding 模型（litellm provider 前缀必带；与 api 保持一致）

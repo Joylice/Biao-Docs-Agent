@@ -1,9 +1,12 @@
 """文档管理 API 路由."""
 
 import io
+import mimetypes
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +28,7 @@ from app.schemas.document import (
 from app.services import disqualification_service as dq_service  # 废标条款服务（阶段 H）
 from app.services import rag_service, task_service
 from app.services.project_service import _check_project_member
-from app.services.storage_service import presigned_url, upload_file
+from app.services.storage_service import download_file, presigned_url, upload_file
 
 router = APIRouter()
 
@@ -222,6 +225,68 @@ async def get_image_signed_url(
     if not storage_key.startswith(f"images/{project_id}/"):
         raise BizError(code=4003, message="无权访问该图片")
     return success(data={"url": presigned_url(storage_key)})
+
+
+@router.get("/{project_id}/images/view")
+async def view_image(
+    project_id: uuid.UUID,
+    key: str = Query(..., min_length=1),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """图片代理展示（阶段 2）：后端代理字节流，浏览器无需直连 MinIO 内网.
+
+    供 Markdown 正文 <img> 渲染（前端 axios 拦截器自动带 JWT）。
+    """
+    await _check_project_member(db, project_id, user_id)
+    if not key.startswith(f"images/{project_id}/"):
+        raise BizError(code=4003, message="无权访问该图片")
+    data = download_file(key)
+    content_type = mimetypes.guess_type(key)[0] or "application/octet-stream"
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
+@router.get("/{project_id}/documents/{document_id}/download")
+async def download_document(
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """文档下载代理（阶段 2）：流式字节 + Content-Disposition，成员校验 + 审计."""
+    await _check_project_member(db, project_id, user_id)
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    doc = result.scalar_one_or_none()
+    if not doc or doc.project_id != project_id:
+        raise BizError(code=4004, message="文档不存在")
+
+    data = download_file(doc.storage_key)
+
+    # 审计埋点：文档下载（security.md §4）
+    await audit.record(
+        db,
+        user_id,
+        "document.download",
+        project_id=project_id,
+        target_type="document",
+        target_id=str(doc.id),
+    )
+    await db.commit()
+
+    filename = doc.title or document_id.hex
+    encoded = quote(filename)
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}",
+        },
+    )
 
 
 @router.post("/{project_id}/documents/{document_id}/reparse")

@@ -40,6 +40,9 @@ class Settings(BaseSettings):
 
     # ── MinIO ──
     minio_endpoint: str = "localhost:9000"
+    # 浏览器可达的公共端点（presigned URL host 重写）；空 = 不重写。
+    # 容器内 BID_MINIO_ENDPOINT=minio:9000 是 Docker 内网地址，浏览器无法解析。
+    minio_public_endpoint: str = ""
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin"
     minio_bucket: str = "bid-documents"

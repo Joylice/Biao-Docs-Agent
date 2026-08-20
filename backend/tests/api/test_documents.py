@@ -11,7 +11,7 @@ from httpx import AsyncClient
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.main import app
-from app.models.document import ScorePoint
+from app.models.document import Document, ScorePoint
 from app.models.project import Project
 
 
@@ -478,3 +478,118 @@ class TestUploadImage:
             headers=image_env["headers"],
         )
         assert denied.status_code == 403
+
+
+# ── 文档下载代理 / 图片代理展示（阶段 2：MinIO 浏览器可达性修复）──
+
+
+class TestDownloadProxy:
+    @pytest.fixture
+    def download_env(self, monkeypatch):
+        """下载代理环境：mock 会话/存储字节，真实 JWT 鉴权."""
+        user_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        doc_id = uuid.uuid4()
+        project = Project(id=project_id, name="测试项目", owner_id=user_id)
+        doc = Document(
+            id=doc_id,
+            project_id=project_id,
+            doc_type="tender_file",
+            title="招标文件.pdf",
+            storage_key=f"{project_id}/u1/tender.pdf",
+        )
+        session = AsyncMock()
+        session.execute.side_effect = [_result(project), _result(doc)]
+        app.dependency_overrides[get_db] = lambda: session
+        monkeypatch.setattr("app.api.documents.download_file", lambda key: b"PDF-BYTES")
+        yield {
+            "user_id": user_id,
+            "project_id": project_id,
+            "doc_id": doc_id,
+            "doc": doc,
+            "project": project,
+            "headers": {"Authorization": f"Bearer {create_access_token(str(user_id))}"},
+        }
+        app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_download_no_auth(self, client: AsyncClient) -> None:
+        """未认证下载 → 401."""
+        response = await client.get(
+            f"/api/v1/projects/{uuid.uuid4()}/documents/{uuid.uuid4()}/download"
+        )
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_download_success_streams_bytes(
+        self, client: AsyncClient, download_env
+    ) -> None:
+        """成员下载 → 200 流式字节 + Content-Disposition 附件文件名."""
+        response = await client.get(
+            f"/api/v1/projects/{download_env['project_id']}/documents/"
+            f"{download_env['doc_id']}/download",
+            headers=download_env["headers"],
+        )
+        assert response.status_code == 200
+        assert response.content == b"PDF-BYTES"
+        disposition = response.headers.get("content-disposition", "")
+        assert "attachment" in disposition
+        # RFC5987 UTF-8 文件名（中文标题不被丢弃）
+        assert "filename*=" in disposition
+
+    @pytest.mark.asyncio
+    async def test_download_rejects_cross_project_doc(
+        self, client: AsyncClient, download_env
+    ) -> None:
+        """文档不属本项目 → 4004（防越权下载）."""
+        foreign_doc = Document(
+            id=download_env["doc_id"],
+            project_id=uuid.uuid4(),
+            doc_type="tender_file",
+            title="x.pdf",
+            storage_key="foreign/x.pdf",
+        )
+        session = AsyncMock()
+        session.execute.side_effect = [_result(download_env["project"]), _result(foreign_doc)]
+        app.dependency_overrides[get_db] = lambda: session
+        response = await client.get(
+            f"/api/v1/projects/{download_env['project_id']}/documents/"
+            f"{download_env['doc_id']}/download",
+            headers=download_env["headers"],
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == 4004
+
+    @pytest.mark.asyncio
+    async def test_images_view_success(self, client: AsyncClient, download_env) -> None:
+        """成员代理展示本项目图片 → 200 + image/* content-type."""
+        key = f"images/{download_env['project_id']}/u1/arch.png"
+        response = await client.get(
+            f"/api/v1/projects/{download_env['project_id']}/images/view",
+            params={"key": key},
+            headers=download_env["headers"],
+        )
+        assert response.status_code == 200
+        assert response.content == b"PDF-BYTES"
+        assert response.headers["content-type"].startswith("image/")
+
+    @pytest.mark.asyncio
+    async def test_images_view_rejects_cross_project_key(
+        self, client: AsyncClient, download_env
+    ) -> None:
+        """跨项目 images key → 403."""
+        foreign = f"images/{uuid.uuid4()}/u1/other.png"
+        response = await client.get(
+            f"/api/v1/projects/{download_env['project_id']}/images/view",
+            params={"key": foreign},
+            headers=download_env["headers"],
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_images_view_no_auth(self, client: AsyncClient) -> None:
+        """未认证图片代理 → 401."""
+        response = await client.get(
+            f"/api/v1/projects/{uuid.uuid4()}/images/view", params={"key": "images/x/a.png"}
+        )
+        assert response.status_code == 401

@@ -600,3 +600,53 @@ class TestPatchMaterial:
             headers=self._kb_admin_headers(),
         )
         assert resp.status_code == 422
+
+
+class TestMaterialDownload:
+    """素材下载代理（阶段 2：MinIO 浏览器可达性修复）."""
+
+    @pytest.mark.asyncio
+    async def test_download_no_auth(self, client: AsyncClient) -> None:
+        """未认证下载 → 401."""
+        resp = await client.get(f"/api/v1/kb/materials/{DOC_ID}/download")
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_download_success(
+        self, client: AsyncClient, override_db, headers, monkeypatch
+    ) -> None:
+        """登录用户下载全局素材 → 200 字节 + Content-Disposition."""
+        override_db([_global_doc()])
+        monkeypatch.setattr(
+            "app.services.storage_service.download_file", lambda key: b"KB-BYTES"
+        )
+        resp = await client.get(f"/api/v1/kb/materials/{DOC_ID}/download", headers=headers)
+        assert resp.status_code == 200
+        assert resp.content == b"KB-BYTES"
+        assert "attachment" in resp.headers.get("content-disposition", "")
+        assert "filename*=" in resp.headers.get("content-disposition", "")
+
+    @pytest.mark.asyncio
+    async def test_download_rejects_project_doc(
+        self, client: AsyncClient, override_db, headers, monkeypatch
+    ) -> None:
+        """项目级文档不可经全局接口下载（隔离）→ 4004."""
+        doc = _global_doc()
+        doc.project_id = uuid.uuid4()
+        override_db([doc])
+        monkeypatch.setattr(
+            "app.services.storage_service.download_file", lambda key: b"X"
+        )
+        resp = await client.get(f"/api/v1/kb/materials/{DOC_ID}/download", headers=headers)
+        assert resp.status_code == 404
+        assert resp.json()["code"] == 4004
+
+    @pytest.mark.asyncio
+    async def test_download_missing_returns_4004(
+        self, client: AsyncClient, override_db, headers
+    ) -> None:
+        """素材不存在 → 4004."""
+        override_db([None])
+        resp = await client.get(f"/api/v1/kb/materials/{DOC_ID}/download", headers=headers)
+        assert resp.status_code == 404
+        assert resp.json()["code"] == 4004

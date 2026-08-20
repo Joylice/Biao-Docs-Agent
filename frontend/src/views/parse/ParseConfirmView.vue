@@ -226,6 +226,14 @@
               >
                 一键全确认
               </a-button>
+              <a-button
+                v-if="tenderDoc"
+                size="small"
+                :loading="downloadTenderLoading"
+                @click="handleDownloadTender"
+              >
+                下载招标文件
+              </a-button>
               <a-popconfirm
                 v-if="canReparse"
                 title="重新解析将清除现有评分点与衍生技术需求（招标原文需求保留），确认继续？"
@@ -505,6 +513,29 @@ const handleSaveFormat = async () => {
 const canReparse = computed(
   () => !!tenderDoc.value && ['parsed', 'failed'].includes(tenderDoc.value.status),
 )
+
+/** 阶段 2：下载招标文件原件（后端代理字节流 → blob 保存本地） */
+const downloadTenderLoading = ref(false)
+const handleDownloadTender = async () => {
+  if (!tenderDoc.value) return
+  downloadTenderLoading.value = true
+  try {
+    const resp = await api.get(
+      `/projects/${projectId}/documents/${tenderDoc.value.id}/download`,
+      { responseType: 'blob' },
+    )
+    const url = URL.createObjectURL(resp.data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = tenderDoc.value.title || '招标文件'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    message.error('下载失败，请重试')
+  } finally {
+    downloadTenderLoading.value = false
+  }
+}
 
 const confirmedCount = computed(() => scorePoints.value.filter((p) => p.confirmed).length)
 const confirmedPercent = computed(() =>

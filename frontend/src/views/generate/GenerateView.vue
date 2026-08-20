@@ -478,6 +478,7 @@
               <MarkdownRenderer
                 v-if="displayChapters[selectedChapter]"
                 :source="displayChapters[selectedChapter]"
+                :project-id="projectId"
               />
               <LoadingSkeleton
                 v-else

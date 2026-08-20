@@ -187,6 +187,15 @@
             {{ formatTime(record.created_at) }}
           </template>
           <template v-else-if="column.key === 'action'">
+            <!-- 阶段 2：下载所有登录用户可用 -->
+            <a-button
+              type="link"
+              size="small"
+              :loading="downloadingId === record.id"
+              @click="handleDownload(record)"
+            >
+              下载
+            </a-button>
             <!-- 三期：编辑/删除限资料库管理员（后端 403 兜底，此处控制可见性） -->
             <template v-if="isKbAdmin">
               <a-button
@@ -205,10 +214,6 @@
                 删除
               </a-button>
             </template>
-            <span
-              v-else
-              class="kb-no-perm"
-            >—</span>
           </template>
         </template>
       </a-table>
@@ -403,12 +408,33 @@ const columns = [
   { title: '上传者', key: 'uploader_name', dataIndex: 'uploader_name', width: 100 },
   { title: '状态', key: 'status', dataIndex: 'status', width: 110 },
   { title: '上传时间', key: 'created_at', dataIndex: 'created_at', width: 160 },
-  { title: '操作', key: 'action', width: 120 },
+  { title: '操作', key: 'action', width: 180 },
 ]
 
 const loading = ref(false)
 const uploading = ref(false)
 const saving = ref(false)
+const downloadingId = ref('')
+
+/** 阶段 2：下载素材（后端代理字节流 → blob 保存本地） */
+const handleDownload = async (record: Material) => {
+  downloadingId.value = record.id
+  try {
+    const resp = await api.get(`/kb/materials/${record.id}/download`, {
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(resp.data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = record.title || '素材'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    message.error('下载失败，请重试')
+  } finally {
+    downloadingId.value = ''
+  }
+}
 const materials = ref<Material[]>([])
 const searchQuery = ref('')
 const searching = ref(false)

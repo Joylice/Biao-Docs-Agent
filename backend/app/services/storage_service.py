@@ -4,6 +4,7 @@ import io
 import uuid
 from datetime import timedelta
 from typing import BinaryIO
+from urllib.parse import urlsplit, urlunsplit
 
 from minio import Minio
 from minio.error import S3Error
@@ -81,14 +82,25 @@ def download_file(storage_key: str) -> bytes:
 
 
 def presigned_url(storage_key: str, expires_days: int = 7) -> str:
-    """生成签名下载 URL（浏览器/Markdown 直读，无需鉴权头）."""
+    """生成签名下载 URL（浏览器/Markdown 直读，无需鉴权头）.
+
+    配置了 minio_public_endpoint 时将 host 重写为公共端点：
+    容器内 endpoint（如 minio:9000）是 Docker 内网地址，浏览器无法解析，
+    导致图片预览失败/文件不可下载。
+    """
     client = _get_client()
     try:
-        return client.presigned_get_object(
+        url = client.presigned_get_object(
             settings.minio_bucket, storage_key, expires=timedelta(days=expires_days)
         )
     except S3Error as e:
         raise BizError(code=5003, message=f"签名地址生成失败: {e}") from None
+    if settings.minio_public_endpoint:
+        parts = urlsplit(url)
+        url = urlunsplit(
+            (parts.scheme, settings.minio_public_endpoint, parts.path, parts.query, parts.fragment)
+        )
+    return url
 
 
 def delete_file(storage_key: str) -> None:

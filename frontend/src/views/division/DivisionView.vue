@@ -281,7 +281,10 @@
         v-else
         class="editor-preview"
       >
-        <MarkdownRenderer :source="previewContent" />
+        <MarkdownRenderer
+          :source="previewContent"
+          :project-id="projectId"
+        />
         <div
           v-if="assisting"
           class="editor-preview__streaming"
@@ -824,7 +827,8 @@ const handleSubmitFromEditor = async () => {
   await handleSubmit(task)
 }
 
-/** 图片上传：POST /projects/{pid}/images → 在光标处插入 ![名称](签名URL) */
+/** 图片上传：POST /projects/{pid}/images → 在光标处插入 ![名称](代理路径)
+ * 阶段 2：正文存代理路径（永不过期），渲染时由 MarkdownRenderer 换签名 URL */
 const handleImageSelect = async (event: Event) => {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -837,7 +841,9 @@ const handleImageSelect = async (event: Event) => {
     const { data } = await api.post(`/projects/${projectId}/images`, form)
     if (data.code === 0) {
       const name = file.name.replace(/\.[^.]+$/, '')
-      insertAtCursor(`\n![${name}](${data.data.url})\n`)
+      insertAtCursor(
+        `\n![${name}](/api/v1/projects/${projectId}/images/view?key=${encodeURIComponent(data.data.storage_key)})\n`,
+      )
       message.success('图片已插入正文，保存后生效')
     } else {
       message.error(data.message || '图片上传失败')

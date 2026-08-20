@@ -175,6 +175,7 @@
               <MarkdownRenderer
                 v-else
                 :source="displayContent"
+                :project-id="projectId"
               />
               <!-- 章节批注区：面板展开时懒加载该章批注列表 -->
               <a-collapse
