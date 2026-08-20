@@ -9,6 +9,11 @@ New-Item -ItemType Directory -Force -Path $logs | Out-Null
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
     Where-Object { $_.CommandLine -match "uvicorn app\.main|worker\.run_worker" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+# 1b. 兜底清理 --reload 孤儿子进程：父进程被杀后 multiprocessing spawn 子进程仍监听 8000，
+#     命令行不含 uvicorn 字样，上面的匹配杀不掉，按端口持有者补杀
+$portPids = (netstat -ano | Select-String ":8000\s.*LISTENING" |
+    ForEach-Object { ($_ -split '\s+')[-1] }) | Sort-Object -Unique
+foreach ($p in $portPids) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Seconds 2
 
 # 2. 启动后端 API（--reload 热加载）
