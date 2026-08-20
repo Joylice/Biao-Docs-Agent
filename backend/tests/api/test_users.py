@@ -17,7 +17,7 @@ from httpx import AsyncClient
 
 import app.api.users as users_api
 from app.core.database import get_db
-from app.core.security import create_access_token
+from app.core.security import create_access_token, verify_password
 from app.main import app
 from app.models.document import Document
 from app.models.user import User
@@ -307,3 +307,268 @@ class TestMeIncludesRole:
         resp = await client.get("/api/v1/auth/me", headers=_headers(KB_ADMIN_ID))
         assert resp.status_code == 200
         assert resp.json()["data"]["role"] == "kb_admin"
+
+
+_CREATE_BODY = {
+    "email": "new@x.com",
+    "password": "secret123",
+    "display_name": "新用户",
+    "role": "member",
+}
+
+
+class TestCreateUser:
+    """POST /users（阶段4：管理员创建用户）."""
+
+    @pytest.mark.asyncio
+    async def test_no_auth(self, client: AsyncClient) -> None:
+        resp = await client.post("/api/v1/users", json=_CREATE_BODY)
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_member_forbidden(self, client: AsyncClient, override_db) -> None:
+        override_db([_user(MEMBER_ID, "member@x.com")])
+        resp = await client.post("/api/v1/users", json=_CREATE_BODY, headers=_headers(MEMBER_ID))
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_admin_creates_user(self, client: AsyncClient, override_db) -> None:
+        """创建成功：密码哈希化 + 审计 user.create + 响应不泄露哈希."""
+        session = override_db([_user(ADMIN_ID, "admin@x.com", "admin"), None])
+        session.add = MagicMock()
+        recorded: list = []
+
+        async def fake_record(db, user_id, action, **kwargs):
+            recorded.append((user_id, action, kwargs))
+
+        with patch.object(users_api.audit, "record", fake_record):
+            resp = await client.post("/api/v1/users", json=_CREATE_BODY, headers=_headers(ADMIN_ID))
+        assert resp.status_code == 200
+        created = session.add.call_args.args[0]
+        assert created.email == "new@x.com"
+        assert created.role == "member"
+        assert verify_password("secret123", created.password_hash)
+        data = resp.json()["data"]
+        assert data["email"] == "new@x.com"
+        assert data["display_name"] == "新用户"
+        assert "password_hash" not in data
+        assert recorded and recorded[0][1] == "user.create"
+        session.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_duplicate_email_rejected(self, client: AsyncClient, override_db) -> None:
+        """邮箱已存在 → BizError 4000."""
+        override_db(
+            [_user(ADMIN_ID, "admin@x.com", "admin"), _user(MEMBER_ID, "new@x.com")]
+        )
+        resp = await client.post("/api/v1/users", json=_CREATE_BODY, headers=_headers(ADMIN_ID))
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 4000
+
+    @pytest.mark.asyncio
+    async def test_invalid_role_rejected(self, client: AsyncClient, override_db) -> None:
+        override_db([_user(ADMIN_ID, "admin@x.com", "admin")])
+        body = {**_CREATE_BODY, "role": "superuser"}
+        resp = await client.post("/api/v1/users", json=body, headers=_headers(ADMIN_ID))
+        assert resp.status_code == 422
+
+
+class TestUpdateUser:
+    """PATCH /users/{id}（阶段4：编辑 display_name/role）."""
+
+    @pytest.mark.asyncio
+    async def test_member_forbidden(self, client: AsyncClient, override_db) -> None:
+        override_db([_user(MEMBER_ID, "member@x.com")])
+        resp = await client.patch(
+            f"/api/v1/users/{KB_ADMIN_ID}",
+            json={"display_name": "x"},
+            headers=_headers(MEMBER_ID),
+        )
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_update_display_name(self, client: AsyncClient, override_db) -> None:
+        """编辑成功：字段更新 + 审计 user.update + commit."""
+        target = _user(MEMBER_ID, "member@x.com")
+        session = override_db([_user(ADMIN_ID, "admin@x.com", "admin"), target])
+        recorded: list = []
+
+        async def fake_record(db, user_id, action, **kwargs):
+            recorded.append((user_id, action, kwargs))
+
+        with patch.object(users_api.audit, "record", fake_record):
+            resp = await client.patch(
+                f"/api/v1/users/{MEMBER_ID}",
+                json={"display_name": "新名字"},
+                headers=_headers(ADMIN_ID),
+            )
+        assert resp.status_code == 200
+        assert target.display_name == "新名字"
+        assert resp.json()["data"]["display_name"] == "新名字"
+        assert recorded and recorded[0][1] == "user.update"
+        session.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cannot_change_own_role(self, client: AsyncClient, override_db) -> None:
+        """编辑入口同样禁止变更自身角色."""
+        override_db(
+            [_user(ADMIN_ID, "admin@x.com", "admin"), _user(ADMIN_ID, "admin@x.com", "admin")]
+        )
+        resp = await client.patch(
+            f"/api/v1/users/{ADMIN_ID}",
+            json={"role": "member"},
+            headers=_headers(ADMIN_ID),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 4000
+
+    @pytest.mark.asyncio
+    async def test_last_admin_protection(self, client: AsyncClient, override_db) -> None:
+        """经编辑降级最后一名 admin → 拒绝."""
+        target = _user(KB_ADMIN_ID, "last@x.com", "admin")
+        override_db([_user(ADMIN_ID, "admin@x.com", "admin"), target, 1])
+        resp = await client.patch(
+            f"/api/v1/users/{KB_ADMIN_ID}",
+            json={"role": "member"},
+            headers=_headers(ADMIN_ID),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 4000
+
+    @pytest.mark.asyncio
+    async def test_empty_body_rejected(self, client: AsyncClient, override_db) -> None:
+        """无任何可更新字段 → 400."""
+        override_db([_user(ADMIN_ID, "admin@x.com", "admin")])
+        resp = await client.patch(
+            f"/api/v1/users/{MEMBER_ID}", json={}, headers=_headers(ADMIN_ID)
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_target_not_found(self, client: AsyncClient, override_db) -> None:
+        override_db([_user(ADMIN_ID, "admin@x.com", "admin"), None])
+        resp = await client.patch(
+            f"/api/v1/users/{MEMBER_ID}",
+            json={"display_name": "x"},
+            headers=_headers(ADMIN_ID),
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == 4004
+
+
+class TestResetPassword:
+    """PUT /users/{id}/password（阶段4：管理员重置密码）."""
+
+    @pytest.mark.asyncio
+    async def test_reset_success(self, client: AsyncClient, override_db) -> None:
+        """重置成功：密码哈希更新 + 审计 user.password_reset + commit."""
+        target = _user(MEMBER_ID, "member@x.com")
+        session = override_db([_user(ADMIN_ID, "admin@x.com", "admin"), target])
+        recorded: list = []
+
+        async def fake_record(db, user_id, action, **kwargs):
+            recorded.append((user_id, action, kwargs))
+
+        with patch.object(users_api.audit, "record", fake_record):
+            resp = await client.put(
+                f"/api/v1/users/{MEMBER_ID}/password",
+                json={"password": "newpass123"},
+                headers=_headers(ADMIN_ID),
+            )
+        assert resp.status_code == 200
+        assert verify_password("newpass123", target.password_hash)
+        assert recorded and recorded[0][1] == "user.password_reset"
+        session.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_short_password_rejected(self, client: AsyncClient, override_db) -> None:
+        override_db([_user(ADMIN_ID, "admin@x.com", "admin")])
+        resp = await client.put(
+            f"/api/v1/users/{MEMBER_ID}/password",
+            json={"password": "123"},
+            headers=_headers(ADMIN_ID),
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_member_forbidden(self, client: AsyncClient, override_db) -> None:
+        override_db([_user(MEMBER_ID, "member@x.com")])
+        resp = await client.put(
+            f"/api/v1/users/{KB_ADMIN_ID}/password",
+            json={"password": "newpass123"},
+            headers=_headers(MEMBER_ID),
+        )
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_target_not_found(self, client: AsyncClient, override_db) -> None:
+        override_db([_user(ADMIN_ID, "admin@x.com", "admin"), None])
+        resp = await client.put(
+            f"/api/v1/users/{MEMBER_ID}/password",
+            json={"password": "newpass123"},
+            headers=_headers(ADMIN_ID),
+        )
+        assert resp.status_code == 404
+
+
+class TestDeleteUser:
+    """DELETE /users/{id}（阶段4：管理员删除用户 + 保护规则）."""
+
+    @pytest.mark.asyncio
+    async def test_member_forbidden(self, client: AsyncClient, override_db) -> None:
+        override_db([_user(MEMBER_ID, "member@x.com")])
+        resp = await client.delete(f"/api/v1/users/{KB_ADMIN_ID}", headers=_headers(MEMBER_ID))
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_cannot_delete_self(self, client: AsyncClient, override_db) -> None:
+        override_db([_user(ADMIN_ID, "admin@x.com", "admin")])
+        resp = await client.delete(f"/api/v1/users/{ADMIN_ID}", headers=_headers(ADMIN_ID))
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 4000
+
+    @pytest.mark.asyncio
+    async def test_delete_member_success(self, client: AsyncClient, override_db) -> None:
+        """删除无项目 member：db.delete + 审计 user.delete + commit."""
+        session = override_db([_user(ADMIN_ID, "admin@x.com", "admin"), _user(MEMBER_ID, "m@x.com"), 0])
+        recorded: list = []
+
+        async def fake_record(db, user_id, action, **kwargs):
+            recorded.append((user_id, action, kwargs))
+
+        with patch.object(users_api.audit, "record", fake_record):
+            resp = await client.delete(f"/api/v1/users/{MEMBER_ID}", headers=_headers(ADMIN_ID))
+        assert resp.status_code == 200
+        session.delete.assert_awaited()
+        assert recorded and recorded[0][1] == "user.delete"
+        session.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_owner_projects_blocked(self, client: AsyncClient, override_db) -> None:
+        """名下有 owner 项目 → 拒绝删除."""
+        override_db([_user(ADMIN_ID, "admin@x.com", "admin"), _user(MEMBER_ID, "m@x.com"), 2])
+        resp = await client.delete(f"/api/v1/users/{MEMBER_ID}", headers=_headers(ADMIN_ID))
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 4000
+
+    @pytest.mark.asyncio
+    async def test_last_admin_protection(self, client: AsyncClient, override_db) -> None:
+        """删除最后一名 admin → 拒绝（owner 项目计数 0 + admin 计数 1）."""
+        override_db(
+            [
+                _user(ADMIN_ID, "admin@x.com", "admin"),
+                _user(KB_ADMIN_ID, "other@x.com", "admin"),
+                0,
+                1,
+            ]
+        )
+        resp = await client.delete(f"/api/v1/users/{KB_ADMIN_ID}", headers=_headers(ADMIN_ID))
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 4000
+
+    @pytest.mark.asyncio
+    async def test_target_not_found(self, client: AsyncClient, override_db) -> None:
+        override_db([_user(ADMIN_ID, "admin@x.com", "admin"), None])
+        resp = await client.delete(f"/api/v1/users/{MEMBER_ID}", headers=_headers(ADMIN_ID))
+        assert resp.status_code == 404
+        assert resp.json()["code"] == 4004

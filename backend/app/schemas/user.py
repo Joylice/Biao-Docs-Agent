@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.core.deps import VALID_ROLES
 from app.core.rbac import FUNCTIONAL_PERMISSIONS
@@ -32,6 +32,42 @@ class RoleUpdateIn(BaseModel):
         if v not in VALID_ROLES:
             raise ValueError(f"非法角色: {v}（可选 {sorted(VALID_ROLES)}）")
         return v
+
+
+class UserCreateIn(BaseModel):
+    """管理员创建用户请求（阶段4）."""
+
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=128)
+    display_name: str = Field(min_length=1, max_length=64)
+    role: str = "member"
+
+    @field_validator("role")
+    @classmethod
+    def _check_role(cls, v: str) -> str:
+        if v not in VALID_ROLES:
+            raise ValueError(f"非法角色: {v}（可选 {sorted(VALID_ROLES)}）")
+        return v
+
+
+class UserUpdateIn(BaseModel):
+    """用户编辑请求（阶段4；至少提供一个字段）."""
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=64)
+    role: str | None = None
+
+    @field_validator("role")
+    @classmethod
+    def _check_role(cls, v: str | None) -> str | None:
+        if v is not None and v not in VALID_ROLES:
+            raise ValueError(f"非法角色: {v}（可选 {sorted(VALID_ROLES)}）")
+        return v
+
+
+class PasswordResetIn(BaseModel):
+    """管理员重置密码请求（阶段4）."""
+
+    password: str = Field(min_length=6, max_length=128)
 
 
 class RolePermissionsUpdateIn(BaseModel):

@@ -28,6 +28,13 @@
               :options="roleOptions"
               @change="reload"
             />
+            <a-button
+              type="primary"
+              class="users-toolbar__create"
+              @click="openCreate"
+            >
+              新建用户
+            </a-button>
           </div>
 
           <a-table
@@ -51,6 +58,23 @@
               </template>
               <template v-else-if="column.key === 'created_at'">
                 {{ formatTime(record.created_at) }}
+              </template>
+              <template v-else-if="column.key === 'actions'">
+                <a-space>
+                  <a @click="openEdit(record)">编辑</a>
+                  <a @click="openResetPwd(record)">重置密码</a>
+                  <a-tooltip
+                    v-if="record.id === currentUserId"
+                    title="不能删除自己"
+                  >
+                    <span class="action-disabled">删除</span>
+                  </a-tooltip>
+                  <a
+                    v-else
+                    class="danger-link"
+                    @click="handleDelete(record)"
+                  >删除</a>
+                </a-space>
               </template>
             </template>
           </a-table>
@@ -125,15 +149,127 @@
         </a-tab-pane>
       </a-tabs>
     </a-card>
+
+    <a-modal
+      v-model:open="createOpen"
+      title="新建用户"
+      ok-text="创建"
+      cancel-text="取消"
+      :confirm-loading="createSubmitting"
+      @ok="submitCreate"
+    >
+      <a-form
+        ref="createFormRef"
+        :model="createForm"
+        :rules="createRules"
+        layout="vertical"
+      >
+        <a-form-item
+          label="邮箱"
+          name="email"
+        >
+          <a-input
+            v-model:value="createForm.email"
+            placeholder="user@example.com"
+          />
+        </a-form-item>
+        <a-form-item
+          label="姓名"
+          name="display_name"
+        >
+          <a-input v-model:value="createForm.display_name" />
+        </a-form-item>
+        <a-form-item
+          label="初始密码"
+          name="password"
+        >
+          <a-input-password v-model:value="createForm.password" />
+        </a-form-item>
+        <a-form-item
+          label="角色"
+          name="role"
+        >
+          <a-select
+            v-model:value="createForm.role"
+            :options="roleOptions"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <a-modal
+      v-model:open="editOpen"
+      title="编辑用户"
+      ok-text="保存"
+      cancel-text="取消"
+      :confirm-loading="editSubmitting"
+      @ok="submitEdit"
+    >
+      <a-form
+        ref="editFormRef"
+        :model="editForm"
+        :rules="editRules"
+        layout="vertical"
+      >
+        <a-form-item
+          label="姓名"
+          name="display_name"
+        >
+          <a-input v-model:value="editForm.display_name" />
+        </a-form-item>
+        <a-form-item
+          label="角色"
+          name="role"
+        >
+          <a-select
+            v-model:value="editForm.role"
+            :options="roleOptions"
+            :disabled="editIsSelf"
+          />
+          <div
+            v-if="editIsSelf"
+            class="form-hint"
+          >
+            不能变更自己的角色
+          </div>
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <a-modal
+      v-model:open="resetPwdOpen"
+      title="重置密码"
+      ok-text="重置"
+      cancel-text="取消"
+      :confirm-loading="resetPwdSubmitting"
+      @ok="submitResetPwd"
+    >
+      <p class="form-hint">
+        正在重置「{{ resetPwdTarget?.display_name || resetPwdTarget?.email }}」的密码
+      </p>
+      <a-form
+        ref="resetPwdFormRef"
+        :model="resetPwdForm"
+        :rules="resetPwdRules"
+        layout="vertical"
+      >
+        <a-form-item
+          label="新密码"
+          name="password"
+        >
+          <a-input-password v-model:value="resetPwdForm.password" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </PageContainer>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { message, Modal } from 'ant-design-vue'
+import { message, Modal, type FormInstance } from 'ant-design-vue'
 import api from '@/api/client'
 import PageContainer from '@/components/PageContainer.vue'
-import { fetchCurrentUserRole, type UserRole } from '@/stores/currentUser'
+import { currentUserId, fetchCurrentUserRole, type UserRole } from '@/stores/currentUser'
 
 interface UserItem {
   id: string
@@ -171,6 +307,7 @@ const columns = [
   { title: '姓名', dataIndex: 'display_name', key: 'display_name', width: 160 },
   { title: '角色', dataIndex: 'role', key: 'role', width: 170 },
   { title: '注册时间', dataIndex: 'created_at', key: 'created_at', width: 180 },
+  { title: '操作', key: 'actions', width: 210 },
 ]
 
 const loading = ref(false)
@@ -241,6 +378,160 @@ const handleTableChange = (pag: { current: number; pageSize: number }) => {
   pagination.current = pag.current
   pagination.pageSize = pag.pageSize
   fetchUsers()
+}
+
+const errMsg = (e: unknown, fallback: string) => {
+  const err = e as { response?: { data?: { message?: string } } }
+  return err?.response?.data?.message || fallback
+}
+
+/* ---------------- 阶段4：新建 / 编辑 / 重置密码 / 删除 ---------------- */
+
+const createOpen = ref(false)
+const createSubmitting = ref(false)
+const createFormRef = ref<FormInstance>()
+const createForm = reactive({ email: '', display_name: '', password: '', role: 'member' as UserRole })
+const createRules = {
+  email: [
+    { required: true, message: '请输入邮箱' },
+    { type: 'email' as const, message: '邮箱格式不正确' },
+  ],
+  display_name: [{ required: true, message: '请输入姓名' }],
+  password: [
+    { required: true, message: '请输入初始密码' },
+    { min: 6, message: '密码至少 6 位' },
+  ],
+}
+
+const openCreate = () => {
+  createForm.email = ''
+  createForm.display_name = ''
+  createForm.password = ''
+  createForm.role = 'member'
+  createOpen.value = true
+}
+
+const submitCreate = async () => {
+  await createFormRef.value?.validate()
+  createSubmitting.value = true
+  try {
+    const { data } = await api.post('/users', { ...createForm })
+    if (data.code === 0) {
+      message.success('用户已创建')
+      createOpen.value = false
+      reload()
+    } else {
+      message.error(data.message || '创建失败')
+    }
+  } catch (e) {
+    message.error(errMsg(e, '创建用户失败'))
+  } finally {
+    createSubmitting.value = false
+  }
+}
+
+const editOpen = ref(false)
+const editSubmitting = ref(false)
+const editFormRef = ref<FormInstance>()
+const editTarget = ref<UserItem | null>(null)
+const editForm = reactive({ display_name: '', role: 'member' as UserRole })
+const editRules = {
+  display_name: [{ required: true, message: '请输入姓名' }],
+}
+const editIsSelf = computed(() => editTarget.value?.id === currentUserId.value)
+
+const openEdit = (record: UserItem) => {
+  editTarget.value = record
+  editForm.display_name = record.display_name
+  editForm.role = record.role
+  editOpen.value = true
+}
+
+const submitEdit = async () => {
+  await editFormRef.value?.validate()
+  if (!editTarget.value) return
+  editSubmitting.value = true
+  try {
+    const body: { display_name: string; role?: UserRole } = {
+      display_name: editForm.display_name,
+    }
+    if (!editIsSelf.value) body.role = editForm.role
+    const { data } = await api.patch(`/users/${editTarget.value.id}`, body)
+    if (data.code === 0) {
+      message.success('用户已更新')
+      editOpen.value = false
+      fetchUsers()
+      fetchCurrentUserRole()
+    } else {
+      message.error(data.message || '更新失败')
+    }
+  } catch (e) {
+    message.error(errMsg(e, '更新用户失败'))
+  } finally {
+    editSubmitting.value = false
+  }
+}
+
+const resetPwdOpen = ref(false)
+const resetPwdSubmitting = ref(false)
+const resetPwdFormRef = ref<FormInstance>()
+const resetPwdTarget = ref<UserItem | null>(null)
+const resetPwdForm = reactive({ password: '' })
+const resetPwdRules = {
+  password: [
+    { required: true, message: '请输入新密码' },
+    { min: 6, message: '密码至少 6 位' },
+  ],
+}
+
+const openResetPwd = (record: UserItem) => {
+  resetPwdTarget.value = record
+  resetPwdForm.password = ''
+  resetPwdOpen.value = true
+}
+
+const submitResetPwd = async () => {
+  await resetPwdFormRef.value?.validate()
+  if (!resetPwdTarget.value) return
+  resetPwdSubmitting.value = true
+  try {
+    const { data } = await api.put(`/users/${resetPwdTarget.value.id}/password`, {
+      password: resetPwdForm.password,
+    })
+    if (data.code === 0) {
+      message.success('密码已重置')
+      resetPwdOpen.value = false
+    } else {
+      message.error(data.message || '重置失败')
+    }
+  } catch (e) {
+    message.error(errMsg(e, '重置密码失败'))
+  } finally {
+    resetPwdSubmitting.value = false
+  }
+}
+
+const handleDelete = (record: UserItem) => {
+  Modal.confirm({
+    title: `删除用户「${record.display_name || record.email}」？`,
+    content: '删除后该用户无法登录；名下有项目的用户不可删除，需先转移项目负责人。',
+    okText: '确认删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        const { data } = await api.delete(`/users/${record.id}`)
+        if (data.code === 0) {
+          message.success('用户已删除')
+          fetchUsers()
+        } else {
+          message.error(data.message || '删除失败')
+        }
+      } catch (e) {
+        message.error(errMsg(e, '删除用户失败'))
+      }
+    },
+  })
 }
 
 const formatTime = (iso?: string) => {
@@ -406,6 +697,21 @@ onMounted(fetchUsers)
   display: flex;
   gap: 12px;
   margin-bottom: 16px;
+}
+.users-toolbar__create {
+  margin-left: auto;
+}
+.danger-link {
+  color: var(--ant-color-error, #ff4d4f);
+}
+.action-disabled {
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+.form-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 .rbac-hint {
   margin: 0 0 12px;
