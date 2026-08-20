@@ -1,6 +1,10 @@
 <template>
   <Teleport to="body">
-    <TransitionGroup name="toast" tag="div" class="global-toast-container">
+    <TransitionGroup
+      name="toast"
+      tag="div"
+      class="global-toast-container"
+    >
       <div
         v-for="toast in toasts"
         :key="toast.id"
@@ -8,10 +12,22 @@
         :class="`global-toast--${toast.type}`"
         @click="removeToast(toast.id)"
       >
-        <CheckCircleFilled v-if="toast.type === 'success'" class="global-toast__icon" />
-        <CloseCircleFilled v-else-if="toast.type === 'error'" class="global-toast__icon" />
-        <ExclamationCircleFilled v-else-if="toast.type === 'warning'" class="global-toast__icon" />
-        <InfoCircleFilled v-else class="global-toast__icon" />
+        <CheckCircleFilled
+          v-if="toast.type === 'success'"
+          class="global-toast__icon"
+        />
+        <CloseCircleFilled
+          v-else-if="toast.type === 'error'"
+          class="global-toast__icon"
+        />
+        <ExclamationCircleFilled
+          v-else-if="toast.type === 'warning'"
+          class="global-toast__icon"
+        />
+        <InfoCircleFilled
+          v-else
+          class="global-toast__icon"
+        />
         <span class="global-toast__message">{{ toast.message }}</span>
       </div>
     </TransitionGroup>

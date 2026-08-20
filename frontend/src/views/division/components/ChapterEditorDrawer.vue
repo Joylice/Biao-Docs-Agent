@@ -5,14 +5,21 @@
     :width="720"
     @close="handleClose"
   >
-    <div v-if="task" class="chapter-editor">
+    <div
+      v-if="task"
+      class="chapter-editor"
+    >
       <!-- 章节信息头部 -->
       <div class="chapter-editor__header">
         <div class="chapter-editor__meta">
-          <a-tag color="blue">{{ task.chapter_no }}</a-tag>
+          <a-tag color="blue">
+            {{ task.chapter_no }}
+          </a-tag>
           <span class="chapter-editor__title">{{ task.title }}</span>
         </div>
-        <a-tag :color="statusColor">{{ statusText }}</a-tag>
+        <a-tag :color="statusColor">
+          {{ statusText }}
+        </a-tag>
       </div>
 
       <!-- 操作工具栏 -->
@@ -54,8 +61,8 @@
           </a-button>
           <a-button
             size="small"
-            @click="handleSave"
             :loading="saving"
+            @click="handleSave"
           >
             保存
           </a-button>
@@ -68,7 +75,7 @@
           v-model:value="assistPrompt"
           placeholder="输入 AI 辅助指令，如：补充技术架构说明、优化语言表达..."
           allow-clear
-          @pressEnter="handleAssist"
+          @press-enter="handleAssist"
         >
           <template #addonAfter>
             <a-button
@@ -80,9 +87,17 @@
             </a-button>
           </template>
         </a-input>
-        <a-radio-group v-model:value="assistMode" size="small" class="chapter-editor__assist-mode">
-          <a-radio-button value="append">追加</a-radio-button>
-          <a-radio-button value="overwrite">覆盖</a-radio-button>
+        <a-radio-group
+          v-model:value="assistMode"
+          size="small"
+          class="chapter-editor__assist-mode"
+        >
+          <a-radio-button value="append">
+            追加
+          </a-radio-button>
+          <a-radio-button value="overwrite">
+            覆盖
+          </a-radio-button>
         </a-radio-group>
       </div>
 
@@ -98,13 +113,22 @@
       </div>
 
       <!-- 预览 -->
-      <div v-if="mode === 'preview'" class="chapter-editor__preview">
-        <MarkdownRenderer :source="editorContent" :project-id="projectId" />
+      <div
+        v-if="mode === 'preview'"
+        class="chapter-editor__preview"
+      >
+        <MarkdownRenderer
+          :source="editorContent"
+          :project-id="projectId"
+        />
       </div>
 
       <!-- 模式切换 -->
       <div class="chapter-editor__mode-switch">
-        <a-segmented v-model:value="mode" :options="modeOptions" />
+        <a-segmented
+          v-model:value="mode"
+          :options="modeOptions"
+        />
       </div>
     </div>
 
@@ -112,10 +136,10 @@
     <a-modal
       v-model:open="showRejectModal"
       title="打回原因"
-      @ok="handleReject"
       ok-text="确认打回"
       cancel-text="取消"
       :confirm-loading="rejecting"
+      @ok="handleReject"
     >
       <a-textarea
         v-model:value="rejectComment"

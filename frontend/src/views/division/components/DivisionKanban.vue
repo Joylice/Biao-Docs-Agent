@@ -40,10 +40,16 @@
               {{ item.assignee_name }}
             </a-tag>
           </div>
-          <div class="kanban__card-title" :title="item.title">
+          <div
+            class="kanban__card-title"
+            :title="item.title"
+          >
             {{ item.title }}
           </div>
-          <div v-if="item.updated_at" class="kanban__card-time">
+          <div
+            v-if="item.updated_at"
+            class="kanban__card-time"
+          >
             {{ formatTime(item.updated_at) }}
           </div>
         </div>

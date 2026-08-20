@@ -7,13 +7,22 @@
         cancel-text="取消"
         @confirm="$emit('generate')"
       >
-        <a-button size="small" :loading="generateLoading">
+        <a-button
+          size="small"
+          :loading="generateLoading"
+        >
           {{ selectedCount > 0 ? `生成技术需求（已选 ${selectedCount} 项）` : '生成技术需求（全部已确认）' }}
         </a-button>
       </a-popconfirm>
     </template>
 
-    <a-table :columns="techColumns" :data-source="techRequirements" :pagination="false" row-key="id" size="middle">
+    <a-table
+      :columns="techColumns"
+      :data-source="techRequirements"
+      :pagination="false"
+      row-key="id"
+      size="middle"
+    >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'is_mandatory'">
           <a-tag :color="record.is_mandatory ? 'red' : 'blue'">
@@ -26,8 +35,15 @@
           </a-tag>
         </template>
         <template v-if="column.key === 'related_sp'">
-          <span v-if="record.related_sp">{{ record.related_sp.clause_no }} {{ record.related_sp.item }}</span>
-          <span v-else>—</span>
+          <span v-if="record.related_sp">
+            {{ record.related_sp.clause_no }} {{ record.related_sp.item }}
+          </span>
+          <a-tag
+            v-else
+            color="default"
+          >
+            未关联
+          </a-tag>
         </template>
       </template>
     </a-table>

@@ -1,15 +1,36 @@
 <template>
-  <div v-if="hasError" class="error-boundary">
-    <a-result status="error" title="页面渲染异常" sub-title="抱歉，页面发生了意外错误">
+  <div
+    v-if="hasError"
+    class="error-boundary"
+  >
+    <a-result
+      status="error"
+      title="页面渲染异常"
+      sub-title="抱歉，页面发生了意外错误"
+    >
       <template #extra>
         <a-space>
-          <a-button @click="reload">刷新页面</a-button>
-          <a-button type="primary" @click="goHome">返回首页</a-button>
+          <a-button @click="reload">
+            刷新页面
+          </a-button>
+          <a-button
+            type="primary"
+            @click="goHome"
+          >
+            返回首页
+          </a-button>
         </a-space>
       </template>
     </a-result>
-    <div v-if="errorMessage" class="error-boundary__detail">
-      <a-alert type="error" :message="errorMessage" show-icon />
+    <div
+      v-if="errorMessage"
+      class="error-boundary__detail"
+    >
+      <a-alert
+        type="error"
+        :message="errorMessage"
+        show-icon
+      />
     </div>
   </div>
   <slot v-else />

@@ -2,7 +2,9 @@
   <div class="review-chapter-list">
     <div class="review-chapter-list__header">
       <span class="review-chapter-list__title">章节列表</span>
-      <a-tag color="blue">{{ chapters.length }} 章</a-tag>
+      <a-tag color="blue">
+        {{ chapters.length }} 章
+      </a-tag>
     </div>
     <div class="review-chapter-list__tree">
       <a-tree
@@ -14,7 +16,10 @@
         @expand="onTreeExpand"
       >
         <template #title="{ dataRef }">
-          <div v-if="dataRef.kind === 'chapter'" class="review-chapter-list__node">
+          <div
+            v-if="dataRef.kind === 'chapter'"
+            class="review-chapter-list__node"
+          >
             <span class="review-chapter-list__no">
               {{ dataRef.chapter_no }} {{ dataRef.title }}
             </span>
@@ -25,7 +30,10 @@
               {{ chapterStateText(dataRef.chapter_no) }}
             </a-tag>
           </div>
-          <span v-else class="review-chapter-list__section">{{ dataRef.title }}</span>
+          <span
+            v-else
+            class="review-chapter-list__section"
+          >{{ dataRef.title }}</span>
         </template>
       </a-tree>
     </div>

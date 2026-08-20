@@ -1,5 +1,8 @@
 <template>
-  <a-card class="version-panel" title="版本库">
+  <a-card
+    class="version-panel"
+    title="版本库"
+  >
     <template #extra>
       <a-button
         v-if="isOwner"
@@ -11,24 +14,54 @@
       </a-button>
     </template>
 
-    <a-empty v-if="versions.length === 0" description="暂无版本：全部章节审核通过后将自动快照，owner 也可手动创建" />
+    <a-empty
+      v-if="versions.length === 0"
+      description="暂无版本：全部章节审核通过后将自动快照，owner 也可手动创建"
+    />
 
-    <a-list v-else :data-source="versions" size="small">
+    <a-list
+      v-else
+      :data-source="versions"
+      size="small"
+    >
       <template #renderItem="{ item }">
         <a-list-item>
           <div class="version-panel__item">
             <div class="version-panel__main">
-              <a-tag color="blue">v{{ item.version }}</a-tag>
-              <a-tag v-if="item.auto" color="default">自动快照</a-tag>
+              <a-tag color="blue">
+                v{{ item.version }}
+              </a-tag>
+              <a-tag
+                v-if="item.auto"
+                color="default"
+              >
+                自动快照
+              </a-tag>
               <span class="version-panel__note">{{ item.snapshot_note || '—' }}</span>
               <span class="version-panel__meta">
                 {{ item.created_by_name || '系统' }} · {{ formatTime(item.created_at) }}
               </span>
             </div>
             <a-space>
-              <a-button size="small" @click="$emit('download', item, 'docx')">下载 Word</a-button>
-              <a-button size="small" @click="$emit('download', item, 'source')">Markdown 源</a-button>
-              <a-button v-if="isOwner" size="small" @click="$emit('archive', item)">归档</a-button>
+              <a-button
+                size="small"
+                @click="$emit('download', item, 'docx')"
+              >
+                下载 Word
+              </a-button>
+              <a-button
+                size="small"
+                @click="$emit('download', item, 'source')"
+              >
+                Markdown 源
+              </a-button>
+              <a-button
+                v-if="isOwner"
+                size="small"
+                @click="$emit('archive', item)"
+              >
+                归档
+              </a-button>
               <a-button
                 v-if="isOwner"
                 size="small"

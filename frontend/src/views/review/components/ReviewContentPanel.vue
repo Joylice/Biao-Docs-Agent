@@ -2,12 +2,25 @@
   <div class="review-content">
     <!-- 顶部操作条 -->
     <div class="review-content__toolbar">
-      <a-segmented :value="mode" :options="modeOptions" @update:value="$emit('update:mode', $event)" />
+      <a-segmented
+        :value="mode"
+        :options="modeOptions"
+        @update:value="$emit('update:mode', $event)"
+      />
       <a-space>
-        <a-button size="small" :loading="approving" :disabled="polling" @click="$emit('approve')">
+        <a-button
+          size="small"
+          :loading="approving"
+          :disabled="polling"
+          @click="$emit('approve')"
+        >
           通过
         </a-button>
-        <a-button size="small" :disabled="polling" @click="$emit('open-feedback')">
+        <a-button
+          size="small"
+          :disabled="polling"
+          @click="$emit('open-feedback')"
+        >
           反馈重写
         </a-button>
         <a-button
@@ -19,7 +32,11 @@
         >
           保存
         </a-button>
-        <a-button v-if="mode === 'edit'" size="small" @click="$emit('reset')">
+        <a-button
+          v-if="mode === 'edit'"
+          size="small"
+          @click="$emit('reset')"
+        >
           重置
         </a-button>
       </a-space>
@@ -30,7 +47,9 @@
       <template #title>
         <div class="review-content__title">
           <span>章节 {{ activeChapter }}{{ activeChapterTitle ? ` ${activeChapterTitle}` : '' }}</span>
-          <a-tag color="geekblue">提交人：{{ submitter }}</a-tag>
+          <a-tag color="geekblue">
+            提交人：{{ submitter }}
+          </a-tag>
         </div>
       </template>
 
@@ -43,7 +62,10 @@
         :message="riskMessage"
       >
         <template #description>
-          <div v-for="(risk, index) in risks" :key="index">
+          <div
+            v-for="(risk, index) in risks"
+            :key="index"
+          >
             {{ risk.clause_no }} {{ risk.title }} — {{ risk.recommendation }}
           </div>
         </template>
@@ -57,7 +79,11 @@
         class="review-content__editor"
         @update:value="$emit('update:editContent', $event)"
       />
-      <MarkdownRenderer v-else :source="displayContent" :project-id="projectId" />
+      <MarkdownRenderer
+        v-else
+        :source="displayContent"
+        :project-id="projectId"
+      />
 
       <!-- 批注区 -->
       <a-collapse
@@ -65,10 +91,19 @@
         class="review-content__annotations"
         @change="onAnnotationPanelChange"
       >
-        <a-collapse-panel :key="activeChapter" :header="`批注（${annotationCount}）`">
+        <a-collapse-panel
+          :key="activeChapter"
+          :header="`批注（${annotationCount}）`"
+        >
           <a-spin :spinning="annotationsLoading">
-            <a-empty v-if="annotations.length === 0" description="暂无批注" />
-            <div v-else class="review-content__annotation-list">
+            <a-empty
+              v-if="annotations.length === 0"
+              description="暂无批注"
+            />
+            <div
+              v-else
+              class="review-content__annotation-list"
+            >
               <div
                 v-for="item in annotations"
                 :key="item.id"
@@ -77,15 +112,30 @@
                 <div class="review-content__annotation-header">
                   <span class="review-content__annotation-author">{{ item.created_by_name || '未知用户' }}</span>
                   <span class="review-content__annotation-time">{{ formatTime(item.created_at) }}</span>
-                  <a-space v-if="canManageAnnotation(item)" size="small">
-                    <a-button size="small" type="link" @click="$emit('edit-annotation', item)">编辑</a-button>
+                  <a-space
+                    v-if="canManageAnnotation(item)"
+                    size="small"
+                  >
+                    <a-button
+                      size="small"
+                      type="link"
+                      @click="$emit('edit-annotation', item)"
+                    >
+                      编辑
+                    </a-button>
                     <a-popconfirm
                       title="确认删除该条批注？"
                       ok-text="删除"
                       cancel-text="取消"
                       @confirm="$emit('delete-annotation', item.id)"
                     >
-                      <a-button size="small" type="link" danger>删除</a-button>
+                      <a-button
+                        size="small"
+                        type="link"
+                        danger
+                      >
+                        删除
+                      </a-button>
                     </a-popconfirm>
                   </a-space>
                 </div>

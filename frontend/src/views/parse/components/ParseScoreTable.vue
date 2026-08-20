@@ -2,9 +2,25 @@
   <a-card title="评分点">
     <template #extra>
       <a-space>
-        <a-button size="small" @click="$emit('open-batch-strategy')">批量修改策略</a-button>
-        <a-button size="small" :loading="confirmAllLoading" @click="$emit('confirm-all')">一键全确认</a-button>
-        <a-button v-if="tenderDoc" size="small" :loading="downloadTenderLoading" @click="$emit('download-tender')">
+        <a-button
+          size="small"
+          @click="$emit('open-batch-strategy')"
+        >
+          批量修改策略
+        </a-button>
+        <a-button
+          size="small"
+          :loading="confirmAllLoading"
+          @click="$emit('confirm-all')"
+        >
+          一键全确认
+        </a-button>
+        <a-button
+          v-if="tenderDoc"
+          size="small"
+          :loading="downloadTenderLoading"
+          @click="$emit('download-tender')"
+        >
           下载招标文件
         </a-button>
         <a-popconfirm
@@ -14,7 +30,12 @@
           cancel-text="取消"
           @confirm="$emit('reparse')"
         >
-          <a-button size="small" :loading="reparseLoading">重新解析</a-button>
+          <a-button
+            size="small"
+            :loading="reparseLoading"
+          >
+            重新解析
+          </a-button>
         </a-popconfirm>
       </a-space>
     </template>
@@ -31,7 +52,10 @@
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'score'">
-          <span class="parse-score" :class="{ 'parse-score--high': isHighScore(record.score) }">
+          <span
+            class="parse-score"
+            :class="{ 'parse-score--high': isHighScore(record.score) }"
+          >
             {{ record.score ?? '-' }}
           </span>
         </template>
@@ -41,7 +65,9 @@
           </a-tag>
         </template>
         <template v-if="column.key === 'risk_level'">
-          <a-tag :color="riskColor(record.risk_level)">{{ record.risk_level || '-' }}</a-tag>
+          <a-tag :color="riskColor(record.risk_level)">
+            {{ record.risk_level || '-' }}
+          </a-tag>
         </template>
         <template v-if="column.key === 'confirmed'">
           <a-checkbox v-model:checked="record.confirmed" />
@@ -55,7 +81,12 @@
           />
         </template>
         <template v-if="column.key === 'action'">
-          <a-button size="small" type="link" :loading="savingId === record.id" @click="$emit('save-row', record)">
+          <a-button
+            size="small"
+            type="link"
+            :loading="savingId === record.id"
+            @click="$emit('save-row', record)"
+          >
             保存
           </a-button>
         </template>

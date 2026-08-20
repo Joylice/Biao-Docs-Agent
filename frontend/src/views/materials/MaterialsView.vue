@@ -290,7 +290,10 @@
     >
       <a-tabs v-model:activeKey="uploadTab">
         <!-- Tab1: 上传文件 -->
-        <a-tab-pane key="upload" tab="上传文件">
+        <a-tab-pane
+          key="upload"
+          tab="上传文件"
+        >
           <a-space
             direction="vertical"
             style="width: 100%"
@@ -330,8 +333,15 @@
         </a-tab-pane>
 
         <!-- Tab2: 从公司库选取 -->
-        <a-tab-pane key="company" tab="从公司库选取">
-          <a-space direction="vertical" style="width: 100%" :size="12">
+        <a-tab-pane
+          key="company"
+          tab="从公司库选取"
+        >
+          <a-space
+            direction="vertical"
+            style="width: 100%"
+            :size="12"
+          >
             <a-select
               v-model:value="uploadForm.kbId"
               placeholder="选择目标知识库（个人/项目库）"
@@ -347,8 +357,15 @@
             />
             <div class="company-material-list">
               <a-spin :spinning="companyMaterialsLoading">
-                <a-empty v-if="!companyMaterialsLoading && companyMaterials.length === 0" description="暂无公司库资料" />
-                <a-checkbox-group v-else v-model:value="selectedCompanyDocIds" class="company-checkbox-group">
+                <a-empty
+                  v-if="!companyMaterialsLoading && companyMaterials.length === 0"
+                  description="暂无公司库资料"
+                />
+                <a-checkbox-group
+                  v-else
+                  v-model:value="selectedCompanyDocIds"
+                  class="company-checkbox-group"
+                >
                   <div
                     v-for="doc in companyMaterials"
                     :key="doc.id"
@@ -358,7 +375,11 @@
                       <div class="company-material-item__content">
                         <FileTextOutlined class="company-material-item__icon" />
                         <span class="company-material-item__title">{{ doc.title }}</span>
-                        <a-tag v-if="doc.category" color="geekblue" class="company-material-item__tag">
+                        <a-tag
+                          v-if="doc.category"
+                          color="geekblue"
+                          class="company-material-item__tag"
+                        >
                           {{ categoryLabel(doc.category) }}
                         </a-tag>
                       </div>

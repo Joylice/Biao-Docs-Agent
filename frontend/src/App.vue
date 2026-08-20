@@ -8,12 +8,25 @@
     <router-view v-slot="{ Component, route }">
       <ErrorBoundary>
         <AppLayout v-if="route.meta.layout === 'app'">
-          <transition name="fade" mode="out-in">
-            <component :is="Component" :key="route.path" />
+          <transition
+            name="fade"
+            mode="out-in"
+          >
+            <component
+              :is="Component"
+              :key="route.path"
+            />
           </transition>
         </AppLayout>
-        <transition v-else name="fade" mode="out-in">
-          <component :is="Component" :key="route.path" />
+        <transition
+          v-else
+          name="fade"
+          mode="out-in"
+        >
+          <component
+            :is="Component"
+            :key="route.path"
+          />
         </transition>
       </ErrorBoundary>
     </router-view>

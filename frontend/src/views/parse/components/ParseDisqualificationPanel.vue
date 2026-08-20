@@ -1,20 +1,39 @@
 <template>
   <a-card title="废标风险">
-    <a-alert v-if="clauses.length === 0" type="info" show-icon message="未提取到废标条款" />
+    <a-alert
+      v-if="clauses.length === 0"
+      type="info"
+      show-icon
+      message="未提取到废标条款"
+    />
 
     <template v-else>
-      <a-alert type="error" show-icon message="以下条款违反将直接导致废标，请逐条人工确认" class="parse-dq__alert" />
+      <a-alert
+        type="error"
+        show-icon
+        message="以下条款违反将直接导致废标，请逐条人工确认"
+        class="parse-dq__alert"
+      />
       <div class="parse-dq__list">
-        <div v-for="clause in clauses" :key="clause.id" class="parse-dq__item">
+        <div
+          v-for="clause in clauses"
+          :key="clause.id"
+          class="parse-dq__item"
+        >
           <div class="parse-dq__main">
             <div class="parse-dq__title">
               {{ clause.clause_no }} {{ clause.title }}
-              <a-tag class="parse-dq__category">{{ RISK_CATEGORY_LABELS[clause.risk_category] || clause.risk_category }}</a-tag>
+              <a-tag class="parse-dq__category">
+                {{ RISK_CATEGORY_LABELS[clause.risk_category] || clause.risk_category }}
+              </a-tag>
               <a-tag :color="SEVERITY_META[clause.severity]?.color ?? 'default'">
                 {{ SEVERITY_META[clause.severity]?.text ?? clause.severity }}
               </a-tag>
             </div>
-            <div v-if="clause.recommendation" class="parse-dq__recommendation">
+            <div
+              v-if="clause.recommendation"
+              class="parse-dq__recommendation"
+            >
               {{ clause.recommendation }}
             </div>
           </div>

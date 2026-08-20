@@ -1,29 +1,49 @@
 <template>
-  <a-card :bordered="false" class="parse-summary">
+  <a-card
+    :bordered="false"
+    class="parse-summary"
+  >
     <a-row :gutter="[16, 16]">
-      <a-col :xs="24" :sm="8">
+      <a-col
+        :xs="24"
+        :sm="8"
+      >
         <div class="parse-summary__item">
-          <div class="parse-summary__label">确认进度</div>
+          <div class="parse-summary__label">
+            确认进度
+          </div>
           <a-progress
             :percent="confirmedPercent"
             size="small"
             :status="confirmedPercent === 100 ? 'success' : 'active'"
           />
-          <div class="parse-summary__hint">已确认 {{ confirmedCount }} / {{ total }} 条</div>
+          <div class="parse-summary__hint">
+            已确认 {{ confirmedCount }} / {{ total }} 条
+          </div>
         </div>
       </a-col>
-      <a-col :xs="12" :sm="8">
+      <a-col
+        :xs="12"
+        :sm="8"
+      >
         <div class="parse-summary__item">
-          <div class="parse-summary__label">分值合计</div>
+          <div class="parse-summary__label">
+            分值合计
+          </div>
           <div class="parse-summary__value">
             {{ totalScore }}
             <span class="parse-summary__unit">分</span>
           </div>
         </div>
       </a-col>
-      <a-col :xs="12" :sm="8">
+      <a-col
+        :xs="12"
+        :sm="8"
+      >
         <div class="parse-summary__item">
-          <div class="parse-summary__label">高分值风险项</div>
+          <div class="parse-summary__label">
+            高分值风险项
+          </div>
           <div class="parse-summary__value parse-summary__value--danger">
             {{ highRiskCount }}
             <span class="parse-summary__unit">条（≥ 20 分）</span>

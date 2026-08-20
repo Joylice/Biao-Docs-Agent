@@ -2,8 +2,18 @@
   <div class="outline-panel">
     <div class="outline-panel__header">
       <span class="outline-panel__title">方案大纲</span>
-      <a-tag v-if="awaitingConfirm" color="warning">待确认</a-tag>
-      <a-tag v-else color="success">已确认</a-tag>
+      <a-tag
+        v-if="awaitingConfirm"
+        color="warning"
+      >
+        待确认
+      </a-tag>
+      <a-tag
+        v-else
+        color="success"
+      >
+        已确认
+      </a-tag>
     </div>
 
     <div class="outline-panel__tree">
@@ -29,7 +39,10 @@
       </a-tree>
     </div>
 
-    <div v-if="outline.length === 0" class="outline-panel__empty">
+    <div
+      v-if="outline.length === 0"
+      class="outline-panel__empty"
+    >
       <EmptyState description="暂无大纲" />
     </div>
   </div>

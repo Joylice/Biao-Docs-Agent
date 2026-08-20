@@ -1,6 +1,9 @@
 <template>
   <div class="review-view">
-    <PageContainer title="审阅与导出" subtitle="审阅生成内容，提交修改意见或确认导出">
+    <PageContainer
+      title="审阅与导出"
+      subtitle="审阅生成内容，提交修改意见或确认导出"
+    >
       <a-alert
         v-if="rewriting"
         type="info"
@@ -9,13 +12,27 @@
         message="章节重写中，请稍候，完成后将自动刷新审阅内容"
       />
 
-      <LoadingSkeleton v-if="loading" :rows="6" />
-      <ErrorState v-else-if="loadError" :description="loadError">
+      <LoadingSkeleton
+        v-if="loading"
+        :rows="6"
+      />
+      <ErrorState
+        v-else-if="loadError"
+        :description="loadError"
+      >
         <template #action>
-          <a-button type="primary" @click="fetchStatus">重试</a-button>
+          <a-button
+            type="primary"
+            @click="fetchStatus"
+          >
+            重试
+          </a-button>
         </template>
       </ErrorState>
-      <EmptyState v-else-if="chapterKeys.length === 0" description="暂无章节内容，请先在「方案大纲生成」页生成技术方案" />
+      <EmptyState
+        v-else-if="chapterKeys.length === 0"
+        description="暂无章节内容，请先在「方案大纲生成」页生成技术方案"
+      />
 
       <template v-else>
         <!-- 左右分栏：章节列表 + 内容区 -->
@@ -34,10 +51,11 @@
           </div>
           <div class="review-view__main">
             <ReviewContentPanel
+              v-model:mode="mode"
+              v-model:new-annotation="newAnnotation"
               :active-chapter="activeChapter"
               :active-chapter-title="activeChapterTitle"
               :submitter="submitterOf(activeChapter)"
-              v-model:mode="mode"
               :edit-content="editDrafts[activeChapter] || ''"
               :display-content="displayContent"
               :has-edit-draft="hasEditDraft(activeChapter)"
@@ -48,7 +66,6 @@
               :annotations="annotationListOf(activeChapter)"
               :annotations-loading="annotationsLoading"
               :annotation-count="annotationCountOf(activeChapter)"
-              v-model:new-annotation="newAnnotation"
               :adding-annotation="addingAnnotation"
               :project-id="projectId"
               :is-owner="isOwner"
@@ -68,11 +85,23 @@
 
         <!-- 底部操作区 -->
         <div class="review-view__actions">
-          <a-button @click="goToGenerate">返回修改</a-button>
-          <a-button type="primary" :loading="exporting" size="large" @click="handleExport">
+          <a-button @click="goToGenerate">
+            返回修改
+          </a-button>
+          <a-button
+            type="primary"
+            :loading="exporting"
+            size="large"
+            @click="handleExport"
+          >
             导出 Word 文档
           </a-button>
-          <a-button :loading="approving" :disabled="polling" size="large" @click="handleApprove">
+          <a-button
+            :loading="approving"
+            :disabled="polling"
+            size="large"
+            @click="handleApprove"
+          >
             审阅通过
           </a-button>
         </div>
@@ -85,7 +114,9 @@
           sub-title="技术方案已生成，可下载编辑"
         >
           <template #extra>
-            <a-button @click="handleDownload">下载文档</a-button>
+            <a-button @click="handleDownload">
+              下载文档
+            </a-button>
           </template>
         </a-result>
 
@@ -114,7 +145,11 @@
     >
       <a-form layout="vertical">
         <a-form-item label="备注（可选）">
-          <a-textarea v-model:value="snapshotNote" :rows="3" placeholder="例如：评审定稿版" />
+          <a-textarea
+            v-model:value="snapshotNote"
+            :rows="3"
+            placeholder="例如：评审定稿版"
+          />
         </a-form-item>
       </a-form>
     </a-modal>
@@ -131,17 +166,30 @@
     >
       <a-form layout="vertical">
         <a-form-item label="目标知识库">
-          <a-select v-model:value="archiveKbId" :options="companyBases" placeholder="选择公司级知识库" />
+          <a-select
+            v-model:value="archiveKbId"
+            :options="companyBases"
+            placeholder="选择公司级知识库"
+          />
         </a-form-item>
-        <div class="hint">归档后版本文档将入公司库分块向量化，供全公司方案生成检索</div>
+        <div class="hint">
+          归档后版本文档将入公司库分块向量化，供全公司方案生成检索
+        </div>
       </a-form>
     </a-modal>
 
     <!-- 反馈重写抽屉 -->
-    <a-drawer v-model:open="feedbackDrawerOpen" title="反馈重写" placement="right" :width="440">
+    <a-drawer
+      v-model:open="feedbackDrawerOpen"
+      title="反馈重写"
+      placement="right"
+      :width="440"
+    >
       <a-form layout="vertical">
         <a-form-item label="目标章节">
-          <a-tag color="blue">章节 {{ activeChapter }}</a-tag>
+          <a-tag color="blue">
+            章节 {{ activeChapter }}
+          </a-tag>
         </a-form-item>
         <a-form-item label="修改意见">
           <a-textarea
@@ -149,12 +197,20 @@
             :rows="8"
             placeholder="描述需要修改的内容，例如：补充行业成功案例"
           />
-          <div class="hint">意见将回派给章节负责人；无分工的章节由 AI 重写</div>
+          <div class="hint">
+            意见将回派给章节负责人；无分工的章节由 AI 重写
+          </div>
         </a-form-item>
       </a-form>
       <div class="drawer-footer">
-        <a-button @click="feedbackDrawerOpen = false">取消</a-button>
-        <a-button type="primary" :loading="submittingFeedback" @click="handleSubmitChapterFeedback">
+        <a-button @click="feedbackDrawerOpen = false">
+          取消
+        </a-button>
+        <a-button
+          type="primary"
+          :loading="submittingFeedback"
+          @click="handleSubmitChapterFeedback"
+        >
           提交重写
         </a-button>
       </div>
@@ -169,7 +225,11 @@
       :confirm-loading="updatingAnnotation"
       @ok="handleUpdateAnnotationConfirm"
     >
-      <a-textarea v-model:value="editingAnnotationContent" :rows="4" :maxlength="2000" />
+      <a-textarea
+        v-model:value="editingAnnotationContent"
+        :rows="4"
+        :maxlength="2000"
+      />
     </a-modal>
   </div>
 </template>

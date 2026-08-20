@@ -16,12 +16,26 @@
       />
 
       <!-- 断线重连提示 -->
-      <a-alert v-if="wsError" type="warning" show-icon class="generate-view__alert" :message="wsError" />
+      <a-alert
+        v-if="wsError"
+        type="warning"
+        show-icon
+        class="generate-view__alert"
+        :message="wsError"
+      />
 
       <!-- 加载失败 -->
-      <ErrorState v-if="loadError" :description="loadError">
+      <ErrorState
+        v-if="loadError"
+        :description="loadError"
+      >
         <template #action>
-          <a-button type="primary" @click="loadInitial">重试</a-button>
+          <a-button
+            type="primary"
+            @click="loadInitial"
+          >
+            重试
+          </a-button>
         </template>
       </ErrorState>
 
@@ -32,30 +46,63 @@
           description="尚未确认评分点：请先在「招标解析」页确认智能解析的评分点"
         >
           <template #action>
-            <a-button type="primary" @click="router.push({ name: 'Parse', params: { projectId } })">
+            <a-button
+              type="primary"
+              @click="router.push({ name: 'Parse', params: { projectId } })"
+            >
               前往招标解析
             </a-button>
           </template>
         </EmptyState>
 
         <!-- 大纲生成中 -->
-        <a-card v-else-if="outlinePolling" class="generate-view__polling">
-          <a-alert type="info" show-icon message="方案大纲正在生成中，请稍候..." />
-          <LoadingSkeleton class="mt-4" :rows="4" />
+        <a-card
+          v-else-if="outlinePolling"
+          class="generate-view__polling"
+        >
+          <a-alert
+            type="info"
+            show-icon
+            message="方案大纲正在生成中，请稍候..."
+          />
+          <LoadingSkeleton
+            class="mt-4"
+            :rows="4"
+          />
         </a-card>
 
         <!-- 主内容区：左右分栏 -->
         <template v-else-if="outline.length > 0 || generating || generated">
           <!-- 大纲待确认编辑区 -->
-          <a-card v-if="awaitingOutlineConfirm" class="generate-view__outline-edit" title="大纲编辑">
+          <a-card
+            v-if="awaitingOutlineConfirm"
+            class="generate-view__outline-edit"
+            title="大纲编辑"
+          >
             <template #extra>
               <a-space>
-                <a-tag color="orange">待确认</a-tag>
-                <a-tag v-if="draftState !== 'idle'" :color="draftTagColor">{{ draftStatusText }}</a-tag>
-                <a-button size="small" :loading="draftState === 'saving'" @click="saveDraftNow">
+                <a-tag color="orange">
+                  待确认
+                </a-tag>
+                <a-tag
+                  v-if="draftState !== 'idle'"
+                  :color="draftTagColor"
+                >
+                  {{ draftStatusText }}
+                </a-tag>
+                <a-button
+                  size="small"
+                  :loading="draftState === 'saving'"
+                  @click="saveDraftNow"
+                >
                   保存草稿
                 </a-button>
-                <a-button size="small" type="primary" :loading="generating" @click="handleStartGenerate">
+                <a-button
+                  size="small"
+                  type="primary"
+                  :loading="generating"
+                  @click="handleStartGenerate"
+                >
                   确认大纲
                 </a-button>
               </a-space>
@@ -86,13 +133,18 @@
               class="mt-4"
               @click="handleAddChapter"
             >
-              <template #icon><PlusOutlined /></template>
+              <template #icon>
+                <PlusOutlined />
+              </template>
               添加章节
             </a-button>
           </a-card>
 
           <!-- 左右分栏：大纲树 + 章节预览/评分对标 -->
-          <div v-else class="generate-view__split">
+          <div
+            v-else
+            class="generate-view__split"
+          >
             <div class="generate-view__sider">
               <OutlinePanel
                 :outline="outline"
@@ -103,8 +155,14 @@
               />
             </div>
             <div class="generate-view__main">
-              <a-tabs v-model:activeKey="activeTab" class="generate-view__tabs">
-                <a-tab-pane key="preview" tab="章节预览">
+              <a-tabs
+                v-model:activeKey="activeTab"
+                class="generate-view__tabs"
+              >
+                <a-tab-pane
+                  key="preview"
+                  tab="章节预览"
+                >
                   <ChapterPreview
                     :selected-chapter="selectedChapter"
                     :current-chapter="currentChapter"
@@ -118,7 +176,10 @@
                     @go-division="goToDivision"
                   />
                 </a-tab-pane>
-                <a-tab-pane key="benchmark" tab="评分对标">
+                <a-tab-pane
+                  key="benchmark"
+                  tab="评分对标"
+                >
                   <ScoreMatchPanel
                     :items="benchmarkItems"
                     :loading="benchmarkLoading"
@@ -140,7 +201,9 @@
               :confirm-loading="regeneratingOutline"
               @confirm="handleRegenerateOutline"
             >
-              <a-button :loading="regeneratingOutline">重新生成大纲</a-button>
+              <a-button :loading="regeneratingOutline">
+                重新生成大纲
+              </a-button>
             </a-popconfirm>
             <a-button
               v-if="!awaitingOutlineConfirm && !generating && !generated && canEditOutlineNow"
@@ -150,14 +213,28 @@
             >
               开始生成
             </a-button>
-            <a-button v-if="generated" type="primary" @click="goToReview">进入审阅</a-button>
+            <a-button
+              v-if="generated"
+              type="primary"
+              @click="goToReview"
+            >
+              进入审阅
+            </a-button>
           </div>
         </template>
 
         <!-- 空状态 -->
-        <EmptyState v-else description="尚未开始生成，点击下方按钮开始生成技术方案">
+        <EmptyState
+          v-else
+          description="尚未开始生成，点击下方按钮开始生成技术方案"
+        >
           <template #action>
-            <a-button v-if="canEditOutlineNow" type="primary" :loading="generating" @click="handleStartGenerate">
+            <a-button
+              v-if="canEditOutlineNow"
+              type="primary"
+              :loading="generating"
+              @click="handleStartGenerate"
+            >
               开始生成
             </a-button>
           </template>

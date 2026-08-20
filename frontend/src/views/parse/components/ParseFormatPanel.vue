@@ -2,8 +2,19 @@
   <a-card title="格式要求汇总">
     <template #extra>
       <a-space>
-        <a-button size="small" @click="$emit('add-item')">新增条目</a-button>
-        <a-button size="small" :loading="formatSaving" @click="$emit('save')">保存</a-button>
+        <a-button
+          size="small"
+          @click="$emit('add-item')"
+        >
+          新增条目
+        </a-button>
+        <a-button
+          size="small"
+          :loading="formatSaving"
+          @click="$emit('save')"
+        >
+          保存
+        </a-button>
       </a-space>
     </template>
 
@@ -14,10 +25,23 @@
       message="未提取到格式要求，可手动新增（字体字号、行距、页边距等将应用到 Word 导出排版）"
     />
 
-    <div v-else class="parse-format__list">
-      <div v-for="group in formatGroups" :key="group.category" class="parse-format__group">
-        <div class="parse-format__group-label">{{ formatCategoryLabel(group.category) }}</div>
-        <div v-for="item in group.items" :key="item.key" class="parse-format__item">
+    <div
+      v-else
+      class="parse-format__list"
+    >
+      <div
+        v-for="group in formatGroups"
+        :key="group.category"
+        class="parse-format__group"
+      >
+        <div class="parse-format__group-label">
+          {{ formatCategoryLabel(group.category) }}
+        </div>
+        <div
+          v-for="item in group.items"
+          :key="item.key"
+          class="parse-format__item"
+        >
           <a-select
             v-model:value="item.category"
             :options="formatCategoryOptions"
@@ -29,7 +53,14 @@
             size="small"
             placeholder="格式要求描述，如：正文小四号仿宋、1.5 倍行距"
           />
-          <a-button size="small" type="text" danger @click="$emit('remove-item', item)">删除</a-button>
+          <a-button
+            size="small"
+            type="text"
+            danger
+            @click="$emit('remove-item', item)"
+          >
+            删除
+          </a-button>
         </div>
       </div>
     </div>

@@ -24,16 +24,25 @@
       <template v-else>
         <!-- 快捷操作区 -->
         <div class="workbench__quick-actions">
-          <a-button type="primary" @click="goProjects">
-            <template #icon><PlusOutlined /></template>
+          <a-button
+            type="primary"
+            @click="goProjects"
+          >
+            <template #icon>
+              <PlusOutlined />
+            </template>
             新建项目
           </a-button>
           <a-button @click="goProjects">
-            <template #icon><FolderOpenOutlined /></template>
+            <template #icon>
+              <FolderOpenOutlined />
+            </template>
             全部项目
           </a-button>
           <a-button @click="goMaterials">
-            <template #icon><DatabaseOutlined /></template>
+            <template #icon>
+              <DatabaseOutlined />
+            </template>
             资料库
           </a-button>
         </div>

@@ -1,13 +1,31 @@
 <template>
   <div class="parse-confirm">
-    <PageContainer title="招标解析确认" subtitle="确认评分点和技术需求，确认后生成方案大纲" :show-header="!embedded">
-      <LoadingSkeleton v-if="loading" :rows="5" />
-      <ErrorState v-else-if="loadError" :description="loadError">
+    <PageContainer
+      title="招标解析确认"
+      subtitle="确认评分点和技术需求，确认后生成方案大纲"
+      :show-header="!embedded"
+    >
+      <LoadingSkeleton
+        v-if="loading"
+        :rows="5"
+      />
+      <ErrorState
+        v-else-if="loadError"
+        :description="loadError"
+      >
         <template #action>
-          <a-button type="primary" @click="fetchData">重试</a-button>
+          <a-button
+            type="primary"
+            @click="fetchData"
+          >
+            重试
+          </a-button>
         </template>
       </ErrorState>
-      <EmptyState v-else-if="scorePoints.length === 0 && techRequirements.length === 0" description="暂无解析数据，请先在「招标解析」页上传招标文件" />
+      <EmptyState
+        v-else-if="scorePoints.length === 0 && techRequirements.length === 0"
+        description="暂无解析数据，请先在「招标解析」页上传招标文件"
+      />
 
       <template v-else>
         <!-- 顶部统计 -->
@@ -21,8 +39,14 @@
         />
 
         <!-- Tab 面板 -->
-        <a-tabs v-model:activeKey="activeTab" class="parse-confirm__tabs">
-          <a-tab-pane key="score" tab="评分点">
+        <a-tabs
+          v-model:activeKey="activeTab"
+          class="parse-confirm__tabs"
+        >
+          <a-tab-pane
+            key="score"
+            tab="评分点"
+          >
             <ParseScoreTable
               :score-points="scorePoints"
               :selected-row-keys="selectedRowKeys"
@@ -41,7 +65,10 @@
             />
           </a-tab-pane>
 
-          <a-tab-pane key="tech" tab="技术需求">
+          <a-tab-pane
+            key="tech"
+            tab="技术需求"
+          >
             <ParseTechTable
               :tech-requirements="techRequirements"
               :generate-loading="generateLoading"
@@ -50,7 +77,11 @@
             />
           </a-tab-pane>
 
-          <a-tab-pane v-if="tenderDoc" key="format" tab="格式要求">
+          <a-tab-pane
+            v-if="tenderDoc"
+            key="format"
+            tab="格式要求"
+          >
             <ParseFormatPanel
               :format-requirements="formatRequirements"
               :format-saving="formatSaving"
@@ -60,7 +91,11 @@
             />
           </a-tab-pane>
 
-          <a-tab-pane v-if="tenderDoc" key="disqualification" tab="废标风险">
+          <a-tab-pane
+            v-if="tenderDoc"
+            key="disqualification"
+            tab="废标风险"
+          >
             <ParseDisqualificationPanel
               :clauses="disqualificationClauses"
               :saving="disqualificationSaving"
@@ -71,7 +106,11 @@
 
         <!-- 操作按钮 -->
         <div class="parse-confirm__actions">
-          <a-button type="primary" :loading="confirming" @click="handleConfirm">
+          <a-button
+            type="primary"
+            :loading="confirming"
+            @click="handleConfirm"
+          >
             确认并生成大纲
           </a-button>
         </div>
@@ -250,7 +289,8 @@ const fetchData = async () => {
   try {
     const [spRes, trRes] = await Promise.all([
       api.get(`/projects/${projectId}/score-points`),
-      api.get(`/projects/${projectId}/requirements`, { params: { only_mapped: true } }),
+      // 获取全部技术需求（含未关联评分点的），表格中显示关联状态
+      api.get(`/projects/${projectId}/requirements`),
     ])
     scorePoints.value = spRes.data?.data || []
     techRequirements.value = trRes.data?.data || []
@@ -273,12 +313,23 @@ const fetchData = async () => {
 const handleGenerateRequirements = async () => {
   generateLoading.value = true
   try {
-    const body = selectedRowKeys.value.length > 0 ? { score_point_ids: selectedRowKeys.value } : {}
+    // 确定用于生成的评分点ID：优先用选中的，未选中时用全部已确认的
+    let spIds = selectedRowKeys.value
+    if (spIds.length === 0) {
+      spIds = scorePoints.value.filter((p) => p.confirmed).map((p) => p.id)
+    }
+    if (spIds.length === 0) {
+      message.warning('请先确认至少一条评分点，或选中评分点后再生成技术需求')
+      generateLoading.value = false
+      return
+    }
+    const body = { score_point_ids: spIds }
     const res = await api.post(`/projects/${projectId}/requirements/generate`, body)
     if (res.data?.code !== 0) { message.error(res.data?.message || '技术需求生成失败'); return }
     const data = res.data?.data || {}
     message.success(`已生成 ${data.total} 条需求，其中 ${data.mapped} 条关联到评分点`)
-    const trRes = await api.get(`/projects/${projectId}/requirements`, { params: { only_mapped: true } })
+    // 获取全部技术需求（含未关联的），表格中显示关联状态
+    const trRes = await api.get(`/projects/${projectId}/requirements`)
     techRequirements.value = trRes.data?.data || []
   } catch (err) {
     const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message

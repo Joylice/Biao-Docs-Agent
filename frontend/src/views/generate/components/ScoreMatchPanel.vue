@@ -2,13 +2,36 @@
   <div class="score-match-panel">
     <div class="score-match-panel__header">
       <span class="score-match-panel__title">评分对标</span>
-      <a-tag v-if="!loading && !error" color="blue">共 {{ items.length }} 项</a-tag>
-      <a-button v-if="error" size="small" @click="$emit('retry')">重试</a-button>
+      <a-tag
+        v-if="!loading && !error"
+        color="blue"
+      >
+        共 {{ items.length }} 项
+      </a-tag>
+      <a-button
+        v-if="error"
+        size="small"
+        @click="$emit('retry')"
+      >
+        重试
+      </a-button>
     </div>
 
-    <a-alert v-if="error" type="warning" show-icon :message="error" class="mb-4" />
-    <LoadingSkeleton v-else-if="loading" :rows="5" />
-    <a-empty v-else-if="items.length === 0" description="暂无评分点" />
+    <a-alert
+      v-if="error"
+      type="warning"
+      show-icon
+      :message="error"
+      class="mb-4"
+    />
+    <LoadingSkeleton
+      v-else-if="loading"
+      :rows="5"
+    />
+    <a-empty
+      v-else-if="items.length === 0"
+      description="暂无评分点"
+    />
 
     <a-table
       v-else
@@ -22,7 +45,10 @@
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'coverage'">
-          <a-progress :percent="Math.round((record.coverage ?? 0) * 100)" size="small" />
+          <a-progress
+            :percent="Math.round((record.coverage ?? 0) * 100)"
+            size="small"
+          />
         </template>
         <template v-else-if="column.key === 'risk'">
           <a-tag :color="riskMeta[record.risk as RiskLevel]?.color ?? 'default'">

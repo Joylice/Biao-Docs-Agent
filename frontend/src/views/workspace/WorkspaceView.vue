@@ -7,8 +7,8 @@
           <a-button
             type="text"
             size="small"
-            @click="goBackToProjects"
             class="workspace__back-btn"
+            @click="goBackToProjects"
           >
             <template #icon>
               <ArrowLeftOutlined />
@@ -16,10 +16,17 @@
             返回
           </a-button>
           <div class="workspace__project-meta">
-            <h2 class="workspace__project-name" :title="projectName">
+            <h2
+              class="workspace__project-name"
+              :title="projectName"
+            >
               {{ projectName || '加载中…' }}
             </h2>
-            <a-tag v-if="projectPhase" color="blue" class="workspace__phase-tag">
+            <a-tag
+              v-if="projectPhase"
+              color="blue"
+              class="workspace__phase-tag"
+            >
               {{ phaseText }}
             </a-tag>
           </div>
@@ -28,8 +35,8 @@
         <div class="workspace__header-actions">
           <a-button
             type="text"
-            @click="openMembersDrawer"
             class="workspace__members-btn"
+            @click="openMembersDrawer"
           >
             <template #icon>
               <TeamOutlined />
@@ -83,16 +90,26 @@
               <a-list-item-meta>
                 <template #title>
                   <span class="member-name">{{ item.display_name }}</span>
-                  <a-tag v-if="item.is_owner" color="gold" class="member-tag">
+                  <a-tag
+                    v-if="item.is_owner"
+                    color="gold"
+                    class="member-tag"
+                  >
                     所有者
                   </a-tag>
-                  <a-tag v-if="item.user_id === currentUserId" color="blue" class="member-tag">
+                  <a-tag
+                    v-if="item.user_id === currentUserId"
+                    color="blue"
+                    class="member-tag"
+                  >
                     我
                   </a-tag>
                 </template>
                 <template #description>
                   <div>{{ item.email }}</div>
-                  <div class="member-joined">{{ formatTime(item.joined_at) }} 加入</div>
+                  <div class="member-joined">
+                    {{ formatTime(item.joined_at) }} 加入
+                  </div>
                 </template>
               </a-list-item-meta>
               <a-popconfirm
@@ -102,14 +119,23 @@
                 cancel-text="取消"
                 @confirm="handleRemoveMember(item.user_id)"
               >
-                <a-button type="text" danger size="small">移除</a-button>
+                <a-button
+                  type="text"
+                  danger
+                  size="small"
+                >
+                  移除
+                </a-button>
               </a-popconfirm>
             </a-list-item>
           </template>
         </a-list>
       </a-spin>
       <template #footer>
-        <div v-if="isOwner" class="member-add">
+        <div
+          v-if="isOwner"
+          class="member-add"
+        >
           <a-select
             v-model:value="addUserId"
             :options="candidateOptions"
@@ -119,7 +145,11 @@
             option-filter-prop="label"
             style="flex: 1"
           />
-          <a-button type="primary" :loading="addingMember" @click="handleAddMember">
+          <a-button
+            type="primary"
+            :loading="addingMember"
+            @click="handleAddMember"
+          >
             添加
           </a-button>
         </div>
