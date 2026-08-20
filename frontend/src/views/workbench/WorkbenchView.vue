@@ -22,6 +22,22 @@
         </template>
       </ErrorState>
       <template v-else>
+        <!-- 快捷操作区 -->
+        <div class="workbench__quick-actions">
+          <a-button type="primary" @click="goProjects">
+            <template #icon><PlusOutlined /></template>
+            新建项目
+          </a-button>
+          <a-button @click="goProjects">
+            <template #icon><FolderOpenOutlined /></template>
+            全部项目
+          </a-button>
+          <a-button @click="goMaterials">
+            <template #icon><DatabaseOutlined /></template>
+            资料库
+          </a-button>
+        </div>
+
         <!-- 我的待办：5 桶（待领取/编制中/被打回/已提审/已通过），条目直达项目分工页 -->
         <div class="workbench__section-title">
           我的待办
@@ -176,6 +192,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { PlusOutlined, FolderOpenOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
 import api from '@/api/client'
 import { currentUserId } from '@/stores/currentUser'
 import PageContainer from '@/components/PageContainer.vue'
@@ -275,6 +292,9 @@ const fetchSummary = async (silent = false) => {
 const goDivision = (projectId: string) => {
   router.push({ name: 'Division', params: { projectId } })
 }
+
+const goProjects = () => router.push({ name: 'Projects' })
+const goMaterials = () => router.push({ name: 'Materials' })
 
 /** 项目名缩写：截取前 6 字符（阶段8 任务凝练），tooltip 显全名由模板提供 */
 const projectAbbr = (name: string) => {
@@ -386,6 +406,13 @@ onUnmounted(closeUserWebSocket)
 <style scoped>
 .workbench {
   max-width: 1200px;
+}
+
+.workbench__quick-actions {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
 }
 
 .workbench__section-title {

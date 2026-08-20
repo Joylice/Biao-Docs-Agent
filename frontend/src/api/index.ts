@@ -1,0 +1,16 @@
+/** API 层统一导出入口 */
+export { default as api } from './client'
+export * from './auth'
+export * from './projects'
+export * from './documents'
+export * from './kbBases'
+export * from './workflow'
+export * from './division'
+export * from './benchmark'
+export * from './parse'
+export * from './review'
+export * from './users'
+export * from './audit'
+export * from './workbench'
+// settings API 保持原有独立文件（已有 src/api/settings.ts）
+export * from './settings'

@@ -12,65 +12,70 @@
         </span>
         <span class="app-layout__title">投标智能体</span>
       </div>
-      <a-dropdown placement="bottomRight">
-        <span class="app-layout__user">
-          <a-avatar
-            :size="28"
-            class="app-layout__avatar"
-          >
-            {{ avatarText }}
-          </a-avatar>
-          <span class="app-layout__username">{{ displayName }}</span>
-          <DownOutlined class="app-layout__caret" />
-        </span>
-        <template #overlay>
-          <a-menu @click="handleUserMenu">
-            <a-menu-item
-              v-if="hasPerm('kb:read')"
-              key="kb"
+
+      <div class="app-layout__actions">
+        <ThemeToggle />
+        <a-dropdown placement="bottomRight">
+          <span class="app-layout__user">
+            <a-avatar
+              :size="32"
+              class="app-layout__avatar"
             >
-              <DatabaseOutlined />
-              资料库
-            </a-menu-item>
-            <a-menu-item
-              v-if="hasPerm('system:manage')"
-              key="settings"
-            >
-              <SettingOutlined />
-              模型设置
-            </a-menu-item>
-            <a-menu-item
-              v-if="hasPerm('system:manage')"
-              key="users"
-            >
-              <TeamOutlined />
-              用户管理
-            </a-menu-item>
-            <a-menu-item
-              v-if="hasPerm('system:manage')"
-              key="audit"
-            >
-              <AuditOutlined />
-              审计日志
-            </a-menu-item>
-            <a-menu-divider />
-            <a-menu-item
-              key="logout"
-              class="app-layout__logout"
-            >
-              <LogoutOutlined />
-              退出登录
-            </a-menu-item>
-          </a-menu>
-        </template>
-      </a-dropdown>
+              {{ avatarText }}
+            </a-avatar>
+            <span class="app-layout__username">{{ displayName }}</span>
+            <DownOutlined class="app-layout__caret" />
+          </span>
+          <template #overlay>
+            <a-menu @click="handleUserMenu">
+              <a-menu-item
+                v-if="hasPerm('kb:read')"
+                key="kb"
+              >
+                <DatabaseOutlined />
+                资料库
+              </a-menu-item>
+              <a-menu-item
+                v-if="hasPerm('system:manage')"
+                key="settings"
+              >
+                <SettingOutlined />
+                模型设置
+              </a-menu-item>
+              <a-menu-item
+                v-if="hasPerm('system:manage')"
+                key="users"
+              >
+                <TeamOutlined />
+                用户管理
+              </a-menu-item>
+              <a-menu-item
+                v-if="hasPerm('system:manage')"
+                key="audit"
+              >
+                <AuditOutlined />
+                审计日志
+              </a-menu-item>
+              <a-menu-divider />
+              <a-menu-item
+                key="logout"
+                class="app-layout__logout"
+              >
+                <LogoutOutlined />
+                退出登录
+              </a-menu-item>
+            </a-menu>
+          </template>
+        </a-dropdown>
+      </div>
     </a-layout-header>
+
     <a-layout class="app-layout__main">
-      <!-- 浅色窄边侧栏：工作台置首，项目列表次之（管理入口仍在右上角用户菜单） -->
       <a-layout-sider
         theme="light"
-        :width="200"
+        :width="220"
         :collapsed-width="64"
+        :collapsed="uiStore.siderCollapsed"
         breakpoint="lg"
         class="app-layout__sider"
       >
@@ -81,7 +86,21 @@
           :items="navItems"
           @click="handleNavClick"
         />
+        <div class="app-layout__sider-footer">
+          <a-button
+            type="text"
+            block
+            @click="uiStore.toggleSider"
+          >
+            <template #icon>
+              <MenuFoldOutlined v-if="!uiStore.siderCollapsed" />
+              <MenuUnfoldOutlined v-else />
+            </template>
+            <span v-if="!uiStore.siderCollapsed">收起菜单</span>
+          </a-button>
+        </div>
       </a-layout-sider>
+
       <a-layout-content class="app-layout__content">
         <div class="app-layout__page">
           <slot />
@@ -104,11 +123,15 @@ import {
   FileSearchOutlined,
   FolderOpenOutlined,
   LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   SettingOutlined,
   TeamOutlined,
 } from '@ant-design/icons-vue'
 import api from '@/api/client'
 import { hasPerm, setCurrentPermissions, setCurrentUser, setRole } from '@/stores/currentUser'
+import { useUiStore } from '@/stores/ui'
+import ThemeToggle from '@/components/common/ThemeToggle.vue'
 
 interface CurrentUser {
   id: string
@@ -120,22 +143,24 @@ interface CurrentUser {
 
 const router = useRouter()
 const route = useRoute()
+const uiStore = useUiStore()
 
 const displayName = ref('')
 const email = ref('')
 
 const avatarText = computed(() => (displayName.value || email.value || '用').charAt(0).toUpperCase())
 
-/* ---------------- 侧边导航（key → 路由 name 映射） ---------------- */
+/* ---------------- 侧边导航 ---------------- */
 const NAV_ROUTES: Record<string, string> = {
   workbench: 'Workbench',
   projects: 'Projects',
+  materials: 'Materials',
 }
 
-// 路由 name → 菜单 key（选中态反查）
 const ROUTE_NAV_KEYS: Record<string, string> = {
   Workbench: 'workbench',
   Projects: 'projects',
+  Materials: 'materials',
 }
 
 const navItems: MenuProps['items'] = [
@@ -148,6 +173,11 @@ const navItems: MenuProps['items'] = [
     key: 'projects',
     icon: () => h(FolderOpenOutlined),
     label: '项目列表',
+  },
+  {
+    key: 'materials',
+    icon: () => h(DatabaseOutlined),
+    label: '资料库',
   },
 ]
 
@@ -168,20 +198,19 @@ const fetchCurrentUser = async () => {
       const user = data.data as CurrentUser
       displayName.value = user.display_name || user.email
       email.value = user.email
-      setRole(user.role)  // 三期：角色写入全局状态，控制管理入口展示
-      setCurrentPermissions(user.permissions)  // 阶段 A：功能权限点驱动菜单可见性
+      setRole(user.role)
+      setCurrentPermissions(user.permissions)
       if (user.id) {
         setCurrentUser(user.id)
       }
     }
   } catch {
-    // 401 由 client 拦截器统一清 token 并跳转登录
+    // 401 由 client 拦截器统一处理
   }
 }
 
 const handleUserMenu = ({ key }: { key: string }) => {
   if (key === 'kb') {
-    // 全局资料库独立管理页（不再依赖项目上下文）
     router.push({ name: 'Materials' })
   } else if (key === 'settings') {
     router.push({ name: 'Settings' })
@@ -212,16 +241,17 @@ onMounted(fetchCurrentUser)
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 56px;
+  height: 60px;
   padding: 0 24px;
-  background: var(--card-bg);
+  background: var(--bg-surface);
   border-bottom: 1px solid var(--border-color);
+  backdrop-filter: blur(12px);
 }
 
 .app-layout__brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   cursor: pointer;
 }
 
@@ -229,90 +259,98 @@ onMounted(fetchCurrentUser)
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  background: var(--color-primary);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-info));
   color: #fff;
-  font-size: 18px;
+  font-size: 20px;
+  box-shadow: var(--shadow-sm);
 }
 
 .app-layout__title {
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
   color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.app-layout__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .app-layout__user {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: 6px;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background-color var(--transition-fast);
 }
 
 .app-layout__user:hover {
-  background: var(--bg-hover);
+  background: var(--bg-surface-hover);
 }
 
 .app-layout__avatar {
-  background: var(--color-primary);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-info));
   color: #fff;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .app-layout__username {
   font-size: 14px;
+  font-weight: 500;
   color: var(--text-primary);
 }
 
 .app-layout__caret {
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
 }
 
 .app-layout__main {
   background: transparent;
 }
 
-/* 浅色窄边侧栏（飞书风：白底 + 右侧 1px 分割线） */
 .app-layout__sider {
   position: sticky;
-  top: 56px;
-  height: calc(100vh - 56px);
-  overflow: auto;
-  background: var(--card-bg);
+  top: 60px;
+  height: calc(100vh - 60px);
+  overflow-y: auto;
+  background: var(--bg-surface);
   border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
 }
 
 .app-layout__sider :deep(.ant-menu) {
   background: transparent;
+  flex: 1;
+  padding: 12px 0;
 }
 
-/* 菜单选中态：浅蓝底 + 主色文字；未选中 hover 浅灰底 */
-.app-layout__sider :deep(.ant-menu-item) {
-  border-radius: 6px;
-}
-
-.app-layout__sider :deep(.ant-menu-item-selected) {
-  background: var(--bg-active);
-  color: var(--color-primary);
-}
-
-.app-layout__sider :deep(.ant-menu-item:not(.ant-menu-item-selected):hover) {
-  background: var(--bg-hover);
+.app-layout__sider-footer {
+  padding: 8px;
+  border-top: 1px solid var(--border-color);
 }
 
 .app-layout__content {
-  background: var(--app-bg);
+  background: var(--bg-app);
   min-width: 0;
 }
 
 .app-layout__page {
-  max-width: 1200px;
+  max-width: var(--content-max-width);
   margin: 0 auto;
   padding: 24px;
+}
+
+.app-layout__logout {
+  color: var(--color-error);
 }
 </style>

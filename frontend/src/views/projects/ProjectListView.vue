@@ -5,6 +5,7 @@
   >
     <template #extra>
       <a-button
+        v-if="can('project:create')"
         type="primary"
         @click="openCreateModal"
       >
@@ -33,6 +34,11 @@
           allow-clear
           style="width: 160px"
           :options="industryOptions"
+        />
+        <a-select
+          v-model:value="sortBy"
+          style="width: 140px"
+          :options="sortOptions"
         />
         <span class="toolbar-count">
           共 {{ filteredProjects.length }} 个项目
@@ -228,6 +234,9 @@ import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
+import { usePermission } from '@/composables/usePermission'
+
+const { can } = usePermission()
 
 interface ProjectItem {
   id: string
@@ -248,6 +257,14 @@ const creating = ref(false)
 const projects = ref<ProjectItem[]>([])
 const searchKeyword = ref('')
 const industryFilter = ref<string | undefined>(undefined)
+const sortBy = ref('created_desc')
+
+const sortOptions = [
+  { label: '最新创建', value: 'created_desc' },
+  { label: '最早创建', value: 'created_asc' },
+  { label: '名称 A-Z', value: 'name_asc' },
+  { label: '名称 Z-A', value: 'name_desc' },
+]
 
 const newProject = reactive({
   name: '',
@@ -358,7 +375,7 @@ const formatTime = (time?: string): string => {
 
 const filteredProjects = computed(() => {
   const kw = searchKeyword.value.trim().toLowerCase()
-  return projects.value.filter((p) => {
+  let list = projects.value.filter((p) => {
     const matchKw =
       !kw ||
       p.name.toLowerCase().includes(kw) ||
@@ -366,6 +383,21 @@ const filteredProjects = computed(() => {
     const matchIndustry = !industryFilter.value || p.industry === industryFilter.value
     return matchKw && matchIndustry
   })
+  // 排序
+  list = [...list].sort((a, b) => {
+    switch (sortBy.value) {
+      case 'created_asc':
+        return new Date(a.created_at || '').getTime() - new Date(b.created_at || '').getTime()
+      case 'name_asc':
+        return a.name.localeCompare(b.name)
+      case 'name_desc':
+        return b.name.localeCompare(a.name)
+      case 'created_desc':
+      default:
+        return new Date(b.created_at || '').getTime() - new Date(a.created_at || '').getTime()
+    }
+  })
+  return list
 })
 
 const fetchProjects = async () => {

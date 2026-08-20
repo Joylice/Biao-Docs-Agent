@@ -1,80 +1,73 @@
 <template>
-  <a-layout class="workspace">
-    <a-layout-sider
-      theme="light"
-      :width="200"
-      :collapsed="siderCollapsed"
-      :collapsed-width="64"
-      :trigger="null"
-      collapsible
-      class="workspace__sider"
-    >
-      <div class="workspace__project">
-        <span class="workspace__project-icon">
-          <FolderOutlined />
-        </span>
-        <div
-          v-if="!siderCollapsed"
-          class="workspace__project-info"
-        >
-          <span class="workspace__project-label">当前项目</span>
-          <span
-            class="workspace__project-name"
-            :title="projectName"
+  <div class="workspace">
+    <!-- 顶部步骤条导航 -->
+    <div class="workspace__header">
+      <div class="workspace__header-inner">
+        <div class="workspace__project-info">
+          <a-button
+            type="text"
+            size="small"
+            @click="goBackToProjects"
+            class="workspace__back-btn"
           >
-            {{ projectName || '加载中…' }}
-          </span>
+            <template #icon>
+              <ArrowLeftOutlined />
+            </template>
+            返回
+          </a-button>
+          <div class="workspace__project-meta">
+            <h2 class="workspace__project-name" :title="projectName">
+              {{ projectName || '加载中…' }}
+            </h2>
+            <a-tag v-if="projectPhase" color="blue" class="workspace__phase-tag">
+              {{ phaseText }}
+            </a-tag>
+          </div>
         </div>
-        <a-button
-          v-if="!siderCollapsed"
-          class="workspace__collapse-btn"
-          type="text"
-          size="small"
-          @click="siderCollapsed = true"
-        >
-          <template #icon>
-            <MenuFoldOutlined />
-          </template>
-        </a-button>
-      </div>
-      <a-button
-        v-if="siderCollapsed"
-        class="workspace__expand-btn"
-        type="text"
-        size="small"
-        @click="siderCollapsed = false"
-      >
-        <template #icon>
-          <MenuUnfoldOutlined />
-        </template>
-      </a-button>
-      <a-menu
-        mode="inline"
-        :selected-keys="selectedKeys"
-        :items="menuItems"
-        :inline-collapsed="siderCollapsed"
-        @click="handleMenuClick"
-      />
-      <div class="workspace__footer">
-        <a-button
-          type="text"
-          block
-          @click="goBackToProjects"
-        >
-          <template #icon>
-            <ArrowLeftOutlined />
-          </template>
-          <span v-if="!siderCollapsed">返回项目列表</span>
-        </a-button>
-      </div>
-    </a-layout-sider>
-    <a-layout-content class="workspace-content">
-      <router-view />
-    </a-layout-content>
 
-    <!-- 成员管理抽屉：列表 + 移除（仅 owner）+ 添加协作者 -->
-    <!-- 注意：必须位于 a-layout 单根节点内 —— App.vue 的 <Transition mode="out-in"> -->
-    <!-- 无法对 fragment（多根）组件做过渡，否则路由跳转时静默白屏 -->
+        <div class="workspace__header-actions">
+          <a-button
+            type="text"
+            @click="openMembersDrawer"
+            class="workspace__members-btn"
+          >
+            <template #icon>
+              <TeamOutlined />
+            </template>
+            成员管理
+          </a-button>
+        </div>
+      </div>
+
+      <!-- 步骤条 -->
+      <div class="workspace__steps-wrapper">
+        <div class="workspace__steps-inner">
+          <a-steps
+            :current="currentStepIndex"
+            size="small"
+            class="workspace__steps"
+            @change="handleStepChange"
+          >
+            <a-step
+              v-for="(step, idx) in steps"
+              :key="step.key"
+              :title="step.label"
+              :status="getStepStatus(idx)"
+              :icon="step.icon"
+            />
+          </a-steps>
+        </div>
+      </div>
+    </div>
+
+    <!-- 内容区 -->
+    <div class="workspace__content">
+      <div class="workspace__content-inner">
+        <router-view />
+      </div>
+    </div>
+
+    <!-- 成员管理抽屉 -->
     <a-drawer
       v-model:open="showMembersDrawer"
       title="成员管理"
@@ -90,26 +83,16 @@
               <a-list-item-meta>
                 <template #title>
                   <span class="member-name">{{ item.display_name }}</span>
-                  <a-tag
-                    v-if="item.is_owner"
-                    color="gold"
-                    class="member-tag"
-                  >
+                  <a-tag v-if="item.is_owner" color="gold" class="member-tag">
                     所有者
                   </a-tag>
-                  <a-tag
-                    v-if="item.user_id === currentUserId"
-                    color="blue"
-                    class="member-tag"
-                  >
+                  <a-tag v-if="item.user_id === currentUserId" color="blue" class="member-tag">
                     我
                   </a-tag>
                 </template>
                 <template #description>
                   <div>{{ item.email }}</div>
-                  <div class="member-joined">
-                    {{ formatTime(item.joined_at) }} 加入
-                  </div>
+                  <div class="member-joined">{{ formatTime(item.joined_at) }} 加入</div>
                 </template>
               </a-list-item-meta>
               <a-popconfirm
@@ -119,23 +102,14 @@
                 cancel-text="取消"
                 @confirm="handleRemoveMember(item.user_id)"
               >
-                <a-button
-                  type="text"
-                  danger
-                  size="small"
-                >
-                  移除
-                </a-button>
+                <a-button type="text" danger size="small">移除</a-button>
               </a-popconfirm>
             </a-list-item>
           </template>
         </a-list>
       </a-spin>
       <template #footer>
-        <div
-          v-if="isOwner"
-          class="member-add"
-        >
+        <div v-if="isOwner" class="member-add">
           <a-select
             v-model:value="addUserId"
             :options="candidateOptions"
@@ -145,31 +119,27 @@
             option-filter-prop="label"
             style="flex: 1"
           />
-          <a-button
-            type="primary"
-            :loading="addingMember"
-            @click="handleAddMember"
-          >
+          <a-button type="primary" :loading="addingMember" @click="handleAddMember">
             添加
           </a-button>
         </div>
       </template>
     </a-drawer>
-  </a-layout>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, h, onMounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import type { MenuProps } from 'ant-design-vue'
+import { message } from 'ant-design-vue'
 import {
   ArrowLeftOutlined,
-  FolderOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
+  FileSearchOutlined,
+  BulbOutlined,
+  EyeOutlined,
+  EditOutlined,
   TeamOutlined,
 } from '@ant-design/icons-vue'
-import { message } from 'ant-design-vue'
 import api from '@/api/client'
 import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
 
@@ -177,6 +147,7 @@ interface ProjectDetail {
   id: string
   name: string
   owner_id: string
+  status?: string
 }
 
 interface MemberItem {
@@ -187,26 +158,26 @@ interface MemberItem {
   joined_at: string
 }
 
+interface UserOption {
+  id: string
+  email: string
+  display_name: string
+}
+
 const router = useRouter()
 const route = useRoute()
 const projectId = route.params.projectId as string
 
 const projectName = ref('')
 const projectOwnerId = ref('')
+const projectPhase = ref('')
 
-// 成员管理抽屉状态
+// 成员管理
 const showMembersDrawer = ref(false)
 const members = ref<MemberItem[]>([])
 const membersLoading = ref(false)
 const addUserId = ref<string | undefined>(undefined)
 const addingMember = ref(false)
-
-// 阶段7：协作者下拉数据源（GET /users/options，排除已有成员）
-interface UserOption {
-  id: string
-  email: string
-  display_name: string
-}
 const userOptions = ref<UserOption[]>([])
 
 const candidateOptions = computed(() => {
@@ -216,74 +187,55 @@ const candidateOptions = computed(() => {
     .map((u) => ({ value: u.id, label: `${u.display_name}（${u.email}）` }))
 })
 
-const loadUserOptions = async () => {
-  try {
-    const { data } = await api.get('/users/options')
-    if (data.code === 0) {
-      userOptions.value = data.data.items
-    }
-  } catch {
-    // 下拉数据源加载失败不阻塞成员列表展示
+const isOwner = computed(() => projectOwnerId.value === currentUserId.value)
+
+/* ---------------- 步骤条配置 ---------------- */
+const steps = [
+  { key: 'parse', label: '招标解析', route: 'Parse', icon: h(FileSearchOutlined) },
+  { key: 'generate', label: '大纲生成', route: 'Generate', icon: h(BulbOutlined) },
+  { key: 'review', label: '审阅', route: 'Review', icon: h(EyeOutlined) },
+  { key: 'division', label: '方案生成', route: 'Division', icon: h(EditOutlined) },
+]
+
+const routeToStepIndex: Record<string, number> = {
+  Parse: 0,
+  Generate: 1,
+  Review: 2,
+  Division: 3,
+}
+
+const currentStepIndex = computed(() => {
+  const idx = routeToStepIndex[String(route.name)]
+  return idx !== undefined ? idx : 0
+})
+
+const phaseText = computed(() => {
+  const map: Record<string, string> = {
+    init: '待启动',
+    parse: '解析中',
+    generate: '生成中',
+    generating: '生成中',
+    review: '审阅中',
+    done: '已完成',
+  }
+  return map[projectPhase.value] || projectPhase.value
+})
+
+const getStepStatus = (idx: number): 'wait' | 'process' | 'finish' | 'error' => {
+  const current = currentStepIndex.value
+  if (idx < current) return 'finish'
+  if (idx === current) return 'process'
+  return 'wait'
+}
+
+const handleStepChange = (idx: number) => {
+  const step = steps[idx]
+  if (step) {
+    router.push({ name: step.route, params: { projectId } })
   }
 }
 
-// 侧栏折叠态持久化（localStorage）
-const SIDER_KEY = 'bid.workspace.sider.collapsed'
-const siderCollapsed = ref(localStorage.getItem(SIDER_KEY) === '1')
-watch(siderCollapsed, (v) => {
-  localStorage.setItem(SIDER_KEY, v ? '1' : '0')
-})
-
-// 菜单 key → 路由 name 映射（菜单 key 与路由 name 不一致，需显式映射）
-const menuRoutes: Record<string, string> = {
-  parse: 'Parse',
-  generate: 'Generate',
-  review: 'Review',
-  division: 'Division',
-}
-
-// 路由 name → 菜单 key（选中态反查）
-const routeMenuKeys: Record<string, string> = {
-  Parse: 'parse',
-  Generate: 'generate',
-  Review: 'review',
-  Division: 'division',
-}
-
-// 按投标流程步骤先后排列：招标解析 → 方案大纲生成 → 审阅 → 方案生成
-const menuItems: MenuProps['items'] = [
-  {
-    key: 'parse',
-    icon: () => h('span', { class: 'workspace__step' }, '1'),
-    label: '招标解析',
-  },
-  {
-    key: 'generate',
-    icon: () => h('span', { class: 'workspace__step' }, '2'),
-    label: '方案大纲生成',
-  },
-  {
-    key: 'review',
-    icon: () => h('span', { class: 'workspace__step' }, '3'),
-    label: '审阅',
-  },
-  {
-    key: 'division',
-    icon: () => h('span', { class: 'workspace__step' }, '4'),
-    label: '方案生成',
-  },
-  {
-    key: 'members',
-    icon: () => h(TeamOutlined),
-    label: '成员管理',
-  },
-]
-
-const selectedKeys = computed(() => {
-  const key = routeMenuKeys[String(route.name)]
-  return key ? [key] : []
-})
-
+/* ---------------- 数据加载 ---------------- */
 const fetchProject = async () => {
   try {
     const { data } = await api.get(`/projects/${projectId}`)
@@ -291,17 +243,12 @@ const fetchProject = async () => {
       const project = data.data as ProjectDetail
       projectName.value = project.name
       projectOwnerId.value = project.owner_id
-    } else {
-      projectName.value = '加载失败'
+      projectPhase.value = project.status || ''
     }
   } catch {
-    // 项目不存在或无权访问：详情接口失败时明确展示失败态，避免静默
     projectName.value = '加载失败'
   }
 }
-
-// 当前用户是否为项目所有者（决定移除/添加入口可见性）
-const isOwner = computed(() => projectOwnerId.value === currentUserId.value)
 
 const fetchMembers = async () => {
   membersLoading.value = true
@@ -309,8 +256,6 @@ const fetchMembers = async () => {
     const { data } = await api.get(`/projects/${projectId}/members`)
     if (data.code === 0) {
       members.value = data.data.items
-    } else {
-      message.error(data.message || '成员列表加载失败')
     }
   } catch {
     message.error('成员列表加载失败')
@@ -319,9 +264,21 @@ const fetchMembers = async () => {
   }
 }
 
-const getErrorMessage = (err: unknown, fallback: string): string => {
-  const body = (err as { response?: { data?: { message?: string } } })?.response?.data
-  return body?.message || fallback
+const loadUserOptions = async () => {
+  try {
+    const { data } = await api.get('/users/options')
+    if (data.code === 0) {
+      userOptions.value = data.data.items
+    }
+  } catch {
+    // 静默失败
+  }
+}
+
+const openMembersDrawer = () => {
+  showMembersDrawer.value = true
+  fetchMembers()
+  loadUserOptions()
 }
 
 const formatTime = (time?: string): string => {
@@ -331,14 +288,17 @@ const formatTime = (time?: string): string => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+const getErrorMessage = (err: unknown, fallback: string): string => {
+  const body = (err as { response?: { data?: { message?: string } } })?.response?.data
+  return body?.message || fallback
+}
+
 const handleRemoveMember = async (userId: string) => {
   try {
     const { data } = await api.delete(`/projects/${projectId}/members/${userId}`)
     if (data.code === 0) {
       message.success('成员移除成功')
       fetchMembers()
-    } else {
-      message.error(data.message || '成员移除失败')
     }
   } catch (err) {
     message.error(getErrorMessage(err, '成员移除失败'))
@@ -360,8 +320,6 @@ const handleAddMember = async () => {
       message.success('成员添加成功')
       addUserId.value = undefined
       fetchMembers()
-    } else {
-      message.error(data.message || '成员添加失败')
     }
   } catch (err) {
     message.error(getErrorMessage(err, '成员添加失败'))
@@ -370,132 +328,137 @@ const handleAddMember = async () => {
   }
 }
 
-const handleMenuClick = ({ key }: { key: string }) => {
-  if (key === 'members') {
-    showMembersDrawer.value = true
-    fetchMembers()
-    loadUserOptions()
-    return
-  }
-  const name = menuRoutes[key]
-  if (!name) return
-  router.push({ name, params: { projectId } })
-}
-
 const goBackToProjects = () => {
   router.push({ name: 'Projects' })
 }
 
 onMounted(() => {
   fetchProject()
-  // 工作台不使用 AppLayout，自行同步当前用户身份（owner 判定依赖）
   fetchCurrentUserRole()
 })
+
+// 路由变化时刷新项目状态（轻量）
+watch(
+  () => route.name,
+  () => {
+    fetchProject()
+  },
+)
 </script>
 
 <style scoped>
 .workspace {
   min-height: 100vh;
+  background: var(--bg-app);
+  display: flex;
+  flex-direction: column;
 }
 
-.workspace__sider {
+/* 顶部区域 */
+.workspace__header {
   position: sticky;
   top: 0;
-  height: 100vh;
-  overflow-y: auto;
-  border-right: 1px solid var(--border-color);
+  z-index: 50;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-color);
+  backdrop-filter: blur(12px);
 }
 
-.workspace__project {
+.workspace__header-inner {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: 12px 24px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 20px 16px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.workspace__collapse-btn {
-  margin-left: auto;
-  flex-shrink: 0;
-  color: var(--text-secondary, #999);
-}
-
-.workspace__expand-btn {
-  margin-left: auto;
-  flex-shrink: 0;
-  color: var(--text-secondary, #999);
-}
-
-.workspace__project-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  background: var(--color-primary);
-  color: #fff;
-  font-size: 16px;
-  flex-shrink: 0;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .workspace__project-info {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
+  flex: 1;
 }
 
-.workspace__project-label {
-  font-size: 11px;
+.workspace__back-btn {
+  flex-shrink: 0;
   color: var(--text-secondary);
 }
 
+.workspace__project-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .workspace__project-name {
-  font-size: 14px;
-  font-weight: 600;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 400px;
 }
 
-.workspace__footer {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 12px 8px;
-  border-top: 1px solid var(--border-color);
+.workspace__phase-tag {
+  flex-shrink: 0;
 }
 
-.workspace-content {
-  padding: 24px;
-  background: var(--app-bg);
-  min-width: 0;
-  display: flex;
-  justify-content: center;
+.workspace__header-actions {
+  flex-shrink: 0;
 }
 
-.workspace-content > * {
-  width: 100%;
-  max-width: 1100px;
+.workspace__members-btn {
+  color: var(--text-secondary);
 }
 
-.workspace__step {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  color: #fff;
-  font-size: 12px;
+/* 步骤条 */
+.workspace__steps-wrapper {
+  border-top: 1px solid var(--border-color-light);
+  background: var(--bg-surface-hover);
+}
+
+.workspace__steps-inner {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: 12px 24px;
+}
+
+.workspace__steps {
+  cursor: pointer;
+}
+
+.workspace__steps :deep(.ant-steps-item) {
+  cursor: pointer;
+}
+
+.workspace__steps :deep(.ant-steps-item-title) {
+  font-weight: 500;
+}
+
+.workspace__steps :deep(.ant-steps-item-process .ant-steps-item-title) {
+  color: var(--color-primary) !important;
   font-weight: 600;
-  line-height: 1;
 }
 
-/* 成员管理抽屉 */
+/* 内容区 */
+.workspace__content {
+  flex: 1;
+  min-width: 0;
+}
+
+.workspace__content-inner {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* 成员抽屉 */
 .member-name {
   font-weight: 500;
 }
@@ -507,7 +470,7 @@ onMounted(() => {
 .member-joined {
   margin-top: 2px;
   font-size: 12px;
-  color: var(--text-secondary, #666);
+  color: var(--text-tertiary);
 }
 
 .member-add {

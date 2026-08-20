@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { fetchCurrentUserRole, hasPerm } from '@/stores/currentUser'
+import { useUiStore } from '@/stores/ui'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -11,7 +12,6 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true },
   },
   {
-    // 根路径默认进入工作台（子节分工与工作台改版）
     path: '/',
     redirect: { name: 'Workbench' },
   },
@@ -87,18 +87,18 @@ const router = createRouter({
   routes,
 })
 
-// 路由守卫：未登录跳转登录页；已登录访问登录页重定向工作台；
-// meta.perm 存在时校验功能权限点（后端 403 兜底，此处仅收敛前端入口体验）
+// 路由守卫：进度条 + 认证 + 权限
 router.beforeEach(async (to) => {
+  const uiStore = useUiStore()
+  uiStore.startRouteProgress()
+
   const token = localStorage.getItem('access_token')
   if (to.meta.requiresAuth && !token) {
-    // 携带回跳地址，登录成功后返回原页面
     return { name: 'Login', query: { redirect: to.fullPath } }
   }
   if (to.name === 'Login' && token) {
     return { name: 'Workbench' }
   }
-  // 权限守卫：刷新页面时权限点可能尚未加载，先 await /auth/me 刷新再判定，避免误拦截
   if (to.meta.perm) {
     const perm = to.meta.perm as string
     if (!hasPerm(perm)) {
@@ -110,6 +110,16 @@ router.beforeEach(async (to) => {
     }
   }
   return true
+})
+
+router.afterEach(() => {
+  const uiStore = useUiStore()
+  uiStore.finishRouteProgress()
+})
+
+router.onError(() => {
+  const uiStore = useUiStore()
+  uiStore.finishRouteProgress()
 })
 
 export default router

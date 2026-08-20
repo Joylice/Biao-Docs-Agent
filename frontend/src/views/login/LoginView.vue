@@ -17,16 +17,16 @@
         @finish="handleLogin"
       >
         <a-form-item
-          name="email"
-          :rules="[{ required: true, message: '请输入邮箱' }]"
+          name="username"
+          :rules="[{ required: true, message: '请输入用户名' }]"
         >
           <a-input
-            v-model:value="form.email"
-            placeholder="邮箱"
+            v-model:value="form.username"
+            placeholder="用户名"
             size="large"
           >
             <template #prefix>
-              <MailOutlined />
+              <UserOutlined />
             </template>
           </a-input>
         </a-form-item>
@@ -64,7 +64,7 @@
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { FileSearchOutlined, LockOutlined, MailOutlined } from '@ant-design/icons-vue'
+import { FileSearchOutlined, LockOutlined, UserOutlined } from '@ant-design/icons-vue'
 import api from '@/api/client'
 
 interface ApiErrorBody {
@@ -76,14 +76,16 @@ const router = useRouter()
 const route = useRoute()
 const loading = ref(false)
 const form = reactive({
-  email: '',
+  username: '',
   password: '',
 })
 
 const handleLogin = async () => {
   loading.value = true
   try {
-    const { data } = await api.post('/auth/login', form)
+    // 同时发送 username 和 email，兼容新旧后端（新后端优先 username，旧后端用 email）
+    const payload = { username: form.username, email: form.username, password: form.password }
+    const { data } = await api.post('/auth/login', payload)
     if (data.code === 0) {
       localStorage.setItem('access_token', data.data.access_token)
       if (data.data.refresh_token) {
@@ -96,7 +98,7 @@ const handleLogin = async () => {
     }
   } catch (error) {
     const body = (error as { response?: { data?: ApiErrorBody } })?.response?.data
-    message.error(body?.message || '登录失败，请检查邮箱和密码')
+    message.error(body?.message || '登录失败，请检查用户名和密码')
   } finally {
     loading.value = false
   }

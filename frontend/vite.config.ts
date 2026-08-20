@@ -23,6 +23,21 @@ export default defineConfig({
     },
   },
   build: {
-    emptyOutDir: false,
+    emptyOutDir: true,
+    sourcemap: false,
+    chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vue-vendor': ['vue', 'vue-router', 'pinia'],
+          'antd-vendor': ['ant-design-vue', '@ant-design/icons-vue'],
+          'markdown-vendor': ['markdown-it'],
+          'axios-vendor': ['axios'],
+        },
+      },
+    },
+  },
+  optimizeDeps: {
+    include: ['vue', 'vue-router', 'pinia', 'ant-design-vue', 'axios', 'markdown-it'],
   },
 })

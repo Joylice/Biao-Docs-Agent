@@ -3,145 +3,217 @@
     :locale="zhCN"
     :theme="themeConfig"
   >
+    <RouteProgress />
+    <GlobalToast />
     <router-view v-slot="{ Component, route }">
-      <AppLayout v-if="route.meta.layout === 'app'">
-        <transition
-          name="fade"
-          mode="out-in"
-        >
-          <component
-            :is="Component"
-            :key="route.path"
-          />
+      <ErrorBoundary>
+        <AppLayout v-if="route.meta.layout === 'app'">
+          <transition name="fade" mode="out-in">
+            <component :is="Component" :key="route.path" />
+          </transition>
+        </AppLayout>
+        <transition v-else name="fade" mode="out-in">
+          <component :is="Component" :key="route.path" />
         </transition>
-      </AppLayout>
-      <transition
-        v-else
-        name="fade"
-        mode="out-in"
-      >
-        <component
-          :is="Component"
-          :key="route.path"
-        />
-      </transition>
+      </ErrorBoundary>
     </router-view>
   </a-config-provider>
 </template>
 
 <script setup lang="ts">
+import { computed, watch } from 'vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
+import { theme as antdTheme } from 'ant-design-vue'
 import AppLayout from '@/layouts/AppLayout.vue'
+import GlobalToast from '@/components/common/GlobalToast.vue'
+import RouteProgress from '@/components/common/RouteProgress.vue'
+import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
+import { useUiStore } from '@/stores/ui'
 
-// 全局主题：飞书浅色企业风（主色 #1B6EF3、圆角 6、弱边框 + 轻阴影）
-const themeConfig = {
+const uiStore = useUiStore()
+
+/** Ant Design Vue 主题配置：根据当前模式切换算法 */
+const themeConfig = computed(() => ({
+  algorithm: uiStore.isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
   token: {
-    colorPrimary: '#1B6EF3',
-    colorSuccess: '#2E7D32',
-    colorWarning: '#ED6C02',
-    colorError: '#C62828',
-    colorBgLayout: '#F7F8FA',
-    colorText: '#1F2329',
-    colorTextSecondary: '#646A73',
-    colorBorderSecondary: '#E5E6EB',
-    borderRadius: 6,
-    // 卡片/容器内边距收敛至 20px：紧凑信息密度（配合 16px 小卡）
-    paddingLG: 20,
-    // 弱化默认投影：仅保留贴近表面的轻阴影
-    boxShadow:
-      '0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px 0 rgba(0, 0, 0, 0.02)',
-    boxShadowSecondary: '0 1px 2px 0 rgba(0, 0, 0, 0.03)',
+    colorPrimary: uiStore.isDark ? '#60a5fa' : '#3b82f6',
+    colorSuccess: uiStore.isDark ? '#34d399' : '#10b981',
+    colorWarning: uiStore.isDark ? '#fbbf24' : '#f59e0b',
+    colorError: uiStore.isDark ? '#f87171' : '#ef4444',
+    colorInfo: uiStore.isDark ? '#60a5fa' : '#3b82f6',
+    borderRadius: 8,
     fontFamily:
-      "'Microsoft YaHei', '微软雅黑', 'PingFang SC', 'Helvetica Neue', Arial, sans-serif",
+      "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
   },
-}
+  components: {
+    Layout: {
+      bodyBg: 'transparent',
+      headerBg: 'transparent',
+      siderBg: 'transparent',
+    },
+    Menu: {
+      itemBg: 'transparent',
+      subMenuItemBg: 'transparent',
+    },
+    Card: {
+      headerBg: 'transparent',
+    },
+    Table: {
+      headerBg: 'transparent',
+      rowHoverBg: 'var(--bg-surface-hover)',
+    },
+    Modal: {
+      contentBg: 'var(--bg-elevated)',
+      headerBg: 'var(--bg-elevated)',
+    },
+    Drawer: {
+      contentBg: 'var(--bg-elevated)',
+      headerBg: 'var(--bg-elevated)',
+    },
+    Dropdown: {
+      contentBg: 'var(--bg-elevated)',
+    },
+    Select: {
+      optionSelectedBg: 'var(--color-primary-light)',
+    },
+  },
+}))
+
+/** 监听主题变化，确保 html 属性同步 */
+watch(
+  () => uiStore.theme,
+  () => {
+    uiStore.init()
+  },
+)
 </script>
 
 <style>
-/* ── 全局设计变量（组件样式一律引用此处，禁止散落硬编码色值） ── */
-:root {
-  --app-bg: #F7F8FA;
-  --card-bg: #FFFFFF;
-  --color-primary: #1B6EF3;
-  --color-warning: #ED6C02;
-  --color-error: #C62828;
-  --color-error-bg: rgba(198, 40, 40, 0.05);
-  --text-primary: #1F2329;
-  --text-secondary: #646A73;
-  --text-disabled: rgba(31, 35, 41, 0.35);
-  --border-color: #E5E6EB;
-  --bg-block: rgba(27, 110, 243, 0.06);
-  --bg-hover: rgba(0, 0, 0, 0.04);
-  --bg-active: rgba(27, 110, 243, 0.08);
-}
-
-html,
-body,
-#app {
-  height: 100%;
-}
-
-/* 桌面优先：低于 1280 出现横向滚动，不崩版式 */
-#app {
-  min-width: 1280px;
-}
-
-/* 全局卡片：统一 1px 弱边框 + 圆角 8 + 去重阴影（Notion 风弱边框卡片） */
-.ant-card {
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  box-shadow: none;
-}
-
-/* 卡片 hover 抬升收敛 + 更轻阴影（0.2s 过渡） */
-.ant-card-hoverable {
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
-}
-
-.ant-card-hoverable:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
-}
-
-/* 表格统一：表头浅灰底（飞书紧凑信息密度） */
-.ant-table-thead > tr > th {
-  background: var(--app-bg);
-}
-
-body {
-  margin: 0;
-  background: var(--app-bg);
-  color: var(--text-primary);
-  -webkit-font-smoothing: antialiased;
-}
-
-/* 细滚动条 */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-/* 路由切换过渡：fade */
+/* 全局过渡动画 */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--transition-normal);
 }
-
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* Ant Design Vue 组件深色模式适配覆盖 */
+[data-theme='dark'] {
+  --ant-color-bg-container: #111827;
+  --ant-color-bg-layout: #0a0e1a;
+  --ant-color-bg-spotlight: rgba(255, 255, 255, 0.05);
+  --ant-color-text: #f1f5f9;
+  --ant-color-text-secondary: #94a3b8;
+  --ant-color-text-tertiary: #64748b;
+  --ant-color-border: #1e293b;
+  --ant-color-border-secondary: #1e293b;
+  --ant-color-fill: rgba(255, 255, 255, 0.06);
+  --ant-color-fill-secondary: rgba(255, 255, 255, 0.04);
+  --ant-color-fill-tertiary: rgba(255, 255, 255, 0.03);
+}
+
+/* 卡片统一边框样式 */
+.ant-card {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+.ant-card-hoverable:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-color-strong);
+}
+
+/* 表格表头 */
+.ant-table-thead > tr > th {
+  background: var(--bg-surface-hover) !important;
+  color: var(--text-secondary) !important;
+  font-weight: 600;
+}
+
+/* 按钮基础样式优化 */
+.ant-btn {
+  border-radius: var(--radius-md);
+  font-weight: 500;
+}
+
+/* 输入框优化 */
+.ant-input,
+.ant-input-affix-wrapper {
+  border-radius: var(--radius-md);
+}
+
+/* 标签优化 */
+.ant-tag {
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+}
+
+/* 进度条优化 */
+.ant-progress-bg {
+  border-radius: var(--radius-full);
+}
+
+/* 菜单项优化 */
+.ant-menu-item {
+  border-radius: var(--radius-md);
+  margin: 2px 8px !important;
+}
+.ant-menu-item-selected {
+  background: var(--color-primary-light) !important;
+}
+
+/* 抽屉/弹窗背景 */
+.ant-drawer-content,
+.ant-modal-content {
+  background: var(--bg-elevated) !important;
+}
+
+/* 下拉菜单背景 */
+.ant-dropdown-menu {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+/* 时间线/步骤条优化 */
+.ant-steps-item-title {
+  color: var(--text-primary) !important;
+}
+
+/* 空状态优化 */
+.ant-empty-description {
+  color: var(--text-secondary);
+}
+
+/* 警告框优化 */
+.ant-alert {
+  border-radius: var(--radius-md);
+}
+
+/* 徽标优化 */
+.ant-badge-status-dot {
+  width: 8px;
+  height: 8px;
+}
+
+/* 头像优化 */
+.ant-avatar {
+  font-weight: 600;
+}
+
+/* 分割线优化 */
+.ant-divider {
+  border-color: var(--border-color);
+}
+
+/* 工具提示优化 */
+.ant-tooltip-inner {
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
 }
 </style>
