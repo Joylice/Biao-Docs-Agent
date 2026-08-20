@@ -106,13 +106,25 @@
                 class="division__ws-error"
               >{{ wsError }}</span>
               <a-button
+                size="small"
+                @click="expandAll"
+              >
+                全部展开
+              </a-button>
+              <a-button
+                size="small"
+                @click="collapseAll"
+              >
+                全部收起
+              </a-button>
+              <a-button
                 v-if="isOwner"
                 type="primary"
                 :disabled="changedCount === 0"
                 :loading="assigning"
                 @click="handleAssign"
               >
-                {{ changedCount > 0 ? `推送分工（${changedCount} 章）` : '推送分工' }}
+                {{ changedCount > 0 ? `推送分工（${changedCount} 项）` : '推送分工' }}
               </a-button>
             </a-space>
           </template>
@@ -122,6 +134,7 @@
           />
           <a-table
             v-else
+            v-model:expandedRowKeys="expandedKeys"
             :columns="columns"
             :data-source="chapterRows"
             :pagination="false"
@@ -129,20 +142,13 @@
             size="middle"
           >
             <template #bodyCell="{ column, record }">
-              <!-- 子节行：缩进展示标题，其余列占位（分工粒度仍为章） -->
-              <template v-if="record.kind === 'section'">
-                <span
-                  v-if="column.key === 'title'"
-                  class="division__sub-section"
-                >└ {{ record.title }}</span>
-                <span v-else>—</span>
-              </template>
-              <template v-if="column.key === 'assignee' && record.kind === 'chapter'">
+              <!-- 阶段8：章行与子节行统一渲染，子节可分工（层级缩进由树形表格绘制） -->
+              <template v-if="column.key === 'assignee'">
                 <a-select
                   v-if="isOwner"
                   v-model:value="draftAssignees[record.chapter_no]"
                   :options="memberOptions"
-                  placeholder="选择负责人"
+                  :placeholder="record.kind === 'chapter' ? '选择负责人' : '分配子节'"
                   allow-clear
                   show-search
                   :filter-option="filterMember"
@@ -150,7 +156,7 @@
                 />
                 <span v-else>{{ record.assignee_name || '未分配' }}</span>
               </template>
-              <template v-if="column.key === 'status' && record.kind === 'chapter'">
+              <template v-if="column.key === 'status'">
                 <a-tag
                   v-if="record.status"
                   :color="statusMeta(record.status).color"
@@ -159,7 +165,7 @@
                 </a-tag>
                 <span v-else>—</span>
               </template>
-              <template v-if="column.key === 'section_status' && record.kind === 'chapter'">
+              <template v-if="column.key === 'section_status'">
                 <a-tag
                   v-if="record.section_status"
                   :color="sectionStatusColor(record.section_status)"
@@ -168,7 +174,7 @@
                 </a-tag>
                 <span v-else>—</span>
               </template>
-              <template v-if="column.key === 'action' && record.kind === 'chapter'">
+              <template v-if="column.key === 'action'">
                 <a-button
                   v-if="isOwner && record.status === 'submitted' && record.assignment_id"
                   size="small"
@@ -460,7 +466,7 @@ interface AssignmentItem {
   approved_count?: number
 }
 
-/** 分工表行：大纲章节 + 分工记录合并（章行含分配/状态控件，子节行纯展示） */
+/** 分工表行：大纲章节 + 分工记录合并（阶段8：树形层级，子节行可分工） */
 interface ChapterRow {
   kind: 'chapter'
   key: string
@@ -472,15 +478,21 @@ interface ChapterRow {
   status: string
   section_status: string | null
   review_comment: string | null
-  sections: string[]
+  children: SectionRow[]
 }
 
-/** 子节展示行（分工粒度仍为章级，子节缩进纯展示） */
+/** 子节行（阶段8：层级编号 1.1/1.2，可分工） */
 interface SectionRow {
   kind: 'section'
   key: string
   chapter_no: string
   title: string
+  assignment_id: string
+  assignee_id: string
+  assignee_name: string
+  status: string
+  section_status: string | null
+  review_comment: string | null
 }
 
 type DivisionRow = ChapterRow | SectionRow
@@ -551,7 +563,7 @@ const previewContent = computed(() => {
 
 // 审核弹窗
 const reviewOpen = ref(false)
-const reviewTarget = ref<ChapterRow | null>(null)
+const reviewTarget = ref<DivisionRow | null>(null)
 const reviewComment = ref('')
 const reviewingAction = ref('')
 
@@ -576,7 +588,7 @@ const sectionStatusColor = (status: string) =>
   ({ draft: 'processing', final: 'success' })[status] || 'default'
 
 const columns = [
-  { title: '章节', dataIndex: 'chapter_no', key: 'chapter_no', width: 80 },
+  { title: '章节', dataIndex: 'chapter_no', key: 'chapter_no', width: 100 },
   { title: '标题', dataIndex: 'title', key: 'title' },
   { title: '负责人', key: 'assignee', width: 200 },
   { title: '状态', key: 'status', width: 100 },
@@ -592,12 +604,37 @@ const sectionTitles = (sections?: OutlineSectionLike[]): string[] => {
   )
 }
 
-/** 大纲章节 + 分工记录合并为表格行，子节紧随章行展平（2 级目录） */
-const chapterRows = computed<DivisionRow[]>(() => {
+/** 大纲章节 + 分工记录合并为树形表格行（阶段8：子节编号化为 children，可分工） */
+const chapterRows = computed<ChapterRow[]>(() => {
   const byNo = new Map(assignments.value.map((a) => [a.chapter_no, a]))
-  const rows: DivisionRow[] = []
-  const pushChapter = (chapterNo: string, title: string, sections: string[]) => {
+  const rows: ChapterRow[] = []
+  const pushed = new Set<string>()
+  const makeSection = (no: string, title: string): SectionRow => {
+    const a = byNo.get(no)
+    return {
+      kind: 'section',
+      key: no,
+      chapter_no: no,
+      title,
+      assignment_id: a?.id || '',
+      assignee_id: a?.assignee_id || '',
+      assignee_name: a?.assignee_name || '',
+      status: a?.status || '',
+      section_status: a?.section_status ?? null,
+      review_comment: a?.review_comment ?? null,
+    }
+  }
+  const pushChapter = (chapterNo: string, title: string, sectionNames: string[]) => {
     const a = byNo.get(chapterNo)
+    // 大纲子节编号化（1.1/1.2…），取对应分工记录填充负责人/状态
+    const children = sectionNames.map((s, idx) => makeSection(`${chapterNo}.${idx + 1}`, s))
+    const covered = new Set(children.map((c) => c.chapter_no))
+    // 追加未被大纲子节覆盖的子节级分工记录（编号超出大纲范围的历史分工）
+    for (const item of assignments.value) {
+      if (item.chapter_no.startsWith(`${chapterNo}.`) && !covered.has(item.chapter_no)) {
+        children.push(makeSection(item.chapter_no, item.title))
+      }
+    }
     rows.push({
       kind: 'chapter',
       key: chapterNo,
@@ -609,28 +646,31 @@ const chapterRows = computed<DivisionRow[]>(() => {
       status: a?.status || '',
       section_status: a?.section_status ?? null,
       review_comment: a?.review_comment ?? null,
-      sections,
+      children,
     })
-    sections.forEach((s, idx) => {
-      rows.push({ kind: 'section', key: `${chapterNo}-s${idx}`, chapter_no: chapterNo, title: s })
-    })
+    pushed.add(chapterNo)
+    children.forEach((c) => pushed.add(c.chapter_no))
   }
   for (const c of outline.value) {
-    // 已展开子节级分工时，子节行由分工记录（chapter_no 形如 1.1）承载，不重复展示大纲子节
-    const hasChildAssignment = assignments.value.some((a) => a.chapter_no.startsWith(`${c.chapter_no}.`))
-    const sections = hasChildAssignment
-      ? []
-      : sectionTitles(byNo.get(c.chapter_no)?.sections ?? c.sections)
-    pushChapter(c.chapter_no, c.title, sections)
+    pushChapter(c.chapter_no, c.title, sectionTitles(byNo.get(c.chapter_no)?.sections ?? c.sections))
   }
-  const outlineNos = new Set(outline.value.map((c) => c.chapter_no))
   for (const a of assignments.value) {
-    if (!outlineNos.has(a.chapter_no)) {
-      pushChapter(a.chapter_no, a.title, sectionTitles(a.sections))
-    }
+    if (pushed.has(a.chapter_no)) continue
+    // 子节级记录（编号含 '.'）若父章已展示，则已并入其 children，不重复提升为顶层
+    if (a.chapter_no.includes('.') && pushed.has(a.chapter_no.split('.')[0])) continue
+    pushChapter(a.chapter_no, a.title, sectionTitles(a.sections))
   }
   return rows
 })
+
+// 展开控制（阶段8）：默认展开一级章行，支持全部展开/收起
+const expandedKeys = ref<string[]>([])
+const expandAll = () => {
+  expandedKeys.value = chapterRows.value.map((r) => r.key)
+}
+const collapseAll = () => {
+  expandedKeys.value = []
+}
 
 /** 我的任务（成员视角）：当前用户名下的分工记录 */
 const myTasks = computed(() =>
@@ -647,10 +687,14 @@ const memberOptions = computed(() =>
 const filterMember = (input: string, option: { label: string }) =>
   option.label.toLowerCase().includes(input.toLowerCase())
 
-/** 待推送的变更条目：草稿与已推送值不一致且非空（仅章行参与分配） */
+/** 可分配行：章行 + 其子节行（阶段8：分工到二级） */
+const assignableRows = computed<DivisionRow[]>(() =>
+  chapterRows.value.flatMap((r) => [r, ...r.children]),
+)
+
+/** 待推送的变更条目：草稿与已推送值不一致且非空（章与子节均参与分配） */
 const changedItems = computed(() =>
-  chapterRows.value.filter((r): r is ChapterRow => {
-    if (r.kind !== 'chapter') return false
+  assignableRows.value.filter((r) => {
     const next = draftAssignees.value[r.chapter_no]
     return !!next && next !== r.assignee_id
   }),
@@ -698,6 +742,8 @@ const fetchAll = async () => {
     outline.value = wf?.outline || []
     chapters.value = wf?.chapters || {}
     await fetchAssignments()
+    // 默认展开一级章行，二级子节按需展开
+    expandedKeys.value = chapterRows.value.map((r) => r.key)
   } catch {
     loadError.value = '分工数据加载失败'
   } finally {
@@ -950,7 +996,7 @@ const handleSubmit = async (task: AssignmentItem) => {
   }
 }
 
-const openReview = (row: ChapterRow) => {
+const openReview = (row: DivisionRow) => {
   reviewTarget.value = row
   reviewComment.value = ''
   reviewOpen.value = true
@@ -1058,15 +1104,15 @@ onBeforeUnmount(() => {
   color: var(--color-error);
 }
 
-.division__sub-section {
-  display: inline-block;
-  padding-left: 20px;
-  color: var(--text-secondary, #8c8c8c);
-  font-size: 12px;
-}
-
 .task-item {
   display: block;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.02));
+}
+
+.task-item + .task-item {
+  margin-top: 12px;
 }
 
 .task-item__head {
@@ -1086,8 +1132,13 @@ onBeforeUnmount(() => {
 .task-item__actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 8px;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* 防误触：操作按钮增大热区间距，危险操作（提交审核）已有二次确认 */
+.task-item__actions .ant-btn {
+  min-width: 88px;
 }
 
 .task-item__hint {

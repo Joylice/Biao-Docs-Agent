@@ -62,8 +62,8 @@
                     :title="`${item.project_name} · ${item.chapter_no} ${item.title}`"
                   >
                     <span class="workbench__task-text">
-                      <span class="workbench__task-proj">{{ item.project_name }}</span>
-                      · {{ item.chapter_no }} {{ item.title }}
+                      {{ item.chapter_no }} {{ item.title }} ·
+                      <span class="workbench__task-proj">{{ projectAbbr(item.project_name) }}</span>
                     </span>
                   </a-tooltip>
                 </a-list-item>
@@ -157,8 +157,8 @@
                         :title="`${item.project_name} · ${item.chapter_no} ${item.title}`"
                       >
                         <span class="workbench__task-text">
-                          <span class="workbench__task-proj">{{ item.project_name }}</span>
-                          · {{ item.chapter_no }} {{ item.title }}
+                          {{ item.chapter_no }} {{ item.title }} ·
+                          <span class="workbench__task-proj">{{ projectAbbr(item.project_name) }}</span>
                         </span>
                       </a-tooltip>
                     </a-list-item>
@@ -274,6 +274,12 @@ const fetchSummary = async (silent = false) => {
 /** 条目点击 → 对应项目的方案生成页 */
 const goDivision = (projectId: string) => {
   router.push({ name: 'Division', params: { projectId } })
+}
+
+/** 项目名缩写：截取前 6 字符（阶段8 任务凝练），tooltip 显全名由模板提供 */
+const projectAbbr = (name: string) => {
+  if (!name) return ''
+  return name.length > 6 ? `${name.slice(0, 6)}…` : name
 }
 
 /* ---------------- 用户级 WebSocket：待办实时推送（阶段 C；静默降级，不影响页面渲染） ---------------- */
