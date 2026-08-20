@@ -55,7 +55,11 @@ async def _is_kb_admin(db: AsyncSession, user_id: uuid.UUID) -> bool:
 async def list_visible_bases(
     db: AsyncSession, user_id: uuid.UUID, project_id: uuid.UUID | None = None
 ) -> list[dict[str, Any]]:
-    """可见知识库列表（含素材数）：公司全员 / 个人仅本人 / 项目限成员."""
+    """可见知识库列表（含素材数）：公司全员 / 个人仅本人 / 项目限成员.
+
+    无项目上下文（全局资料页，阶段 3）：列出用户所属全部项目的库；
+    带项目上下文：仅列该项目的库。项目库项附 project_name 供前端标注归属。
+    """
     result = await db.execute(select(KnowledgeBase))
     bases = list(result.scalars().all())
 
@@ -66,6 +70,13 @@ async def list_visible_bases(
     )
     counts = {row[0]: row[1] for row in counts_result.all()}
 
+    # 项目库归属项目名（批量一次）
+    project_pids = {b.project_id for b in bases if b.scope == SCOPE_PROJECT and b.project_id}
+    project_names: dict[uuid.UUID, str] = {}
+    if project_pids:
+        p_result = await db.execute(select(Project).where(Project.id.in_(project_pids)))
+        project_names = {p.id: p.name for p in p_result.scalars().all()}
+
     items: list[dict[str, Any]] = []
     order = {SCOPE_COMPANY: 0, SCOPE_PROJECT: 1, SCOPE_PERSONAL: 2}
     for base in bases:
@@ -74,12 +85,16 @@ async def list_visible_bases(
         elif base.scope == SCOPE_PERSONAL:
             visible = base.owner_id == user_id
         elif base.scope == SCOPE_PROJECT:
-            # 仅当请求带项目上下文且用户为该项目成员时可见
-            visible = (
-                base.project_id == project_id
-                and project_id is not None
-                and await _is_project_member(db, base.project_id, user_id)
-            )
+            # 带项目上下文：仅该项目的库且需成员身份；
+            # 无上下文（全局资料页）：用户所属任一项目的库均可见（阶段 3）
+            if base.project_id is None:
+                visible = False
+            elif project_id is not None:
+                visible = base.project_id == project_id and await _is_project_member(
+                    db, base.project_id, user_id
+                )
+            else:
+                visible = await _is_project_member(db, base.project_id, user_id)
         else:
             visible = False
         if not visible:
@@ -91,6 +106,7 @@ async def list_visible_bases(
                 "description": base.description,
                 "scope": base.scope,
                 "project_id": str(base.project_id) if base.project_id else None,
+                "project_name": project_names.get(base.project_id) if base.project_id else None,
                 "owner_id": str(base.owner_id) if base.owner_id else None,
                 "material_count": counts.get(base.id, 0),
                 "created_at": base.created_at.isoformat() if base.created_at else None,

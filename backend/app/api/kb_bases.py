@@ -19,6 +19,7 @@ from app.core.exceptions import BizError, NotFoundError
 from app.core.response import paginated, success
 from app.models.document import Document
 from app.models.knowledge_base import SCOPE_PROJECT, VALID_SCOPES, KnowledgeBase
+from app.models.project import Project
 from app.models.user import User
 from app.schemas.document import DocumentListOut
 from app.services import kb_base_service, storage_service
@@ -50,13 +51,14 @@ async def _get_base_or_404(db: AsyncSession, base_id: uuid.UUID) -> KnowledgeBas
     return base
 
 
-def _base_out(base: KnowledgeBase, material_count: int = 0) -> dict:
+def _base_out(base: KnowledgeBase, material_count: int = 0, project_name: str | None = None) -> dict:
     return {
         "id": str(base.id),
         "name": base.name,
         "description": base.description,
         "scope": base.scope,
         "project_id": str(base.project_id) if base.project_id else None,
+        "project_name": project_name,
         "owner_id": str(base.owner_id) if base.owner_id else None,
         "material_count": material_count,
         "created_at": base.created_at.isoformat() if base.created_at else None,
@@ -101,7 +103,12 @@ async def create_kb_base(
         detail={"scope": base.scope, "name": base.name},
     )
     await db.commit()
-    return success(data=_base_out(base))
+    project_name: str | None = None
+    if base.project_id:
+        p_result = await db.execute(select(Project).where(Project.id == base.project_id))
+        project = p_result.scalar_one_or_none()
+        project_name = project.name if project else None
+    return success(data=_base_out(base, project_name=project_name))
 
 
 @router.patch("/kb-bases/{base_id}")

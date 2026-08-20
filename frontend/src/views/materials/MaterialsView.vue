@@ -37,6 +37,15 @@
               {{ b.name }}（{{ b.material_count }}）
             </a-select-option>
           </a-select-opt-group>
+          <a-select-opt-group label="项目级">
+            <a-select-option
+              v-for="b in projectBases"
+              :key="b.id"
+              :value="b.id"
+            >
+              {{ b.name }} · {{ b.project_name || '项目' }}（{{ b.material_count }}）
+            </a-select-option>
+          </a-select-opt-group>
           <a-select-opt-group label="个人">
             <a-select-option
               v-for="b in personalBases"
@@ -237,6 +246,9 @@
           <a-radio value="personal">
             个人库（仅本人可见）
           </a-radio>
+          <a-radio value="project">
+            项目库（仅项目成员可见，需选择所属项目）
+          </a-radio>
           <a-radio
             v-if="isKbAdmin"
             value="company"
@@ -244,6 +256,13 @@
             公司库（全员可见）
           </a-radio>
         </a-radio-group>
+        <a-select
+          v-if="createBaseForm.scope === 'project'"
+          v-model:value="createBaseForm.projectId"
+          placeholder="选择所属项目（仅我负责的项目可建库）"
+          allow-clear
+          :options="ownedProjectOptions"
+        />
         <a-input
           v-model:value="createBaseForm.name"
           placeholder="知识库名称"
@@ -355,7 +374,7 @@ import api from '@/api/client'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
-import { isKbAdmin } from '@/stores/currentUser'
+import { isKbAdmin, currentUserId } from '@/stores/currentUser'
 
 interface Material {
   id: string
@@ -380,6 +399,7 @@ interface KbBase {
   description?: string | null
   scope: 'personal' | 'project' | 'company'
   project_id?: string | null
+  project_name?: string | null
   owner_id?: string | null
   material_count: number
 }
@@ -449,20 +469,59 @@ const kbBases = ref<KbBase[]>([])
 const basesLoading = ref(false)
 const selectedKbId = ref<string>('')
 const companyBases = computed(() => kbBases.value.filter((b) => b.scope === 'company'))
+const projectBases = computed(() => kbBases.value.filter((b) => b.scope === 'project'))
 const personalBases = computed(() => kbBases.value.filter((b) => b.scope === 'personal'))
-// 上传可选库：个人库（后端仅返回本人）+ 公司库（仅管理员可写）
+
+// ---- 项目列表（阶段 3：项目库建库选项 + 写权限判定）----
+interface ProjectLite {
+  id: string
+  name: string
+  owner_id: string
+}
+const myProjects = ref<ProjectLite[]>([])
+const fetchMyProjects = async () => {
+  try {
+    const { data } = await api.get('/projects', { params: { page: 1, page_size: 100 } })
+    if (data.code === 0) myProjects.value = data.data.items
+  } catch {
+    // 静默：项目库选项为空时建库弹窗会提示
+  }
+}
+// 仅我负责的项目可建项目库（后端 create_base 同样限定 owner）
+const ownedProjectOptions = computed(() =>
+  myProjects.value
+    .filter((p) => p.owner_id === currentUserId.value)
+    .map((p) => ({ value: p.id, label: p.name })),
+)
+const ownedProjectIds = computed(
+  () => new Set(myProjects.value.filter((p) => p.owner_id === currentUserId.value).map((p) => p.id)),
+)
+
+// 上传可选库：个人库（后端仅返回本人）+ 项目库（仅负责人可写）+ 公司库（仅管理员可写）
 const writableBaseOptions = computed(() =>
   kbBases.value
-    .filter((b) => b.scope === 'personal' || isKbAdmin.value)
+    .filter(
+      (b) =>
+        b.scope === 'personal' ||
+        (b.scope === 'project' && !!b.project_id && ownedProjectIds.value.has(b.project_id)) ||
+        (b.scope === 'company' && isKbAdmin.value),
+    )
     .map((b) => ({
       value: b.id,
-      label: `${b.name}（${b.scope === 'company' ? '公司' : '个人'}）`,
+      label:
+        b.scope === 'project'
+          ? `${b.name}（项目·${b.project_name || ''}）`
+          : `${b.name}（${b.scope === 'company' ? '公司' : '个人'}）`,
     })),
 )
 const canDeleteSelectedBase = computed(() => {
   const base = kbBases.value.find((b) => b.id === selectedKbId.value)
   if (!base) return false
-  return base.scope === 'personal' || (base.scope === 'company' && isKbAdmin.value)
+  if (base.scope === 'personal') return true
+  if (base.scope === 'project') {
+    return !!base.project_id && ownedProjectIds.value.has(base.project_id)
+  }
+  return isKbAdmin.value
 })
 
 const fetchBases = async () => {
@@ -485,10 +544,16 @@ const handleKbChange = () => {
 // ---- 新建知识库 ----
 const createBaseOpen = ref(false)
 const creatingBase = ref(false)
-const createBaseForm = reactive<{ scope: 'personal' | 'company'; name: string; description: string }>({
+const createBaseForm = reactive<{
+  scope: 'personal' | 'project' | 'company'
+  name: string
+  description: string
+  projectId?: string
+}>({
   scope: 'personal',
   name: '',
   description: '',
+  projectId: undefined,
 })
 
 const handleCreateBase = async () => {
@@ -497,18 +562,24 @@ const handleCreateBase = async () => {
     message.warning('请输入知识库名称')
     return
   }
+  if (createBaseForm.scope === 'project' && !createBaseForm.projectId) {
+    message.warning('请选择项目库所属项目')
+    return
+  }
   creatingBase.value = true
   try {
     const { data } = await api.post('/kb-bases', {
       scope: createBaseForm.scope,
       name,
       description: createBaseForm.description.trim() || null,
+      project_id: createBaseForm.scope === 'project' ? createBaseForm.projectId : null,
     })
     if (data.code === 0) {
       message.success(`已创建知识库「${name}」`)
       createBaseOpen.value = false
       createBaseForm.name = ''
       createBaseForm.description = ''
+      createBaseForm.projectId = undefined
       await fetchBases()
       selectedKbId.value = data.data.id
       handleKbChange()
@@ -735,6 +806,7 @@ const formatTime = (iso?: string) => {
 }
 
 onMounted(() => {
+  fetchMyProjects()
   fetchBases()
   fetchMaterials()
 })

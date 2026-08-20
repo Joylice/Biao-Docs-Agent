@@ -1,7 +1,7 @@
 """知识库 API 测试 — /kb-bases 可见性矩阵/建库权限/库内素材（阶段 1）.
 
 覆盖：
-- list：公司库全员可见 / 他人个人库不可见 / 项目库限成员（含无项目上下文）
+- list：公司库全员可见 / 他人个人库不可见 / 项目库限成员（无上下文时列出所属项目库，阶段 3）
 - create：personal 任意用户 / project 仅 owner / company 仅管理员 / 非法 scope / 同域重名
 - patch/delete：写权限按 scope 判定，删库级联删素材
 - materials：不可见库 404，公司库分页返回
@@ -124,12 +124,19 @@ class TestListKbBases:
         base = _base("project", "项目库", project_id=PROJECT_ID)
         project = Project(id=PROJECT_ID, name="P", owner_id=USER_ID)
         session_override(
-            [_full_result([base]), _full_result([]), _full_result([project])]
+            [
+                _full_result([base]),
+                _full_result([]),
+                _full_result([project]),  # 项目名批量
+                _full_result([project]),  # 成员判定
+            ]
         )
         resp = await client.get(
             "/api/v1/kb-bases", params={"project_id": str(PROJECT_ID)}, headers=headers
         )
-        assert [i["name"] for i in resp.json()["data"]["items"]] == ["项目库"]
+        items = resp.json()["data"]["items"]
+        assert [i["name"] for i in items] == ["项目库"]
+        assert items[0]["project_name"] == "P"
 
     @pytest.mark.asyncio
     async def test_project_base_hidden_from_non_member(
@@ -142,6 +149,7 @@ class TestListKbBases:
             [
                 _full_result([base]),
                 _full_result([]),
+                _full_result([project]),  # 项目名批量
                 _full_result([project]),
                 _full_result([]),  # project_members 无记录
             ]
@@ -152,12 +160,41 @@ class TestListKbBases:
         assert resp.json()["data"]["items"] == []
 
     @pytest.mark.asyncio
-    async def test_project_base_hidden_without_project_context(
+    async def test_project_base_listed_without_context_for_member(
         self, client: AsyncClient, session_override, headers
     ) -> None:
-        """无项目上下文 → 项目库不出现（仅项目工作台挂载时列出）."""
+        """无项目上下文（全局资料页）：成员可见所属项目库并带 project_name（阶段 3）."""
         base = _base("project", "项目库", project_id=PROJECT_ID)
-        session_override([_full_result([base]), _full_result([])])
+        project = Project(id=PROJECT_ID, name="河北高速投标", owner_id=USER_ID)
+        session_override(
+            [
+                _full_result([base]),
+                _full_result([]),
+                _full_result([project]),  # 项目名批量
+                _full_result([project]),  # _is_project_member → owner 命中
+            ]
+        )
+        resp = await client.get("/api/v1/kb-bases", headers=headers)
+        items = resp.json()["data"]["items"]
+        assert [i["name"] for i in items] == ["项目库"]
+        assert items[0]["project_name"] == "河北高速投标"
+
+    @pytest.mark.asyncio
+    async def test_project_base_hidden_without_context_for_non_member(
+        self, client: AsyncClient, session_override, headers
+    ) -> None:
+        """无项目上下文且非成员 → 项目库不出现（越权隔离）."""
+        base = _base("project", "项目库", project_id=PROJECT_ID)
+        project = Project(id=PROJECT_ID, name="P", owner_id=OTHER_ID)
+        session_override(
+            [
+                _full_result([base]),
+                _full_result([]),
+                _full_result([project]),
+                _full_result([project]),  # owner 非本人
+                _full_result([]),  # project_members 无记录
+            ]
+        )
         resp = await client.get("/api/v1/kb-bases", headers=headers)
         assert resp.json()["data"]["items"] == []
 
