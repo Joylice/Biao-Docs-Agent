@@ -56,6 +56,7 @@ def load_chapter_prompt(
     tech_requirements: str,
     prior_summaries: str = "",
     supplement_points: str = "",
+    benchmark_high_risk: str = "",
 ) -> tuple[str, str]:
     """加载章节生成提示词模板."""
     config = _load_template("chapter")
@@ -71,6 +72,7 @@ def load_chapter_prompt(
         tech_requirements=tech_requirements,
         prior_summaries=prior_summaries,
         supplement_points=supplement_points,
+        benchmark_high_risk=benchmark_high_risk or "（无）",
     )
     return system_prompt, user_prompt
 

@@ -19,7 +19,7 @@ from app.core.database import async_session_factory
 from app.models.document import Document, ScorePoint, TechRequirement
 from app.models.project import Project
 from app.models.proposal import ProposalSection, ProposalSkeleton, ProposalWorkflow
-from app.services import kb_base_service
+from app.services import benchmark_service, kb_base_service
 from app.services.event_service import publish_event
 
 logger = logging.getLogger(__name__)
@@ -492,6 +492,10 @@ async def write_node(state: dict) -> dict:
             doc_ids = await kb_base_service.resolve_mount_doc_ids(
                 db, mounted_kb_ids, mounted_doc_ids
             )
+            # 阶段 D（1.4）：高风险评分点应对策略注入本章提示词
+            high_risk = await benchmark_service.load_high_risk_points(
+                db, uuid.UUID(project_id)
+            )
             content = await generate_chapter(
                 chapter=chapter,
                 score_points=state.get("score_points", []),
@@ -503,6 +507,7 @@ async def write_node(state: dict) -> dict:
                 on_delta=on_delta,
                 prior_summaries=prior_summaries,
                 supplement_points=coverage["uncovered"],
+                benchmark_high_risk=high_risk,
             )
     except Exception as e:
         logger.exception("章节生成失败")

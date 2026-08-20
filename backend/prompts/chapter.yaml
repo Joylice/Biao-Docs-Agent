@@ -39,6 +39,9 @@ user_prompt: |
   ## 大纲未覆盖的评分点（如与本章主题相关，必须在本章补写覆盖）
   {supplement_points}
 
+  ## 高风险评分点对标要点（阶段 D：资料库素材缺口大的高分项，本章须针对性正面响应）
+  {benchmark_high_risk}
+
   ## 需要满足的技术需求
   {tech_requirements}
 

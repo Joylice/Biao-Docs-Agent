@@ -584,6 +584,83 @@
             </div>
           </a-layout-content>
         </a-layout>
+
+        <!-- 评分对标（阶段 D：大纲确认后展示；按 score × (1-coverage) 降序，owner 可编辑应对策略） -->
+        <a-card
+          v-if="benchmarkVisible && !loadError"
+          class="mt-4 benchmark-card"
+          title="评分对标"
+        >
+          <template #extra>
+            <a-button
+              v-if="benchmarkError"
+              size="small"
+              @click="loadBenchmark"
+            >
+              重试
+            </a-button>
+            <a-tag
+              v-else-if="benchmarkLoaded && !benchmarkLoading"
+              color="blue"
+            >
+              共 {{ benchmarkItems.length }} 项
+            </a-tag>
+          </template>
+          <a-alert
+            v-if="benchmarkError"
+            type="warning"
+            show-icon
+            :message="benchmarkError"
+          />
+          <LoadingSkeleton
+            v-else-if="benchmarkLoading || !benchmarkLoaded"
+            :rows="5"
+          />
+          <a-empty
+            v-else-if="benchmarkItems.length === 0"
+            description="暂无已确认评分点，请先在招标解析中确认评分点"
+          />
+          <a-table
+            v-else
+            :columns="benchmarkColumns"
+            :data-source="benchmarkItems"
+            :pagination="false"
+            :scroll="{ x: 1080 }"
+            row-key="clause_no"
+            size="small"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'coverage'">
+                <a-progress
+                  :percent="Math.round((record.coverage ?? 0) * 100)"
+                  size="small"
+                />
+              </template>
+              <template v-else-if="column.key === 'risk'">
+                <a-tag :color="benchmarkRiskMeta[record.risk as BenchmarkRisk]?.color ?? 'default'">
+                  {{ benchmarkRiskMeta[record.risk as BenchmarkRisk]?.text ?? '-' }}
+                </a-tag>
+              </template>
+              <template v-else-if="column.key === 'strategy'">
+                <a-textarea
+                  v-if="canEditStrategy"
+                  v-model:value="strategyDrafts[record.clause_no]"
+                  :rows="2"
+                  :maxlength="2000"
+                  placeholder="填写应对策略，失焦自动保存"
+                  :disabled="savingClause === record.clause_no"
+                  @blur="handleStrategyBlur(record)"
+                />
+                <span
+                  v-else
+                  class="benchmark-strategy--readonly"
+                >
+                  {{ record.strategy || '—' }}
+                </span>
+              </template>
+            </template>
+          </a-table>
+        </a-card>
       </template>
     </PageContainer>
   </div>
@@ -1307,6 +1384,114 @@ const handleAdoptSectionSuggestion = async (item: SectionSuggestion) => {
   }
 }
 
+/* ---------------- 评分对标（阶段 D：GET benchmark 只读对标表 + owner 应对策略失焦保存） ---------------- */
+type BenchmarkRisk = 'high' | 'mid' | 'low'
+
+/** 评分对标行（后端已按 score × (1 - coverage) 降序返回） */
+interface BenchmarkItem {
+  clause_no: string
+  item: string
+  score: number
+  criteria: string
+  strategy: string
+  /** 素材覆盖度 0~1 */
+  coverage: number
+  risk: BenchmarkRisk
+}
+
+const benchmarkItems = ref<BenchmarkItem[]>([])
+const benchmarkLoading = ref(false)
+const benchmarkLoaded = ref(false)
+const benchmarkError = ref('')
+/** 应对策略编辑草稿（clause_no → 编辑值；失焦有变化才提交） */
+const strategyDrafts = ref<Record<string, string>>({})
+/** 正在保存策略的条款号（保存中禁用输入，防重复提交） */
+const savingClause = ref('')
+
+/** 风险标签元信息（high 红 / mid 橙 / low 灰） */
+const benchmarkRiskMeta: Record<BenchmarkRisk, { text: string; color: string }> = {
+  high: { text: '高', color: 'red' },
+  mid: { text: '中', color: 'orange' },
+  low: { text: '低', color: 'default' },
+}
+
+const benchmarkColumns = [
+  { title: '条款号', dataIndex: 'clause_no', key: 'clause_no', width: 100 },
+  { title: '评分项', dataIndex: 'item', key: 'item', width: 180 },
+  { title: '分值', dataIndex: 'score', key: 'score', width: 70 },
+  { title: '判定标准', dataIndex: 'criteria', key: 'criteria', ellipsis: { showTitle: true } },
+  { title: '素材覆盖度', key: 'coverage', width: 160 },
+  { title: '风险', key: 'risk', width: 80 },
+  { title: '应对策略', key: 'strategy', width: 280 },
+]
+
+/** 应对策略是否可编辑（仅项目 owner；UI 门禁，后端 PUT 403 兜底） */
+const canEditStrategy = computed(() => isProjectOwner(projectOwnerId.value))
+
+/** 展示时机：大纲已确认，工作流进入 generate 及之后阶段（或本地 generating/generated 先行态） */
+const benchmarkVisible = computed(
+  () =>
+    ['generate', 'review', 'export', 'done'].includes(phase.value) ||
+    generating.value ||
+    generated.value,
+)
+
+/** 拉取评分对标表（懒计算 coverage/risk；失败给提示可重试） */
+const loadBenchmark = async () => {
+  benchmarkLoading.value = true
+  benchmarkError.value = ''
+  try {
+    const { data } = await api.get(`/projects/${projectId}/benchmark`)
+    const items: BenchmarkItem[] = data?.data?.items ?? []
+    benchmarkItems.value = items
+    strategyDrafts.value = Object.fromEntries(
+      items.map((it) => [it.clause_no, it.strategy ?? '']),
+    )
+    benchmarkLoaded.value = true
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    benchmarkError.value = msg || '评分对标加载失败'
+  } finally {
+    benchmarkLoading.value = false
+  }
+}
+
+/** 应对策略失焦保存：值有变化才 PUT；失败回滚显示值（403 = 非 owner） */
+const handleStrategyBlur = async (item: BenchmarkItem) => {
+  const draft = (strategyDrafts.value[item.clause_no] ?? '').trim()
+  if (draft === (item.strategy ?? '')) return
+  savingClause.value = item.clause_no
+  try {
+    const res = await api.put(
+      `/projects/${projectId}/benchmark/${encodeURIComponent(item.clause_no)}/strategy`,
+      { strategy: draft },
+    )
+    const saved: string = res.data?.data?.strategy ?? draft
+    item.strategy = saved
+    strategyDrafts.value[item.clause_no] = saved
+    message.success('应对策略已保存')
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    // 保存失败：回滚显示值为已保存值，避免脏数据误导
+    strategyDrafts.value[item.clause_no] = item.strategy ?? ''
+    message.error(
+      status === 403 ? '无权限编辑：仅项目负责人可修改应对策略' : msg || '应对策略保存失败',
+    )
+  } finally {
+    savingClause.value = ''
+  }
+}
+
+/** 进入 generate 及之后阶段 → 拉取对标表（仅拉一次；失败后可点「重试」） */
+watch(
+  benchmarkVisible,
+  (visible) => {
+    if (visible && !benchmarkLoaded.value && !benchmarkLoading.value) loadBenchmark()
+  },
+  { immediate: true },
+)
+
 // 当前生成章节切换 → 自动选中查看
 watch(currentChapter, (no) => {
   if (no && generating.value && !selectedChapter.value) {
@@ -1752,5 +1937,14 @@ onUnmounted(() => {
 
 .mt-4 {
   margin-top: 16px;
+}
+
+.benchmark-card {
+  background: var(--card-bg);
+}
+
+.benchmark-strategy--readonly {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

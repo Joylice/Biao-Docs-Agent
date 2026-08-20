@@ -167,9 +167,13 @@ docker-compose.yml
 
 **对标表字段**：`clause_no / item / score / criteria / strategy / referenced_material / risk_level(high|mid|low)`。
 
-**风险分级算法**：`risk = f(score, coverage)` —— 分值高且资料库无对应素材 → high，提示售前补资料；输出按 `score × (1 - coverage)` 降序，供前端排序展示。
+**风险分级算法**（阶段 D 落地，`benchmark_service`）：`risk = f(score, coverage)` —— score ≥ 6 且 coverage < 0.3 → high（分值高且资料库无对应素材，提示售前补资料）；score ≥ 3 或 coverage < 0.6 → mid；其余 low。coverage = item+criteria 检索命中数 / top_k(5)；mock 模式走 sha256(query) 确定性规则（可复现），检索异常降级 0.0。输出按 `score × (1 - coverage)` 降序，供前端排序展示。
 
-**输出物**：Web 内联对标表（可编辑 strategy 字段）+ 导出附表（随 Word 导出）。
+**读写契约**（阶段 D）：GET benchmark 懒计算 coverage/risk 并回写 `score_points.risk_level`；PUT 仅 owner 编辑 strategy（≤2000 字，审计 benchmark.strategy）。
+
+**高风险策略注入生成**（阶段 D 1.4）：write_node 生成章节前读取 confirmed 且 risk_level=high 的评分点（strategy 缺失回退 item；mock 无记录时注入确定性样本 MOCK-HR），脱敏后渲染为「- 条款号: 策略」行，经 chapter.yaml `{benchmark_high_risk}` 段注入章节提示词，要求本章针对性正面响应；回归样本 output/verify_benchmark_prompt.py。
+
+**输出物**：Web 内联对标表（GenerateView「评分对标」卡片：条款号/评分项/分值/判定标准/coverage 进度条/risk 标签/strategy 失焦保存，非 owner 只读）+ 导出附表（随 Word 导出）。
 
 ### 3.5 方案生成引擎（Agent 编排核心）
 
@@ -560,7 +564,8 @@ CREATE TABLE proposal_versions (
 | GET | /projects/{pid}/score-points | 评分点列表（可 PUT 单条确认/改 strategy） |
 | POST | /projects/{pid}/requirements/generate | 基于已确认评分点梳理技术需求（body.score_point_ids 省略→全部 confirmed 评分点，显式传→勾选梳理；LLM 提炼+sp_id 映射回填；幂等覆盖旧 sp_derived；无评分点 4004；审计 requirements.generate） |
 | GET | /projects/{pid}/requirements | 技术需求列表（LEFT JOIN score_points 携带 related_sp；only_mapped=true 仅返回已映射需求） |
-| GET | /projects/{pid}/benchmark | 评分对标报告 |
+| GET | /projects/{pid}/benchmark | 评分对标报告（阶段 D：项目成员可读；confirmed 评分点懒计算 coverage/risk 并回写 risk_level；返回 items[{clause_no,item,score,criteria,strategy,coverage,risk}] 按 score×(1-coverage) 降序） |
+| PUT | /projects/{pid}/benchmark/{clause_no}/strategy | 编辑评分点应对策略（阶段 D：**仅 owner**；body.strategy ≤2000 字，空白置 NULL；评分点不存在 4004；审计 benchmark.strategy） |
 | POST | /projects/{pid}/generate | 触发方案生成（返回 task_id） |
 | POST | /projects/{pid}/workflow/start | 启动方案生成工作流（API 进程后台任务推进，遇 HITL interrupt 停下；在途重复启动被拒 4009） |
 | GET | /projects/{pid}/workflow/status | 工作流状态（phase/progress/interrupt/score_points/outline/chapters/error） |
@@ -694,7 +699,7 @@ graph.add_edge("export", END)
 |---|---|---|---|
 | 招标解析器 | 评标办法原文 | JSON（评分点/资格/需求） | JSON Schema、禁止臆测分值 |
 | 骨架规划器 | 技术需求（核心）+评分点（追溯） | 章节树 JSON | 定稿骨架模版（2026-08-16 广东施组定稿）：需求分析/业务流程设计/总体架构设计/详细功能说明/对接方案/培训与运维服务方案 六章，顺序命名保持；技术需求全映射无遗漏；评分点经 covered_clauses 追溯、禁止评分项名称作章节标题 |
-| 章节撰写器 | 章节计划+检索素材+前文摘要 | Markdown 正文 | 只用检索素材、参数不低于★要求；「详细功能说明」类章节按模块固定结构撰写（系统概述→需求设计→功能架构→核心功能点[功能说明/界面设计/业务流程设计]） |
+| 章节撰写器 | 章节计划+检索素材+前文摘要+高风险对标要点（阶段 D：`{benchmark_high_risk}` 段，高风险评分点「- 条款号: 策略」行，脱敏后外发，缺省回退「（无）」） | Markdown 正文 | 只用检索素材、参数不低于★要求；「详细功能说明」类章节按模块固定结构撰写（系统概述→需求设计→功能架构→核心功能点[功能说明/界面设计/业务流程设计]）；高风险评分点须针对性正面响应 |
 | 校验器 | 正文+评分要求 | pass/fail+issues | 必答要点/字数/参数检查 |
 | 批注重写器 | 原文+反馈+素材 | 重写后 Markdown | 仅改反馈涉及内容 |
 
