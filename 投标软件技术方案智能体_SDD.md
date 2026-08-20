@@ -581,12 +581,14 @@ CREATE TABLE proposal_versions (
 | PATCH | /kb-bases/{id} | 编辑知识库（2026-08-18：name/description 均可选；写权限按 scope 判定；审计 kb.base_update） |
 | DELETE | /kb-bases/{id} | 删除知识库（2026-08-18：写权限按 scope 判定；库内素材一并删除：MinIO + 记录 + 分块 CASCADE；审计 kb.base_delete） |
 | GET | /kb-bases/{id}/materials | 库内素材列表（2026-08-18：限可见库，不可见 404；分页，LEFT JOIN users 返回 uploader_name） |
-| GET | /projects, POST /projects | 项目列表、创建 |
+| GET | /projects, POST /projects | 项目列表、创建（2026-08-21：POST body 可选 member_ids 用户 id 数组，创建后自动写入 project_members 协作者；含未注册用户 4004，owner 自动去重） |
 | POST | /projects/{pid}/members | 添加协作者（仅 owner；审计 project.member_add 记 email） |
 | GET | /projects/{pid}/members | 成员列表（2026-08-17：项目成员可见；LEFT JOIN users 返回 user_id/email/display_name/is_owner/joined_at，owner 恒在首位；只读不记审计） |
 | DELETE | /projects/{pid}/members/{user_id} | 移除成员（2026-08-17：**仅 owner** get_current_owner_id；移除 owner 本人 4000、自移 4000、目标非成员 4004；审计 project.member_remove 记 target_id；显式 commit） |
 | POST | /projects/{pid}/documents | 上传文件（tender/kb） |
 | POST | /projects/{pid}/images | 上传章节插图（2026-08-18：jpg/png/gif/webp ≤10MB；仅项目成员；存 MinIO `images/{project_id}/`，返回 {storage_key, url} 签名 URL；审计 image.upload） |
+| GET | /projects/{pid}/images/view | 图片代理展示（2026-08-21：query key=storage_key；后端代理 MinIO 字节流，浏览器无需直连内网端点；仅本项目 images 目录对象，非成员/跨项目 4003） |
+| GET | /projects/{pid}/documents/{doc_id}/download | 文档下载代理（2026-08-21：流式字节 + Content-Disposition；项目成员校验，非成员 4003；审计 document.download） |
 | GET | /projects/{pid}/images/signed | 图片签名读（2026-08-18：query storage_key；仅允许本项目 images 目录下对象，跨项目越权 4003；非成员 403） |
 | GET | /projects/{pid}/documents/{did}/format-requirements | 读取格式要求（2026-08-18：项目成员可读；仅 tender_file，其余 doc_type 拒绝 4010；返回 {items:[{category,requirement}]}） |
 | PUT | /projects/{pid}/documents/{did}/format-requirements | 更新格式要求（2026-08-18：项目成员可写；body.format_requirements 完整数组幂等覆盖 documents.meta；空 requirement 条目丢弃、未知 category 归 other；仅 tender_file 4010；审计 document.format_requirements_update） |
@@ -619,6 +621,11 @@ CREATE TABLE proposal_versions (
 | POST | /projects/{pid}/workflow/section-suggest | 内容改进建议（2026-08-17：body.chapter_no 可选；mock 规则建议/生产 LLM schema（redact，失败降级空列表）；采纳执行复用 rewrite-chapter） |
 | GET | /users | 用户列表（三期：**仅管理员** role=admin 或白名单；查询参数 keyword（邮箱/姓名 ilike）/role 枚举过滤/page；返回 email/display_name/role/created_at，不含 password_hash） |
 | PUT | /users/{user_id}/role | 角色变更（三期：**仅管理员**；role ∈ member/kb_admin/admin；不可变更自己 4000；降级 admin 时至少保留 1 名 admin 4000；审计 user.role_change 记 from/to） |
+| GET | /users/options | 用户下拉数据源（2026-08-21：登录即可；返回 {items:[{id,email,display_name}]}，按注册序 limit 500；供成员抽屉/建项目选成员下拉） |
+| POST | /users | 创建用户（2026-08-21：**仅管理员**；body {email,password,display_name,role}；邮箱查重 4000；密码 bcrypt 哈希；审计 user.create） |
+| PATCH | /users/{user_id} | 编辑用户（2026-08-21：**仅管理员**；body display_name/role 可选，空字段 4000；角色变更禁改自己与最后一名 admin 4000；审计 user.update 记变更字段 from/to；role 变更失效 RBAC 缓存） |
+| PUT | /users/{user_id}/password | 重置密码（2026-08-21：**仅管理员**；body {password} ≥6 位；审计 user.password_reset） |
+| DELETE | /users/{user_id} | 删除用户（2026-08-21：**仅管理员**；硬删除；保护规则：禁删自己 4000、名下有 owner 项目 4000（提示先转移负责人）、最后一名 admin 4000；审计 user.delete；失效 RBAC 缓存） |
 | GET | /rbac/permissions | 权限点目录（阶段 A：**仅 system:manage**；返回 items[{code,name,category}]，供权限矩阵列头） |
 | GET | /rbac/roles/{role}/permissions | 角色权限点映射（阶段 A：**仅 system:manage**；role ∈ member/kb_admin/admin，非法角色 422；返回 {role,codes}） |
 | PUT | /rbac/roles/{role}/permissions | 全量覆盖角色权限点（阶段 A：**仅 system:manage**；body {codes}，非法/不可授予码（含 project:member_manage）422；admin 角色必须保留 system:manage 防自我锁死 4000；delete+insert 后失效 RBAC 缓存；审计 rbac.update 记 from/to） |
