@@ -177,9 +177,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/api/client'
+import { currentUserId } from '@/stores/currentUser'
 import PageContainer from '@/components/PageContainer.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
@@ -245,9 +246,11 @@ const loading = ref(false)
 const loadError = ref('')
 const summary = ref<WorkbenchSummary>(emptySummary())
 
-/** 拉取工作台聚合数据（单端点双视图；非 owner 的待审核清单为空） */
-const fetchSummary = async () => {
-  loading.value = true
+/** 拉取工作台聚合数据（单端点双视图；非 owner 的待审核清单为空；silent 时不触发骨架屏闪烁） */
+const fetchSummary = async (silent = false) => {
+  if (!silent) {
+    loading.value = true
+  }
   loadError.value = ''
   try {
     const { data } = await api.get('/workbench/summary')
@@ -255,12 +258,19 @@ const fetchSummary = async () => {
       // 展开兜底：缺省分桶补空数组，避免模板取 undefined
       summary.value = { ...emptySummary(), ...(data.data ?? {}) }
     } else {
-      loadError.value = data.message || '工作台数据加载失败'
+      // 静默刷新失败不打断已有视图（保留旧数据，手动刷新可重试）
+      if (!silent) {
+        loadError.value = data.message || '工作台数据加载失败'
+      }
     }
   } catch {
-    loadError.value = '工作台数据加载失败'
+    if (!silent) {
+      loadError.value = '工作台数据加载失败'
+    }
   } finally {
-    loading.value = false
+    if (!silent) {
+      loading.value = false
+    }
   }
 }
 
@@ -269,7 +279,97 @@ const goDivision = (projectId: string) => {
   router.push({ name: 'Division', params: { projectId } })
 }
 
-onMounted(fetchSummary)
+/* ---------------- 用户级 WebSocket：待办实时推送（阶段 C；静默降级，不影响页面渲染） ---------------- */
+const WS_EVENTS = ['task_assigned', 'task_submitted', 'task_reviewed', 'workbench_refresh']
+const WS_MAX_RECONNECTS = 5
+const WS_HEARTBEAT_MS = 30000
+
+let ws: WebSocket | null = null
+let reconnectTimer: number | null = null
+let heartbeatTimer: number | null = null
+let reconnectAttempts = 0
+let wsStopped = false
+
+const stopHeartbeat = () => {
+  if (heartbeatTimer !== null) {
+    window.clearInterval(heartbeatTimer)
+    heartbeatTimer = null
+  }
+}
+
+/** 心跳保活：定期发 ping（后端回 pong），防止空闲连接被中间层断开 */
+const startHeartbeat = () => {
+  stopHeartbeat()
+  heartbeatTimer = window.setInterval(() => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'ping' }))
+    }
+  }, WS_HEARTBEAT_MS)
+}
+
+const connectUserWebSocket = () => {
+  if (wsStopped) return
+  const userId = currentUserId.value
+  if (!userId) return // 未拿到用户 ID：静默降级，手动刷新仍可用
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const token = localStorage.getItem('access_token') || ''
+  const wsUrl = `${protocol}://${window.location.host}/ws/user/${userId}?token=${encodeURIComponent(token)}`
+  try {
+    ws = new WebSocket(wsUrl)
+  } catch {
+    return // 连接创建失败：静默降级
+  }
+  ws.onopen = () => {
+    reconnectAttempts = 0
+    startHeartbeat()
+  }
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (WS_EVENTS.includes(data.type)) {
+        // 任意业务事件 → 静默刷新待办（不弹提示、不闪骨架屏）
+        fetchSummary(true)
+      }
+    } catch {
+      // 非 JSON 消息（如 pong 之外的文本）忽略
+    }
+  }
+  ws.onclose = (event) => {
+    stopHeartbeat()
+    if (wsStopped) return
+    // 鉴权失败（4001 token 无效 / 4003 订阅他人频道）：重连无意义，静默降级
+    if (event.code === 4001 || event.code === 4003) return
+    // 断线指数退避重连：1s 起步倍增，最多 5 次
+    reconnectAttempts += 1
+    if (reconnectAttempts <= WS_MAX_RECONNECTS) {
+      const delay = 1000 * 2 ** (reconnectAttempts - 1)
+      reconnectTimer = window.setTimeout(connectUserWebSocket, delay)
+    }
+  }
+  ws.onerror = () => {
+    // 静默：错误统一由 onclose 走重连/降级逻辑
+  }
+}
+
+/** 关闭连接并停止一切重连（页面卸载） */
+const closeUserWebSocket = () => {
+  wsStopped = true
+  stopHeartbeat()
+  if (reconnectTimer !== null) {
+    window.clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  reconnectAttempts = WS_MAX_RECONNECTS
+  ws?.close()
+  ws = null
+}
+
+onMounted(() => {
+  fetchSummary()
+  connectUserWebSocket()
+})
+
+onUnmounted(closeUserWebSocket)
 </script>
 
 <style scoped>

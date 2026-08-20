@@ -18,7 +18,7 @@ from app.models.project import Project
 from app.models.proposal import ChapterAnnotation
 from app.models.user import User
 from app.services import division_service, version_service, workflow_runtime
-from app.services.event_service import publish_event
+from app.services.event_service import publish_event, publish_user_event
 from app.services.project_service import _check_project_member
 
 router = APIRouter()
@@ -105,6 +105,20 @@ async def assign_chapters(
             ],
         },
     )
+    # 阶段 C：定向推送到各 assignee 用户频道（工作台待办实时刷新，去重）
+    for assignee_id in {a.assignee_id for a in assignments}:
+        await publish_user_event(
+            str(assignee_id),
+            {
+                "type": "task_assigned",
+                "project_id": str(project_id),
+                "assignments": [
+                    {"chapter_no": a.chapter_no, "assignee_id": str(a.assignee_id)}
+                    for a in assignments
+                    if a.assignee_id == assignee_id
+                ],
+            },
+        )
     items = await division_service.list_assignments(db, project_id)
     return success(data={"items": items})
 
@@ -274,6 +288,20 @@ async def submit_assignment(
             "assignment_id": str(assignment.id),
         },
     )
+    # 阶段 C：提交待审 → 定向推送项目 owner（待审核待办）
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project is not None:
+        await publish_user_event(
+            str(project.owner_id),
+            {
+                "type": "task_submitted",
+                "project_id": str(project_id),
+                "chapter_no": assignment.chapter_no,
+                "assignee_id": str(assignment.assignee_id),
+                "assignment_id": str(assignment.id),
+            },
+        )
     return success(data={"id": str(assignment.id), "status": assignment.status})
 
 
@@ -392,6 +420,17 @@ async def review_assignment(
         str(project_id),
         {
             "type": "task_reviewed",
+            "chapter_no": assignment.chapter_no,
+            "assignee_id": str(assignment.assignee_id),
+            "action": body.action,
+        },
+    )
+    # 阶段 C：审核结果 → 定向推送 assignee（打回/通过待办变更）
+    await publish_user_event(
+        str(assignment.assignee_id),
+        {
+            "type": "task_reviewed",
+            "project_id": str(project_id),
             "chapter_no": assignment.chapter_no,
             "assignee_id": str(assignment.assignee_id),
             "action": body.action,

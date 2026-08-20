@@ -14,9 +14,10 @@ from app.core.database import get_db
 from app.core.deps import get_current_owner_id, get_current_user_id
 from app.core.exceptions import BizError, ForbiddenError
 from app.core.response import success
+from app.models.project import ProjectMember
 from app.models.proposal import ChapterAssignment
 from app.services import division_service, workflow_runtime
-from app.services.event_service import publish_event
+from app.services.event_service import publish_event, publish_user_event
 from app.services.project_service import _check_project_member
 
 router = APIRouter()
@@ -140,6 +141,15 @@ async def confirm_outline(
         if body.mounted_kb_ids is not None:
             decision["mounted_kb_ids"] = [str(x) for x in body.mounted_kb_ids]
     workflow_runtime.resume_workflow_in_background(project_id, decision)
+    # 阶段 C：大纲确认后通知全体成员刷新工作台（用户级频道，去重含 owner）
+    members_result = await db.execute(
+        select(ProjectMember.user_id).where(ProjectMember.project_id == project_id)
+    )
+    targets = {str(uid) for uid in members_result.scalars().all()} | {str(user_id)}
+    for uid in targets:
+        await publish_user_event(
+            uid, {"type": "workbench_refresh", "project_id": str(project_id)}
+        )
     return success(data={"status": "confirmed", "next_phase": "generate"})
 
 

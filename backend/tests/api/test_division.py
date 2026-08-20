@@ -379,7 +379,12 @@ class TestSubmitAssignment:
         """提交：in_progress → submitted + 推送 task_submitted."""
         assignment = _assignment("in_progress")
         session = override_db([])
-        session.execute.side_effect = [*_member_check_seq(), _result(assignment)]
+        # 阶段 C：提交后额外加载项目取 owner_id（用户级推送）
+        session.execute.side_effect = [
+            *_member_check_seq(),
+            _result(assignment),
+            _result(_project()),
+        ]
         published: list = []
 
         async def fake_publish(pid, event):
@@ -399,7 +404,11 @@ class TestSubmitAssignment:
         """pending 不可直接提交 → 4000."""
         assignment = _assignment("pending")
         session = override_db([])
-        session.execute.side_effect = [*_member_check_seq(), _result(assignment)]
+        session.execute.side_effect = [
+            *_member_check_seq(),
+            _result(assignment),
+            _result(_project()),
+        ]
         resp = await client.post(f"{_url()}/{assignment.id}/submit", headers=_headers(MEMBER_ID))
         assert resp.status_code == 400
         assert resp.json()["code"] == 4000

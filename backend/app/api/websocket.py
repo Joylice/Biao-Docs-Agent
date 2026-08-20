@@ -114,18 +114,8 @@ async def _handle_client_messages(websocket: WebSocket, project_id: str) -> None
             await websocket.send_json({"type": "status", **status})
 
 
-async def _forward_redis_events(websocket: WebSocket, project_id: str) -> None:
-    """事件转发循环：订阅 Redis pubsub，收到事件解析 JSON 后转发前端.
-
-    Redis 不可用时记 warning 降级退出（客户端消息循环不受影响）；
-    退出前确保 unsubscribe + 关闭 redis client，防止连接泄漏。
-    """
-    try:
-        client, pubsub = await event_service.subscribe_events(project_id)
-    except Exception as e:
-        logger.warning("Redis 不可用，事件转发已降级退出: %s", e)
-        return
-
+async def _forward_pubsub(websocket: WebSocket, client, pubsub) -> None:
+    """pubsub 转发循环：收到事件解析 JSON 后转发前端；退出前清理连接."""
     try:
         while True:
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
@@ -142,6 +132,80 @@ async def _forward_redis_events(websocket: WebSocket, project_id: str) -> None:
             await pubsub.aclose()
         with contextlib.suppress(Exception):
             await client.aclose()
+
+
+async def _forward_redis_events(websocket: WebSocket, project_id: str) -> None:
+    """项目事件转发循环；Redis 不可用时记 warning 降级退出（客户端消息循环不受影响）."""
+    try:
+        client, pubsub = await event_service.subscribe_events(project_id)
+    except Exception as e:
+        logger.warning("Redis 不可用，事件转发已降级退出: %s", e)
+        return
+    await _forward_pubsub(websocket, client, pubsub)
+
+
+async def _forward_user_events(websocket: WebSocket, user_id: str) -> None:
+    """用户事件转发循环（阶段 C 工作台推送）；Redis 不可用时降级退出."""
+    try:
+        client, pubsub = await event_service.subscribe_user_events(user_id)
+    except Exception as e:
+        logger.warning("Redis 不可用，用户事件转发已降级退出: %s", e)
+        return
+    await _forward_pubsub(websocket, client, pubsub)
+
+
+async def _handle_user_messages(websocket: WebSocket) -> None:
+    """用户级 WS 客户端消息循环：仅心跳（断开时抛 WebSocketDisconnect）."""
+    while True:
+        data = await websocket.receive_text()
+        msg = json.loads(data)
+        if msg.get("type") == "ping":
+            await websocket.send_json({"type": "pong"})
+
+
+async def authenticate_user_websocket(websocket: WebSocket, user_id: str) -> uuid.UUID | None:
+    """用户级 WS 握手鉴权：仅校验 token，sub 必须等于路径 user_id（无项目成员校验）.
+
+    - token 缺失/无效 → close(code=4001)
+    - 路径 user_id 非法或订阅他人频道 → close(code=4003)
+    """
+    token = websocket.query_params.get("token")
+    payload = decode_token(token) if token else None
+    if payload is None or payload.get("type") != "access":
+        await websocket.close(code=WS_CLOSE_UNAUTHORIZED)
+        return None
+
+    sub = payload.get("sub")
+    try:
+        token_user_id = uuid.UUID(sub) if sub else None
+    except ValueError:
+        token_user_id = None
+    try:
+        target_user_id = uuid.UUID(user_id)
+    except ValueError:
+        target_user_id = None
+    if token_user_id is None or target_user_id is None or token_user_id != target_user_id:
+        await websocket.close(code=WS_CLOSE_FORBIDDEN)
+        return None
+
+    return token_user_id
+
+
+@router.websocket("/ws/user/{user_id}")
+async def user_websocket_endpoint(websocket: WebSocket, user_id: str) -> None:
+    """用户级 WebSocket 端点 — 工作台待办实时推送（阶段 C；握手仅校验 token）."""
+    if await authenticate_user_websocket(websocket, user_id) is None:
+        return
+
+    await websocket.accept()
+    try:
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(_handle_user_messages(websocket))
+            tg.create_task(_forward_user_events(websocket, user_id))
+    except* WebSocketDisconnect:
+        pass  # 客户端正常断开
+    except* Exception:
+        logger.warning("用户级 WebSocket 连接异常退出: user_id=%s", user_id, exc_info=True)
 
 
 @router.websocket("/ws/{project_id}")

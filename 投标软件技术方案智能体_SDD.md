@@ -230,7 +230,7 @@ class BidState(TypedDict):
 
 **职责**：章节生成内容实时推送前端。
 
-**设计**：FastAPI WebSocket（`/ws/{project_id}`）；节点生成时经 Redis pubsub 发布事件（`bid:events:{project_id}`），WebSocket 端点订阅并转发前端；前端流式渲染；断线重连后拉取已生成缓存（sections 已落库）。
+**设计**：FastAPI WebSocket（`/ws/{project_id}`）；节点生成时经 Redis pubsub 发布事件（`bid:events:{project_id}`），WebSocket 端点订阅并转发前端；前端流式渲染；断线重连后拉取已生成缓存（sections 已落库）。**用户级推送（阶段 C，2026-08-20）**：`/ws/user/{user_id}` 订阅 `bid:user:{user_id}`，分工事件定向推送相关用户（assign→assignee、submit→owner、review→assignee、confirm-outline→全员 workbench_refresh），WorkbenchView 收事件静默刷新待办（指数退避重连 ≤5 次）。
 
 **事件协议**（`event_service.py`，前后端统一）：
 
@@ -243,6 +243,7 @@ class BidState(TypedDict):
 | `task_assigned` | `{chapter_no, assignee_id}` | 分工推送（2026-08-18：owner 分配章节后通知成员） |
 | `task_submitted` | `{chapter_no, assignee_id}` | 成员提交章节待审（2026-08-18） |
 | `task_reviewed` | `{chapter_no, assignee_id, action}` | owner 审核通过/打回（2026-08-18） |
+| `workbench_refresh` | `{project_id}` | 工作台刷新通知（阶段 C：仅用户级频道，confirm-outline 后推送全员） |
 | `error` | `{message}` | 异常 |
 
 **三期真流式链路**（已实现）：`llm_service.call_llm_stream`（mock 模式将 _MOCK_TEXT 按 ~20 字切片 yield；真实模式 `acompletion(stream=True)` 逐 chunk yield delta，出口同 call_llm_text 脱敏）→ `chapter_service.generate_chapter(on_delta=...)` 逐块回调并累积全文（未传 on_delta 时保持非流式，向后兼容）→ `write_node` 经 on_delta 节流发布 `section_token`，结束后照旧落库 + `section_done`（全文）+ `progress`；前端 GenerateView 对 `section_token` 增量追加渲染（已移除假打字机定时器），`section_done` 全量覆盖对齐。
@@ -611,6 +612,7 @@ CREATE TABLE proposal_versions (
 ### 5.2 WebSocket
 
 - `/ws/{project_id}?token=<JWT access token>`：握手阶段鉴权（token 无效 close `4001` / 非项目成员 close `4003`，refresh token 拒绝）；连接建立后转发节点经 Redis 频道 `bid:events:{project_id}` 发布的工作流进度与章节事件，并支持客户端 `ping/pong` 心跳与 `get_status`（读取 checkpointer 实时状态）。
+- `/ws/user/{user_id}?token=<JWT access token>`（阶段 C）：握手仅校验 token（sub 必须等于 user_id，订阅他人频道 close `4003`，无项目成员校验）；转发 Redis 频道 `bid:user:{user_id}` 的用户级事件（task_assigned/task_submitted/task_reviewed/workbench_refresh），支持 `ping/pong` 心跳；分工端点与 confirm-outline 经 `publish_user_event` 定向发布，前端 WorkbenchView 收事件静默刷新待办。
 
 ### 5.3 统一响应约定
 
