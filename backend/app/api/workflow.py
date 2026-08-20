@@ -480,6 +480,16 @@ async def export_document(
     """导出 Word 文档（复用图内 export 节点逻辑，返回下载信息）."""
     await _check_project_member(db, project_id, user_id)
 
+    # 阶段 H 导出门禁：存在未人工确认的高风险废标条款时阻塞导出
+    from app.services.disqualification_service import count_unconfirmed_high
+
+    dq_pending = await count_unconfirmed_high(db, project_id)
+    if dq_pending > 0:
+        raise BizError(
+            code=4012,
+            message=f"存在 {dq_pending} 条未确认的高风险废标条款，请先在招标解析页完成人工确认",
+        )
+
     # 审计埋点：方案导出（security.md §4）
     await audit.record(db, user_id, "workflow.export", project_id=project_id)
 

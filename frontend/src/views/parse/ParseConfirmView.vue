@@ -152,6 +152,60 @@
           </div>
         </a-card>
 
+        <!-- 废标风险（阶段 H：条款级人工确认，勾选变更即全量回传保存） -->
+        <a-card
+          v-if="tenderDoc"
+          title="废标风险"
+          class="mb-4"
+        >
+          <a-alert
+            v-if="disqualificationClauses.length === 0"
+            type="info"
+            show-icon
+            message="未提取到废标条款"
+          />
+          <template v-else>
+            <a-alert
+              type="error"
+              show-icon
+              message="以下条款违反将直接导致废标，请逐条人工确认"
+              class="dq-alert"
+            />
+            <div class="dq-list">
+              <div
+                v-for="clause in disqualificationClauses"
+                :key="clause.id"
+                class="dq-item"
+              >
+                <div class="dq-item__main">
+                  <div class="dq-item__title">
+                    {{ clause.clause_no }} {{ clause.title }}
+                    <a-tag class="dq-item__category">
+                      {{ RISK_CATEGORY_LABELS[clause.risk_category] || clause.risk_category }}
+                    </a-tag>
+                    <a-tag :color="SEVERITY_META[clause.severity]?.color ?? 'default'">
+                      {{ SEVERITY_META[clause.severity]?.text ?? clause.severity }}
+                    </a-tag>
+                  </div>
+                  <div
+                    v-if="clause.recommendation"
+                    class="dq-item__recommendation"
+                  >
+                    {{ clause.recommendation }}
+                  </div>
+                </div>
+                <a-checkbox
+                  :checked="clause.confirmed"
+                  :disabled="disqualificationSaving"
+                  @change="onDisqualificationChecked(clause)"
+                >
+                  已确认
+                </a-checkbox>
+              </div>
+            </div>
+          </template>
+        </a-card>
+
         <!-- 评分点表格 -->
         <a-card
           title="评分点"
@@ -516,6 +570,78 @@ const formatCategoryOptions = FORMAT_CATEGORIES
 const formatCategoryLabel = (value: string) =>
   FORMAT_CATEGORIES.find((c) => c.value === value)?.label || value
 
+/* ---------------- 废标条款识别（阶段 H：条款级人工确认，勾选即全量回传保存） ---------------- */
+interface DisqualificationClause {
+  id: string
+  clause_no: string
+  title: string
+  risk_category: string
+  severity: string
+  recommendation: string
+  confirmed: boolean
+}
+
+/** risk_category 中文映射（与后端枚举对齐） */
+const RISK_CATEGORY_LABELS: Record<string, string> = {
+  qualification_missing: '资质缺失',
+  schedule_exceeded: '工期超限',
+  signature_seal: '签章要求',
+  blind_bid: '暗标规则',
+  format_deviation: '格式偏离',
+  substantive_deviation: '实质性偏离',
+  other: '其他',
+}
+
+/** severity 标签元信息（高/中/低） */
+const SEVERITY_META: Record<string, { text: string; color: string }> = {
+  high: { text: '高', color: 'error' },
+  mid: { text: '中', color: 'warning' },
+  low: { text: '低', color: 'default' },
+}
+
+const disqualificationClauses = ref<DisqualificationClause[]>([])
+const disqualificationSaving = ref(false)
+
+/** checkbox 变更 → 该文档全部条款幂等回传；失败回滚该条勾选 */
+const handleDisqualificationConfirm = async (clause: DisqualificationClause, checked: boolean) => {
+  if (!tenderDoc.value || disqualificationSaving.value) return
+  const prev = clause.confirmed
+  clause.confirmed = checked
+  disqualificationSaving.value = true
+  try {
+    const res = await api.put(
+      `/projects/${projectId}/documents/${tenderDoc.value.id}/disqualification-clauses`,
+      {
+        items: disqualificationClauses.value.map((it) => ({
+          id: it.id,
+          clause_no: it.clause_no,
+          title: it.title,
+          risk_category: it.risk_category,
+          severity: it.severity,
+          recommendation: it.recommendation,
+          confirmed: it.confirmed,
+        })),
+      },
+    )
+    if (res.data?.code !== 0) {
+      clause.confirmed = prev
+      message.error(res.data?.message || '废标条款确认状态保存失败')
+      return
+    }
+    message.success('已保存废标条款确认状态')
+  } catch (err) {
+    clause.confirmed = prev
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '废标条款确认状态保存失败')
+  } finally {
+    disqualificationSaving.value = false
+  }
+}
+
+/** 模板入口：包一层取 checked（全局组件 emits 无类型推断，显式标注事件结构） */
+const onDisqualificationChecked = (clause: DisqualificationClause) =>
+  (e: { target: { checked: boolean } }) => handleDisqualificationConfirm(clause, e.target.checked)
+
 const fetchData = async () => {
   loading.value = true
   loadError.value = ''
@@ -544,6 +670,17 @@ const fetchData = async () => {
         category: it.category,
         requirement: it.requirement,
       }))
+    }
+    // 废标条款（阶段 H；失败静默降级为空列表，不阻塞页面）
+    if (tenderDoc.value) {
+      try {
+        const dqRes = await api.get(
+          `/projects/${projectId}/documents/${tenderDoc.value.id}/disqualification-clauses`,
+        )
+        disqualificationClauses.value = dqRes.data?.data?.items || []
+      } catch {
+        disqualificationClauses.value = []
+      }
     }
   } catch {
     loadError.value = '解析数据加载失败'
@@ -812,5 +949,46 @@ onMounted(fetchData)
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
+}
+
+.dq-alert {
+  margin-bottom: 12px;
+}
+
+.dq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dq-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--card-bg);
+}
+
+.dq-item__main {
+  min-width: 0;
+  flex: 1;
+}
+
+.dq-item__title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dq-item__category {
+  margin-left: 8px;
+}
+
+.dq-item__recommendation {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary, #999);
 }
 </style>

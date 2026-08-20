@@ -97,6 +97,11 @@ def owner_db():
         entity = descriptions[0].get("entity") if descriptions else None
         if entity is Project:
             return _result(_owned_project())
+        if entity is None:
+            # 聚合查询（阶段 H 导出门禁：未确认废标条款计数）返回 0 放行
+            agg = MagicMock()
+            agg.scalar.return_value = 0
+            return agg
         return _result(None)
 
     session = AsyncMock()

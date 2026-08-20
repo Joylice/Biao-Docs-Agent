@@ -75,6 +75,32 @@ class ScorePoint(Base):
     confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class DisqualificationClause(Base):
+    """废标/红线条款表（阶段 H）— 招标文件中触发废标的实质性要求."""
+
+    __tablename__ = "disqualification_clauses"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    doc_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id"),
+        nullable=False,
+    )
+    clause_no: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    # 风险分类：qualification_missing/schedule_exceeded/signature_seal/blind_bid/
+    # format_deviation/substantive_deviation/other
+    risk_category: Mapped[str] = mapped_column(String(30), nullable=False, default="other")
+    severity: Mapped[str] = mapped_column(String(10), nullable=False, default="mid")  # high|mid|low
+    recommendation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 class TechRequirement(Base):
     """技术需求清单."""
 

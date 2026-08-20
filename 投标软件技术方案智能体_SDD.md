@@ -208,7 +208,7 @@ class BidState(TypedDict):
 
 **HITL 设计**：每章 `write` 完成后节点 `interrupt()`，等待用户「通过/改稿/重写」；Checkpointer（Postgres）持久化图状态，支持任务中断后恢复。
 
-**校验节点**：必答要点清单（该章对应 score_points 是否全部应答）、字数下限、★参数不低于招标要求；失败自动重写 ≤2 次。**参数比对校验落地（阶段 E1）**：`validate_node` 接入 `param_check_service.check_chapter_params`——正则断言抽取招标★条款中的参数要求（≥/≤/不低于/至少 等）与章节正文对应数值（万/亿单位归一化后比对），规则比对不确定时 LLM 兜底判定；mock 模式与 LLM 异常一律降级返回空 issues（不阻塞流程）；产出的 issues 并入校验失败原因走既有 write 重试链路。
+**校验节点**：必答要点清单（该章对应 score_points 是否全部应答）、字数下限、★参数不低于招标要求；失败自动重写 ≤2 次。**参数比对校验落地（阶段 E1）**：`validate_node` 接入 `param_check_service.check_chapter_params`——正则断言抽取招标★条款中的参数要求（≥/≤/不低于/至少 等）与章节正文对应数值（万/亿单位归一化后比对），规则比对不确定时 LLM 兜底判定；mock 模式与 LLM 异常一律降级返回空 issues（不阻塞流程）；产出的 issues 并入校验失败原因走既有 write 重试链路。**废标拦截（阶段 H）**：`validate_node` 追加废标条款校验——正文触碰已人工确认的 severity=high 红线条款（分类关键词/标题前缀规则比对，见 §3.12）即追加「废标风险」issue 并在节点输出标记 `disqualification_risk`，走既有重试链路；比对异常降级放行。
 
 ### 3.6 人工审阅与重写模块
 
@@ -315,6 +315,22 @@ class BidState(TypedDict):
 
 **前端**：`WorkbenchView.vue` 双视图——所有人见「我的待办」分桶卡片（点击直达对应项目分工页 `/projects/{pid}/division`）与「我参与的项目」进度；owner 追加「项目进度」看板（进度条 = approved/总节数 + 状态分布 statistic）与「待我审核」清单；空态友好提示。侧边导航「工作台」置顶。
 
+### 3.12 废标条款识别模块（2026-08-20，阶段 H）
+
+**职责**：从招标文件识别触发废标/否决投标的红线条款，人工确认后贯穿校验与导出链路（P0 竞品核心能力）。
+
+**数据模型**：`disqualification_clauses` 表（迁移 0017）：`clause_no/title/risk_category/severity/recommendation/confirmed`；risk_category 枚举：qualification_missing（资质缺失）/schedule_exceeded（工期超限）/signature_seal（签章要求）/blind_bid（暗标规则）/format_deviation（格式偏离）/substantive_deviation（实质性偏离）/other；severity：high|mid|low（非法值归 mid，未知分类归 other）。
+
+**提取**：`prompts/parse.yaml` 第 4 类提取（废标/红线条款，含提取约束与字段说明）；`parse_service.ParsedTender.disqualification_clauses` → `save_parse_result` 清洗后写入新表（缺 title 丢弃）。
+
+**服务**：`disqualification_service.py`：`scan_content`（仅 confirmed 条款参与：分类关键词或标题前 4 字命中正文即命中）、`scan_project_sections`（章节聚合，仅 high 条款）、`count_unconfirmed_high`（导出门禁依据）、`check_chapter_content`（validate_node 入口，自建只读会话）。
+
+**拦截链**：① `validate_node` 命中已确认 high 条款 → 追加「废标风险」issue + `disqualification_risk` 标记（见 §3.5）；② 导出门禁：`GET workflow/export` 前置检查未确认 high 条款，存在则 4012 阻塞直至人工确认。
+
+**前端**：ParseConfirmView「废标风险」红色卡片（条款列表 + severity 标签（high 红/mid 橙/low 灰）+ 建议措施 + 「已确认」勾选，变更即全量 PUT 幂等覆盖）；ReviewView 章节命中时卡片顶部红色警告条；GenerateView 存在 high 条款时顶部警告横幅。
+
+**表**：`disqualification_clauses`（迁移 0017；另：alembic_version.version_num 扩至 varchar(64) 以容纳长 revision id）。
+
 ---
 
 ## 四、数据库设计（PostgreSQL 16 + pgvector）
@@ -380,6 +396,19 @@ CREATE TABLE score_points (
   strategy    TEXT,                 -- 人工可编辑
   risk_level  TEXT,                 -- high|mid|low
   confirmed   BOOLEAN NOT NULL DEFAULT false
+);
+
+-- 废标/红线条款（阶段 H，迁移 0017）
+CREATE TABLE disqualification_clauses (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  doc_id      UUID NOT NULL REFERENCES documents(id),
+  clause_no   TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  risk_category VARCHAR(30) NOT NULL DEFAULT 'other',  -- 资质缺失/工期超限/签章/暗标/格式偏离/实质性偏离/other
+  severity    VARCHAR(10) NOT NULL DEFAULT 'mid',      -- high|mid|low
+  recommendation TEXT,
+  confirmed   BOOLEAN NOT NULL DEFAULT false            -- 人工确认后才参与校验拦截
 );
 
 -- 技术需求清单
@@ -561,6 +590,10 @@ CREATE TABLE proposal_versions (
 | GET | /projects/{pid}/images/signed | 图片签名读（2026-08-18：query storage_key；仅允许本项目 images 目录下对象，跨项目越权 4003；非成员 403） |
 | GET | /projects/{pid}/documents/{did}/format-requirements | 读取格式要求（2026-08-18：项目成员可读；仅 tender_file，其余 doc_type 拒绝 4010；返回 {items:[{category,requirement}]}） |
 | PUT | /projects/{pid}/documents/{did}/format-requirements | 更新格式要求（2026-08-18：项目成员可写；body.format_requirements 完整数组幂等覆盖 documents.meta；空 requirement 条目丢弃、未知 category 归 other；仅 tender_file 4010；审计 document.format_requirements_update） |
+| GET | /projects/{pid}/documents/{did}/disqualification-clauses | 读取废标条款（阶段 H：项目成员可读；仅 tender_file 4010；返回 {items:[{id,clause_no,title,risk_category,severity,recommendation,confirmed}]}） |
+| PUT | /projects/{pid}/documents/{did}/disqualification-clauses | 更新废标条款（阶段 H：body.items 全量删旧插新幂等覆盖；缺 title 丢弃、非法 severity/risk_category 归一；仅 tender_file 4010；审计 document.disqualification_clauses_update） |
+| GET | /projects/{pid}/disqualification-clauses | 项目级废标条款汇总（阶段 H：跨文档聚合，供生成页风险横幅） |
+| GET | /projects/{pid}/disqualification-risks | 章节废标风险扫描（阶段 H：已确认 high 条款 vs proposal_sections 规则比对，返回 {risks:{章节号:[命中条款]}}） |
 | GET | /projects/{pid}/kb/search | 资料库相似度检索（RAG；query 参数 q 必填，top_k∈[1,20] 默认 5，按相似度倒序返回 {items,total}，仅项目成员可调） |
 | GET | /projects/{pid}/documents | 文档列表与状态 |
 | POST | /projects/{pid}/documents/{did}/reparse | 重新解析招标文件（只提取评分点，不提取技术需求：按 doc_id 删除旧评分点 + 项目级 sp_derived 衍生需求，保留招标原文技术需求 → 状态重置 uploaded → 入队 task_parse_tender（score_points_only=True，LLM schema 裁掉 tech_requirements）；仅 tender_file；parsing/uploaded 状态拒绝 4010；非招标文件 4010；文档不存在 4004；审计 document.reparse） |
@@ -580,7 +613,7 @@ CREATE TABLE proposal_versions (
 | DELETE | /projects/{pid}/workflow/outline-draft | 清除草稿（**仅 owner**，2026-08-20 收紧；幂等，draft=NULL；审计 workflow.outline_draft_clear；confirm_outline 确认成功后节点自动调用） |
 | POST | /projects/{pid}/workflow/confirm-review | 审阅确认：approved → 导出；feedback → 意见回派 + 章节重写后复审（2026-08-18：feedback 键 chapter_no/标题命中分工 → assignment 置 rejected + 意见落库 + 推送 task_reviewed 并从 feedback 移除；无分工章节保持 rewrite 链路；全部回派后 action=redispatched 重新 interrupt 等待复审，响应 next_phase=redispatch） |
 | POST | /projects/{pid}/workflow/rewrite-chapter | 按审阅意见重写指定章节（query 参数 chapter_no、comment） |
-| GET | /projects/{pid}/workflow/export | 导出 Word（返回导出状态与存储 key） |
+| GET | /projects/{pid}/workflow/export | 导出 Word（返回导出状态与存储 key；阶段 H 门禁：存在未确认 high 废标条款时 4012 阻塞，见 §3.12） |
 | PUT | /projects/{pid}/workflow/sections/{chapter_no} | 章节人工编辑保存（2026-08-17：body.content；章节不存在于 state chapters 返回 4004；update_state 回写 chapters/chapter_summaries（摘要重算保章间上下文链路）+ proposal_sections upsert（content_md/status=review/updated_at，对齐 write_node 的 _upsert_section 口径）；仅项目成员；审计 workflow.section_edit） |
 | POST | /projects/{pid}/workflow/outline-suggest | 大纲优化建议（2026-08-17：仅 confirm_outline 挂起时可用；mock 模式确定性规则建议（覆盖矩阵缺口→add_section/add_chapter），生产模式 LLM schema 建议（外发前 redact，失败降级规则建议）；建议为瞬态数据不落库） |
 | POST | /projects/{pid}/workflow/outline-suggest/apply | 应用大纲建议（2026-08-17：body.adopted 为 suggestion_id 列表；纯函数应用返回调整后大纲供人工核对，不写 state——最终执行仍由 confirm-outline 人工确认） |
@@ -708,10 +741,10 @@ graph.add_edge("export", END)
 
 | 提示词 | 输入 | 输出 | 关键约束 |
 |---|---|---|---|
-| 招标解析器 | 评标办法原文 | JSON（评分点/资格/需求） | JSON Schema、禁止臆测分值 |
+| 招标解析器 | 评标办法原文 | JSON（评分点/资格/需求/格式要求/术语表/废标条款） | JSON Schema、禁止臆测分值；阶段 H：第 4 类废标/红线条款提取（risk_category/severity 枚举约束，明确废标后果为 high） |
 | 骨架规划器 | 技术需求（核心）+评分点（追溯） | 章节树 JSON | 定稿骨架模版（2026-08-16 广东施组定稿）：需求分析/业务流程设计/总体架构设计/详细功能说明/对接方案/培训与运维服务方案 六章，顺序命名保持；技术需求全映射无遗漏；评分点经 covered_clauses 追溯、禁止评分项名称作章节标题 |
 | 章节撰写器 | 章节计划+检索素材+前文摘要+高风险对标要点（阶段 D：`{benchmark_high_risk}` 段，高风险评分点「- 条款号: 策略」行，脱敏后外发，缺省回退「（无）」）+术语表（阶段 E2：`{glossary}` 段，term/canonical/desc 行，缺省回退「（无）」） | Markdown 正文 | 只用检索素材、参数不低于★要求；术语按术语表规范表述；「详细功能说明」类章节按模块固定结构撰写（系统概述→需求设计→功能架构→核心功能点[功能说明/界面设计/业务流程设计]）；高风险评分点须针对性正面响应 |
-| 校验器 | 正文+评分要求 | pass/fail+issues | 必答要点/字数/参数检查（阶段 E1：param_check_service 正则断言抽取+万/亿归一化规则比对，不确定时 LLM 兜底，mock/异常降级 pass） |
+| 校验器 | 正文+评分要求 | pass/fail+issues | 必答要点/字数/参数检查（阶段 E1：param_check_service 正则断言抽取+万/亿归一化规则比对，不确定时 LLM 兜底判定，mock/异常降级 pass）；阶段 H：废标条款拦截（已确认 high 条款分类关键词/标题前缀命中正文即追加废标风险 issue，异常降级放行） |
 | 批注重写器 | 原文+反馈+素材 | 重写后 Markdown | 仅改反馈涉及内容 |
 
 **大纲定稿模版说明**（2026-08-16 依《广东施组模版》固化，提示词层实现，schema 不变）：

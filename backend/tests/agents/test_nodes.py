@@ -126,6 +126,60 @@ class TestValidateNode:
             assert result["validation_ok"] is False
             assert result["validate_retries"] == 1
 
+    @_NO_PARAM_ISSUE
+    async def test_disqualification_high_hit_blocks(self) -> None:
+        """阶段 H：命中已确认 high 废标条款 → 追加废标风险 issue + disqualification_risk 标记."""
+        hits = [{"clause_no": "2.1", "title": "资质要求", "severity": "high"}]
+        with patch(
+            "app.services.disqualification_service.check_chapter_content",
+            AsyncMock(return_value=hits),
+        ):
+            content = "# 章节\n\n" + "内容" * 200
+            state = {
+                "current_chapter": "1",
+                "chapters": {"1": content},
+                "validate_retries": 0,
+                "project_id": str(PROJECT_ID),
+            }
+            result = await nodes.validate_node(state)
+            assert result["validation_ok"] is False
+            assert result["disqualification_risk"] is True
+
+    @_NO_PARAM_ISSUE
+    async def test_disqualification_no_hit_passes(self) -> None:
+        """阶段 H：无废标命中 → 不追加 issue、不标记风险."""
+        with patch(
+            "app.services.disqualification_service.check_chapter_content",
+            AsyncMock(return_value=[]),
+        ):
+            content = "# 章节\n\n" + "内容" * 200
+            state = {
+                "current_chapter": "1",
+                "chapters": {"1": content},
+                "validate_retries": 0,
+                "project_id": str(PROJECT_ID),
+            }
+            result = await nodes.validate_node(state)
+            assert result["validation_ok"] is True
+            assert result.get("disqualification_risk") is not True
+
+    @_NO_PARAM_ISSUE
+    async def test_disqualification_check_error_degrades(self) -> None:
+        """阶段 H：废标比对异常降级放行（不阻塞主链路）."""
+        with patch(
+            "app.services.disqualification_service.check_chapter_content",
+            AsyncMock(side_effect=RuntimeError("db down")),
+        ):
+            content = "# 章节\n\n" + "内容" * 200
+            state = {
+                "current_chapter": "1",
+                "chapters": {"1": content},
+                "validate_retries": 0,
+                "project_id": str(PROJECT_ID),
+            }
+            result = await nodes.validate_node(state)
+            assert result["validation_ok"] is True
+
 
 class TestRoutes:
     """条件路由函数."""

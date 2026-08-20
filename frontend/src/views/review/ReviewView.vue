@@ -150,6 +150,22 @@
                   </a-tag>
                 </div>
               </template>
+              <a-alert
+                v-if="activeChapterRisks.length > 0"
+                type="error"
+                show-icon
+                class="dq-risk-alert"
+                :message="activeChapterRiskMessage"
+              >
+                <template #description>
+                  <div
+                    v-for="(risk, index) in activeChapterRisks"
+                    :key="index"
+                  >
+                    {{ risk.clause_no }} {{ risk.title }} — {{ risk.recommendation }}
+                  </div>
+                </template>
+              </a-alert>
               <a-textarea
                 v-if="mode === 'edit'"
                 v-model:value="editDrafts[activeChapter]"
@@ -569,6 +585,42 @@ const outline = ref<OutlineNode[]>([])
 const submitters = ref<Record<string, string>>({})
 const expandedKeys = ref<string[]>([])
 const activeChapter = ref('')
+
+/* ---------------- 废标风险（阶段 H：章节卡片命中提示，静默降级） ---------------- */
+/** 废标风险命中条目（GET /projects/{pid}/disqualification-risks 按章节号聚合） */
+interface DisqualificationRiskItem {
+  clause_no: string
+  title: string
+  severity: string
+  risk_category: string
+  recommendation: string
+  matched?: boolean
+}
+
+/** 章节号 → 命中条款列表（失败降级为空对象） */
+const disqualificationRisks = ref<Record<string, DisqualificationRiskItem[]>>({})
+
+const activeChapterRisks = computed<DisqualificationRiskItem[]>(
+  () => disqualificationRisks.value[activeChapter.value] || [],
+)
+
+const activeChapterRiskMessage = computed(() => {
+  const hits = activeChapterRisks.value
+  if (hits.length === 0) return ''
+  return hits.length > 1
+    ? `废标风险：${hits[0].title} 等 ${hits.length} 条`
+    : `废标风险：${hits[0].title}`
+})
+
+/** 拉取废标风险章节聚合（失败降级为空对象，不阻塞审阅） */
+const fetchDisqualificationRisks = async () => {
+  try {
+    const res = await api.get(`/projects/${projectId}/disqualification-risks`)
+    disqualificationRisks.value = res.data?.data?.risks || {}
+  } catch {
+    disqualificationRisks.value = {}
+  }
+}
 const reviewFeedback = ref<Record<string, string>>({})
 const approving = ref(false)
 const submittingFeedback = ref(false)
@@ -1195,6 +1247,7 @@ onMounted(async () => {
     await fetchSubmitters()
     await fetchOwnerFlag()
     await fetchVersions()
+    await fetchDisqualificationRisks()
   } catch {
     loadError.value = '审阅状态加载失败'
   } finally {
@@ -1418,5 +1471,9 @@ onUnmounted(() => {
   justify-content: flex-end;
   gap: 12px;
   margin-top: 8px;
+}
+
+.dq-risk-alert {
+  margin-bottom: 12px;
 }
 </style>

@@ -14,7 +14,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user_id
 from app.core.exceptions import BizError, ValidationError
 from app.core.response import paginated, success
-from app.models.document import Document, ScorePoint, TechRequirement
+from app.models.document import DisqualificationClause, Document, ScorePoint, TechRequirement
 from app.schemas.document import (
     DocumentListOut,
     DocumentUploadOut,
@@ -22,6 +22,7 @@ from app.schemas.document import (
     ScorePointUpdate,
     TechRequirementOut,
 )
+from app.services import disqualification_service as dq_service  # 废标条款服务（阶段 H）
 from app.services import rag_service, task_service
 from app.services.project_service import _check_project_member
 from app.services.storage_service import presigned_url, upload_file
@@ -52,6 +53,25 @@ class FormatRequirementsBody(BaseModel):
     """格式要求保存请求体 — 完整数组幂等覆盖."""
 
     format_requirements: list[dict]
+
+
+class DisqualificationClausesBody(BaseModel):
+    """废标条款保存请求体 — 完整数组幂等覆盖（阶段 H）."""
+
+    items: list[dict]
+
+
+def _clause_to_dict(c: DisqualificationClause) -> dict:
+    """废标条款序列化（与前端废标风险卡片字段对齐）."""
+    return {
+        "id": str(c.id),
+        "clause_no": c.clause_no,
+        "title": c.title,
+        "risk_category": c.risk_category,
+        "severity": c.severity,
+        "recommendation": c.recommendation,
+        "confirmed": c.confirmed,
+    }
 
 
 def _clean_format_requirements(items: list[dict]) -> list[dict]:
@@ -340,6 +360,108 @@ async def update_format_requirements(
     # 事务约定（BUG-1）：写入 + 审计响应前显式提交
     await db.commit()
     return success(data={"items": items})
+
+
+@router.get("/{project_id}/documents/{document_id}/disqualification-clauses")
+async def get_disqualification_clauses(
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """读取招标文件的废标/红线条款列表（项目成员可读，阶段 H）."""
+    await _check_project_member(db, project_id, user_id)
+    await _load_tender_doc_for_format(db, project_id, document_id)
+    result = await db.execute(
+        select(DisqualificationClause)
+        .where(
+            DisqualificationClause.project_id == project_id,
+            DisqualificationClause.doc_id == document_id,
+        )
+        .order_by(DisqualificationClause.clause_no)
+    )
+    items = [_clause_to_dict(c) for c in result.scalars().all()]
+    return success(data={"items": items})
+
+
+@router.put("/{project_id}/documents/{document_id}/disqualification-clauses")
+async def update_disqualification_clauses(
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+    body: DisqualificationClausesBody,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """人工编辑废标条款：清洗后删旧插新幂等覆盖（阶段 H）."""
+    from app.services.disqualification_service import normalize_risk_category, normalize_severity
+
+    await _check_project_member(db, project_id, user_id)
+    doc = await _load_tender_doc_for_format(db, project_id, document_id)
+
+    # 清洗：缺 title 丢弃；枚举归一
+    cleaned: list[dict] = []
+    for item in body.items:
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        cleaned.append(
+            {
+                "clause_no": str(item.get("clause_no") or "").strip() or "-",
+                "title": title,
+                "risk_category": normalize_risk_category(item.get("risk_category")),
+                "severity": normalize_severity(item.get("severity")),
+                "recommendation": str(item.get("recommendation") or "") or None,
+                "confirmed": bool(item.get("confirmed", False)),
+            }
+        )
+
+    await db.execute(
+        delete(DisqualificationClause).where(
+            DisqualificationClause.project_id == project_id,
+            DisqualificationClause.doc_id == document_id,
+        )
+    )
+    for item in cleaned:
+        db.add(DisqualificationClause(project_id=project_id, doc_id=doc.id, **item))
+    await db.flush()
+
+    # 审计埋点：废标条款人工修改（security.md §4）
+    await audit.record(
+        db,
+        user_id,
+        "document.disqualification_clauses_update",
+        project_id=project_id,
+        target_type="document",
+        target_id=str(doc.id),
+        detail={"count": len(cleaned)},
+    )
+
+    await db.commit()
+    return success(data={"items": [{"id": "", **item} for item in cleaned]})
+
+
+@router.get("/{project_id}/disqualification-clauses")
+async def list_project_disqualification_clauses(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """项目级废标条款汇总（跨文档，供生成页风险横幅）."""
+    await _check_project_member(db, project_id, user_id)
+    clauses = await dq_service.load_project_clauses(db, project_id)
+    return success(data={"items": [_clause_to_dict(c) for c in clauses]})
+
+
+@router.get("/{project_id}/disqualification-risks")
+async def list_disqualification_risks(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """章节废标风险扫描：{章节号: 命中条款清单}（供审阅页警告条）."""
+    await _check_project_member(db, project_id, user_id)
+    risks = await dq_service.scan_project_sections(db, project_id)
+    return success(data={"risks": risks})
 
 
 @router.get("/{project_id}/kb/search")

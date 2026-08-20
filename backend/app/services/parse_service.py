@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BizError
 from app.core.redact import redact
-from app.models.document import Document, ScorePoint, TechRequirement
+from app.models.document import DisqualificationClause, Document, ScorePoint, TechRequirement
 from app.services.rag_service import chunk_text  # noqa: F401
 
 
@@ -25,6 +25,8 @@ class ParsedTender:
     format_requirements: list[dict] = field(default_factory=list)
     # 阶段 E2 术语表：[{term, canonical, desc}]，存 Document.meta.glossary
     glossary: list[dict] = field(default_factory=list)
+    # 阶段 H 废标/红线条款：[{clause_no, title, risk_category, severity, recommendation}]
+    disqualification_clauses: list[dict] = field(default_factory=list)
 
 
 # LLM 输入字符预算（DeepSeek 64k 上下文，预留输出与提示词空间）
@@ -240,6 +242,22 @@ async def parse_tender_with_llm(
         },
     }
 
+    # 阶段 H 废标/红线条款：触发废标的实质性要求（资质/工期/签章/暗标/格式/偏离）
+    properties["disqualification_clauses"] = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "clause_no": {"type": "string"},
+                "title": {"type": "string"},
+                "risk_category": {"type": "string"},
+                "severity": {"type": "string"},
+                "recommendation": {"type": "string"},
+            },
+            "required": ["clause_no", "title"],
+        },
+    }
+
     result = await call_llm_with_schema(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -266,6 +284,7 @@ async def parse_tender_with_llm(
         tender_no=result.get("tender_no"),
         format_requirements=result.get("format_requirements", []),
         glossary=result.get("glossary", []),
+        disqualification_clauses=result.get("disqualification_clauses", []),
     )
 
 
@@ -305,6 +324,25 @@ async def save_parse_result(
         )
         db.add(tr)
         tr_count += 1
+
+    # 阶段 H：保存废标/红线条款（枚举归一，缺 title 丢弃）
+    from app.services.disqualification_service import normalize_risk_category, normalize_severity
+
+    for dq_data in parsed.disqualification_clauses:
+        title = str(dq_data.get("title") or "").strip()
+        if not title:
+            continue
+        db.add(
+            DisqualificationClause(
+                project_id=project_id,
+                doc_id=doc_id,
+                clause_no=str(dq_data.get("clause_no") or "").strip() or "-",
+                title=title,
+                risk_category=normalize_risk_category(dq_data.get("risk_category")),
+                severity=normalize_severity(dq_data.get("severity")),
+                recommendation=dq_data.get("recommendation"),
+            )
+        )
 
     # 更新文档状态与格式要求/术语表（存 meta；整体替换新 dict 确保 JSON 列标记脏）
     result = await db.execute(select(Document).where(Document.id == doc_id))

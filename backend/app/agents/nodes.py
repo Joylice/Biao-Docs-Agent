@@ -651,6 +651,22 @@ async def validate_node(state: dict) -> dict:
     # 阶段 E1：★ 评分点参数断言 vs 正文（param_mismatch 走同一重试链路）
     issues.extend(await check_chapter_params(content, score_points))
 
+    # 阶段 H：废标条款校验 — 正文触碰已确认 high 红线条款即追加风险项；
+    # 比对异常降级放行（不阻塞主链路）
+    disqualification_risk = False
+    project_id = state.get("project_id", "")
+    if project_id:
+        from app.services.disqualification_service import check_chapter_content
+
+        try:
+            dq_hits = await check_chapter_content(project_id, content)
+        except Exception as e:
+            logger.warning("废标条款校验失败（降级继续）: %s", e)
+            dq_hits = []
+        for hit in dq_hits:
+            disqualification_risk = True
+            issues.append(f"废标风险 {hit.get('clause_no', '')}：{hit.get('title', '')}")
+
     # 阶段 F：真实模式下 tool calling 辅助取证复核（mock/异常保留原 issues）
     if issues and not await settings_service.is_mock_enabled():
         from app.agents.tools import validate_tool_recheck
@@ -663,8 +679,16 @@ async def validate_node(state: dict) -> dict:
             logger.warning("校验问题工具复核失败（保留原 issues）: %s", e)
 
     if issues and retries < MAX_VALIDATE_RETRIES:
-        return {"validation_ok": False, "validate_retries": retries + 1}
-    return {"validation_ok": True, "validate_retries": retries}
+        return {
+            "validation_ok": False,
+            "validate_retries": retries + 1,
+            "disqualification_risk": disqualification_risk,
+        }
+    return {
+        "validation_ok": True,
+        "validate_retries": retries,
+        "disqualification_risk": disqualification_risk,
+    }
 
 
 async def consistency_check_node(state: dict) -> dict:

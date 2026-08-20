@@ -4,6 +4,17 @@
       title="方案生成"
       :subtitle="`进度: ${Math.round(progress * 100)}%`"
     >
+      <!-- 高风险废标条款预警（阶段 H：引导去招标解析确认页逐条人工确认） -->
+      <a-alert
+        v-if="highRiskClauseCount > 0"
+        type="warning"
+        show-icon
+        banner
+        class="mb-4"
+        :message="`本项目存在 ${highRiskClauseCount} 条高风险废标条款，请重点关注`"
+        description="前往招标解析确认页逐条人工确认，未确认前无法导出"
+      />
+
       <!-- 断线重连提示 -->
       <a-alert
         v-if="wsError"
@@ -743,6 +754,32 @@ const selectedChapter = ref('')
 const outlineCollapsed = ref(false)
 const wsError = ref('')
 const loadError = ref('')
+
+/* ---------------- 废标条款识别（阶段 H：高风险条款顶部预警，静默降级） ---------------- */
+interface DisqualificationClause {
+  id: string
+  clause_no: string
+  title: string
+  risk_category: string
+  severity: string
+  recommendation: string
+  confirmed: boolean
+}
+
+const disqualificationClauses = ref<DisqualificationClause[]>([])
+const highRiskClauseCount = computed(
+  () => disqualificationClauses.value.filter((c) => c.severity === 'high').length,
+)
+
+/** 项目级废标条款聚合（失败降级为空数组，不阻塞生成流程） */
+const loadDisqualificationClauses = async () => {
+  try {
+    const res = await api.get(`/projects/${projectId}/disqualification-clauses`)
+    disqualificationClauses.value = res.data?.data?.items || []
+  } catch {
+    disqualificationClauses.value = []
+  }
+}
 
 /* ---------------- 大纲二次编辑草稿（防抖自动保存 + 手动保存 + 恢复） ---------------- */
 type DraftState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
@@ -1758,6 +1795,7 @@ const loadInitial = async () => {
 
 onMounted(() => {
   loadInitial()
+  loadDisqualificationClauses()
   loadKbDocs()
   loadKbBases()
   fetchProjectOwner()
