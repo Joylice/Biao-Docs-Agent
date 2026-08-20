@@ -56,12 +56,18 @@ async def login(
     req: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """用户登录."""
-    result = await db.execute(select(User).where(User.email == req.email))
+    """用户登录（支持用户名或邮箱）."""
+    # 登录标识：优先 username，其次 email（目前用户模型用 email 作为唯一标识，
+    # username 字段待后续迁移添加，此处先将 username 作为 email 兼容查询）
+    login_identifier = req.username or req.email
+    if not login_identifier:
+        raise BizError(code=4001, message="请输入用户名或邮箱")
+
+    result = await db.execute(select(User).where(User.email == login_identifier))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(req.password, user.password_hash):
-        raise BizError(code=4001, message="邮箱或密码错误")
+        raise BizError(code=4001, message="用户名或密码错误")
 
     # 审计埋点：登录成功（security.md §4）
     await audit.record(db, user.id, "auth.login", target_type="user", target_id=str(user.id))

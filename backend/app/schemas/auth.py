@@ -14,9 +14,10 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """登录请求."""
+    """登录请求（支持用户名或邮箱）."""
 
-    email: EmailStr
+    username: str | None = None  # 用户名（优先）
+    email: EmailStr | None = None  # 邮箱（兼容旧版）
     password: str
 
 
