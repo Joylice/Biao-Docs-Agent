@@ -184,6 +184,6 @@ async def delete_chapter_annotation(
         target_type="chapter_annotation",
         target_id=str(ann.id),
     )
-    db.delete(ann)
+    await db.delete(ann)
     await db.commit()
     return success(data={"id": str(annotation_id)})

@@ -138,8 +138,11 @@ test.describe('阶段 C：工作台待办用户级 WebSocket 实时推送', () =
       localStorage.setItem('access_token', token);
     }, member.accessToken);
     await page.goto('/workbench');
-    mainFrameNavigations = 0; // 排除 goto 自身的导航计数
     await expect(page.getByText('我的待办')).toBeVisible({ timeout: 30_000 });
+    // 页面已稳定后才重置计数：goto 触发的 SPA fallback 尾部导航事件可能在 goto resolve 后
+    // 才投递（vite dev 无 nginx try_files 单跳语义），过早重置会把落盘导航误计为重载
+    await page.waitForLoadState('networkidle');
+    mainFrameNavigations = 0; // 排除 goto 自身及 SPA fallback 的导航计数
     const todo = page.getByText(`${project.name} · 1 E2E实时推送`, { exact: true });
     await expect(todo).toHaveCount(0); // 分配前无该待办
 

@@ -174,7 +174,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/api/client'
 import { currentUserId } from '@/stores/currentUser'
@@ -305,9 +305,9 @@ const startHeartbeat = () => {
 }
 
 const connectUserWebSocket = () => {
-  if (wsStopped) return
+  if (wsStopped || ws) return
   const userId = currentUserId.value
-  if (!userId) return // 未拿到用户 ID：静默降级，手动刷新仍可用
+  if (!userId) return // 未拿到用户 ID：由 watch 在 /auth/me 就绪后补连，手动刷新仍可用
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
   const token = localStorage.getItem('access_token') || ''
   const wsUrl = `${protocol}://${window.location.host}/ws/user/${userId}?token=${encodeURIComponent(token)}`
@@ -333,6 +333,7 @@ const connectUserWebSocket = () => {
   }
   ws.onclose = (event) => {
     stopHeartbeat()
+    ws = null // 连接已关闭：清空引用，允许重连/补连重新建立
     if (wsStopped) return
     // 鉴权失败（4001 token 无效 / 4003 订阅他人频道）：重连无意义，静默降级
     if (event.code === 4001 || event.code === 4003) return
@@ -347,6 +348,13 @@ const connectUserWebSocket = () => {
     // 静默：错误统一由 onclose 走重连/降级逻辑
   }
 }
+
+// currentUserId 由 AppLayout 拉取 /auth/me 异步写入：晚于本页挂载时经 watch 补连（防静默丢失实时推送）
+watch(currentUserId, (userId) => {
+  if (userId && !wsStopped && !ws) {
+    connectUserWebSocket()
+  }
+})
 
 /** 关闭连接并停止一切重连（页面卸载） */
 const closeUserWebSocket = () => {

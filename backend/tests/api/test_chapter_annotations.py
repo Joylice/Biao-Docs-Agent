@@ -57,7 +57,7 @@ def override_db() -> Generator:
     def _override(results: list) -> AsyncMock:
         session = AsyncMock()
         session.add = MagicMock()
-        session.delete = MagicMock()
+        # delete 保留 AsyncMock 原生协程行为：AsyncSession.delete 是协程，未 await 会静默无效
         session.execute.side_effect = results
         app.dependency_overrides[get_db] = lambda: session
         return session
@@ -200,7 +200,8 @@ class TestDeleteChapterAnnotation:
         )
         resp = await client.delete(f"{_url()}/{ann.id}", headers=_headers(OWNER_ID))
         assert resp.status_code == 200
-        session.delete.assert_called_once_with(ann)
+        # AsyncSession.delete 是协程，必须 await 否则静默无效
+        session.delete.assert_awaited_once_with(ann)
         actions = [
             c.args[0].action for c in session.add.call_args_list
             if hasattr(c.args[0], "action")

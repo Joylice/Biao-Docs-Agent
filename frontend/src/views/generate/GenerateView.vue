@@ -1196,16 +1196,21 @@ watch(
   { deep: true },
 )
 
-/** 进入编辑态：读取草稿提示恢复；离开编辑态：停止未落库的防抖定时器 */
-watch(awaitingOutlineConfirm, (v) => {
-  if (v) {
-    // 草稿恢复仅 owner（非 owner 确认态只读浏览，无草稿读写权限）
-    if (canEditOutlineNow.value) loadDraftIfAny()
-  } else if (draftTimer !== null) {
-    clearTimeout(draftTimer)
-    draftTimer = null
-  }
-})
+/** 进入编辑态：读取草稿提示恢复；离开编辑态：停止未落库的防抖定时器.
+ * awaitingOutlineConfirm（status 轮询）与 projectOwnerId（项目详情）异步就绪顺序不定，
+ * 双条件组合 watch 防「owner 判定晚到导致恢复弹窗永久丢失」竞态。 */
+watch(
+  [awaitingOutlineConfirm, canEditOutlineNow],
+  ([awaiting, canEdit], [prevAwaiting, prevCanEdit]) => {
+    if (awaiting && canEdit && !(prevAwaiting && prevCanEdit) && !draftRestoreVisible.value) {
+      loadDraftIfAny()
+    }
+    if (!awaiting && draftTimer !== null) {
+      clearTimeout(draftTimer)
+      draftTimer = null
+    }
+  },
+)
 
 /** 大纲后台生成中：每 2s 轮询 status，直到大纲就绪/异常（上限 4 分钟） */
 const startOutlinePolling = () => {
