@@ -30,7 +30,6 @@
           <a-card
             v-for="bucket in BUCKET_ORDER"
             :key="bucket"
-            size="small"
             class="workbench__bucket"
           >
             <template #title>
@@ -81,7 +80,6 @@
           <a-row :gutter="16">
             <a-col :span="summary.owner_review_pending.length > 0 ? 14 : 24">
               <a-card
-                size="small"
                 title="项目分工进度"
                 class="workbench__board-card"
               >
@@ -135,7 +133,6 @@
               :span="10"
             >
               <a-card
-                size="small"
                 class="workbench__board-card"
               >
                 <template #title>

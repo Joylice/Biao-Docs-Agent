@@ -52,7 +52,6 @@
                 <div class="task-item__actions">
                   <a-button
                     v-if="item.status === 'pending' || item.status === 'rejected'"
-                    type="primary"
                     size="small"
                     :loading="acceptingId === item.id"
                     @click="handleAccept(item)"
@@ -74,7 +73,6 @@
                     >
                       <a-button
                         size="small"
-                        type="primary"
                         :loading="submittingId === item.id"
                       >
                         提交审核
@@ -128,7 +126,7 @@
             :data-source="chapterRows"
             :pagination="false"
             row-key="key"
-            size="small"
+            size="middle"
           >
             <template #bodyCell="{ column, record }">
               <!-- 子节行：缩进展示标题，其余列占位（分工粒度仍为章） -->
@@ -174,7 +172,6 @@
                 <a-button
                   v-if="isOwner && record.status === 'submitted' && record.assignment_id"
                   size="small"
-                  type="primary"
                   @click="openReview(record)"
                 >
                   审核
@@ -561,11 +558,11 @@ let reconnectTimer: number | null = null
 let reconnectAttempts = 0
 
 const STATUS_META: Record<string, { text: string; color: string }> = {
-  pending: { text: '待领取', color: 'orange' },
-  in_progress: { text: '编制中', color: 'blue' },
-  submitted: { text: '待审核', color: 'purple' },
-  approved: { text: '已通过', color: 'green' },
-  rejected: { text: '已打回', color: 'red' },
+  pending: { text: '待领取', color: 'default' },
+  in_progress: { text: '编制中', color: 'processing' },
+  submitted: { text: '待审核', color: 'warning' },
+  approved: { text: '已通过', color: 'success' },
+  rejected: { text: '已打回', color: 'error' },
 }
 
 const statusMeta = (status: string) => STATUS_META[status] || { text: status, color: 'default' }
@@ -573,7 +570,7 @@ const statusMeta = (status: string) => STATUS_META[status] || { text: status, co
 const sectionStatusText = (status: string) =>
   ({ draft: '初稿', final: '正式' })[status] || status
 const sectionStatusColor = (status: string) =>
-  ({ draft: 'blue', final: 'green' })[status] || 'default'
+  ({ draft: 'processing', final: 'success' })[status] || 'default'
 
 const columns = [
   { title: '章节', dataIndex: 'chapter_no', key: 'chapter_no', width: 80 },
@@ -1047,12 +1044,12 @@ onBeforeUnmount(() => {
 
 .division__ws-error {
   font-size: 12px;
-  color: #c62828;
+  color: var(--color-error);
 }
 
 .division__comment {
   font-size: 12px;
-  color: #c62828;
+  color: var(--color-error);
 }
 
 .division__sub-section {

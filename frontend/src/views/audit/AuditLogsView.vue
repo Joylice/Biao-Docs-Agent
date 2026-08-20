@@ -226,7 +226,7 @@ onMounted(fetchLogs)
 .audit-detail {
   margin: 0;
   padding: 8px 12px;
-  background: var(--color-bg-secondary, #fafafa);
+  background: var(--app-bg);
   border-radius: 6px;
   font-size: 12px;
   max-height: 240px;

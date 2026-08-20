@@ -66,16 +66,16 @@
       </a-dropdown>
     </a-layout-header>
     <a-layout class="app-layout__main">
-      <!-- 深色窄边侧栏：工作台置首，项目列表次之（管理入口仍在右上角用户菜单） -->
+      <!-- 浅色窄边侧栏：工作台置首，项目列表次之（管理入口仍在右上角用户菜单） -->
       <a-layout-sider
-        theme="dark"
-        :width="184"
+        theme="light"
+        :width="200"
         :collapsed-width="64"
         breakpoint="lg"
         class="app-layout__sider"
       >
         <a-menu
-          theme="dark"
+          theme="light"
           mode="inline"
           :selected-keys="selectedNavKeys"
           :items="navItems"
@@ -214,7 +214,7 @@ onMounted(fetchCurrentUser)
   justify-content: space-between;
   height: 56px;
   padding: 0 24px;
-  background: #fff;
+  background: var(--card-bg);
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -277,17 +277,32 @@ onMounted(fetchCurrentUser)
   background: transparent;
 }
 
-/* 深色窄边侧栏（科技简约：深底 + 浅色内容区） */
+/* 浅色窄边侧栏（飞书风：白底 + 右侧 1px 分割线） */
 .app-layout__sider {
   position: sticky;
   top: 56px;
   height: calc(100vh - 56px);
   overflow: auto;
-  background: #0b1526;
+  background: var(--card-bg);
+  border-right: 1px solid var(--border-color);
 }
 
 .app-layout__sider :deep(.ant-menu) {
   background: transparent;
+}
+
+/* 菜单选中态：浅蓝底 + 主色文字；未选中 hover 浅灰底 */
+.app-layout__sider :deep(.ant-menu-item) {
+  border-radius: 6px;
+}
+
+.app-layout__sider :deep(.ant-menu-item-selected) {
+  background: var(--bg-active);
+  color: var(--color-primary);
+}
+
+.app-layout__sider :deep(.ant-menu-item:not(.ant-menu-item-selected):hover) {
+  background: var(--bg-hover);
 }
 
 .app-layout__content {

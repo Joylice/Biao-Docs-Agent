@@ -103,9 +103,7 @@
                 :options="modeOptions"
               />
               <a-button
-                type="primary"
                 size="small"
-                ghost
                 :loading="approving"
                 :disabled="polling"
                 @click="handleApprove"
@@ -122,7 +120,6 @@
               <a-button
                 v-if="mode === 'edit'"
                 size="small"
-                type="primary"
                 :loading="savingSection"
                 :disabled="!hasEditDraft(activeChapter)"
                 @click="handleSaveEditDraft"
@@ -236,7 +233,6 @@
                           </a-button>
                           <a-button
                             size="small"
-                            type="primary"
                             :loading="updatingAnnotation"
                             @click="handleUpdateAnnotation(activeChapter, item.id)"
                           >
@@ -258,7 +254,6 @@
                         placeholder="输入批注内容（1-2000 字），例如：此处需补充实施里程碑"
                       />
                       <a-button
-                        type="primary"
                         size="small"
                         :loading="addingAnnotation"
                         :disabled="!newAnnotation.trim()"
@@ -291,8 +286,6 @@
             导出 Word 文档
           </a-button>
           <a-button
-            type="primary"
-            ghost
             :loading="approving"
             :disabled="polling"
             size="large"
@@ -311,7 +304,6 @@
         >
           <template #extra>
             <a-button
-              type="primary"
               @click="handleDownload"
             >
               下载文档
@@ -328,8 +320,6 @@
             <a-button
               v-if="isOwner"
               size="small"
-              type="primary"
-              ghost
               :loading="snapshotting"
               @click="openSnapshotModal"
             >
@@ -381,8 +371,6 @@
                     <a-button
                       v-if="isOwner"
                       size="small"
-                      type="primary"
-                      ghost
                       @click="openArchiveModal(item)"
                     >
                       归档

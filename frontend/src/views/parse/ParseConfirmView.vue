@@ -98,7 +98,6 @@
               </a-button>
               <a-button
                 size="small"
-                type="primary"
                 :loading="formatSaving"
                 @click="handleSaveFormat"
               >
@@ -168,7 +167,6 @@
               </a-button>
               <a-button
                 size="small"
-                type="primary"
                 :loading="confirmAllLoading"
                 @click="handleConfirmAll"
               >
@@ -198,7 +196,7 @@
             :row-selection="{ selectedRowKeys, onChange: onSelectionChange }"
             :scroll="{ x: 1100 }"
             row-key="id"
-            size="small"
+            size="middle"
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'score'">
@@ -258,7 +256,6 @@
             >
               <a-button
                 size="small"
-                type="primary"
                 :loading="generateLoading"
               >
                 {{ selectedRowKeys.length > 0 ? `生成技术需求（已选 ${selectedRowKeys.length} 项）` : '生成技术需求（全部已确认）' }}
@@ -270,7 +267,7 @@
             :data-source="techRequirements"
             :pagination="false"
             row-key="id"
-            size="small"
+            size="middle"
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'is_mandatory'">
@@ -769,7 +766,7 @@ onMounted(fetchData)
 }
 
 .summary-item__value--danger {
-  color: #c62828;
+  color: var(--color-error);
 }
 
 .summary-item__unit {
@@ -789,12 +786,12 @@ onMounted(fetchData)
 }
 
 .sp-score--high {
-  color: #c62828;
+  color: var(--color-error);
   font-weight: 700;
 }
 
 .sp-row--high td {
-  background: rgba(198, 40, 40, 0.05) !important;
+  background: var(--color-error-bg) !important;
 }
 
 .format-list {

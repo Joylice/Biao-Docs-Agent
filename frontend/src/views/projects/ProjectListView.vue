@@ -50,7 +50,6 @@
     >
       <template #action>
         <a-button
-          type="primary"
           @click="fetchProjects"
         >
           重试
@@ -82,7 +81,6 @@
               <a-button
                 v-if="i === guideCurrent"
                 size="small"
-                type="primary"
                 @click="s.action"
               >
                 去完成
@@ -177,7 +175,6 @@
 
           <div class="project-card__footer">
             <a-button
-              type="primary"
               size="small"
               @click.stop="enterProject(item.id)"
             >
@@ -264,8 +261,8 @@ const statusTagColor = (status: string): string => {
     created: 'default',
     parsing: 'processing',
     parsed: 'blue',
-    generating: 'cyan',
-    generated: 'green',
+    generating: 'processing',
+    generated: 'success',
     reviewed: 'success',
   }
   return colors[status] || 'default'

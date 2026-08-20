@@ -94,7 +94,7 @@ withDefaults(
 
 .page-container__subtitle {
   margin: 4px 0 0;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-secondary);
 }
 

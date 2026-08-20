@@ -74,7 +74,7 @@
         :data-source="tenderDocs"
         :pagination="false"
         row-key="id"
-        size="small"
+        size="middle"
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'status'">
@@ -99,8 +99,6 @@
             解析中，页面将自动刷新
           </a-tag>
           <a-button
-            type="primary"
-            ghost
             :loading="loading"
             @click="fetchData"
           >
@@ -212,8 +210,8 @@ const statusColor = (status: string): string => {
     uploaded: 'default',
     parsing: 'processing',
     parsed: 'blue',
-    indexed: 'green',
-    failed: 'red',
+    indexed: 'success',
+    failed: 'error',
   }
   return colors[status] || 'default'
 }

@@ -338,7 +338,6 @@
                   <a-button
                     v-if="canEditOutlineNow"
                     size="small"
-                    type="primary"
                     :loading="applyingSuggestions"
                     :disabled="adoptedSuggestionIds.length === 0"
                     @click="handleApplyOutlineSuggestions"
@@ -453,7 +452,6 @@
                   <a-button
                     v-if="canCompileSelectedChapter"
                     size="small"
-                    type="primary"
                     @click="goToDivision"
                   >
                     去编制
@@ -627,7 +625,7 @@
             :pagination="false"
             :scroll="{ x: 1080 }"
             row-key="clause_no"
-            size="small"
+            size="middle"
           >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'coverage'">
