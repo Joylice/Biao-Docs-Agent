@@ -199,7 +199,8 @@ class BidState(TypedDict):
     sections: dict[str, str]             # section_id -> markdown 正文
     summaries: dict[str, str]            # section_id -> 摘要（供后续章节引用）
     review_feedback: dict[str, list[Review]]
-    glossary: list[str]                  # 术语表
+    glossary: list[dict]                 # 术语表（阶段 E2：{term, canonical, desc}）
+    retrieved_citations: dict[str, list[dict]]  # 阶段 E3：chapter_no -> 引用溯源列表
     output_docx_path: str | None
 ```
 
@@ -207,7 +208,7 @@ class BidState(TypedDict):
 
 **HITL 设计**：每章 `write` 完成后节点 `interrupt()`，等待用户「通过/改稿/重写」；Checkpointer（Postgres）持久化图状态，支持任务中断后恢复。
 
-**校验节点**：必答要点清单（该章对应 score_points 是否全部应答）、字数下限、★参数不低于招标要求（LLM 比对 + 规则检查）；失败自动重写 ≤2 次。
+**校验节点**：必答要点清单（该章对应 score_points 是否全部应答）、字数下限、★参数不低于招标要求；失败自动重写 ≤2 次。**参数比对校验落地（阶段 E1）**：`validate_node` 接入 `param_check_service.check_chapter_params`——正则断言抽取招标★条款中的参数要求（≥/≤/不低于/至少 等）与章节正文对应数值（万/亿单位归一化后比对），规则比对不确定时 LLM 兜底判定；mock 模式与 LLM 异常一律降级返回空 issues（不阻塞流程）；产出的 issues 并入校验失败原因走既有 write 重试链路。
 
 ### 3.6 人工审阅与重写模块
 
@@ -229,6 +230,8 @@ class BidState(TypedDict):
 **MVP 模板**：单套公司标准模板（封面 + 目录 + 正文样式 + 附表：评分对照表、资质索引表）。
 
 **格式要求驱动排版（2026-08-18）**：导出节点读取最新 tender_file 的 `meta.format_requirements`，经 `format_spec.py` 解析为 docx 参数（正文字体/字号、标题字号、行距、页边距）；内置中文字号映射（小四→12pt、四号→14pt、小三→15pt 等）与行距/边距解析；无法识别项回退默认样式（正文 12pt、行距 1.5、默认页边距），不阻塞导出；读取格式要求失败时降级默认排版。
+
+**导出结构增强（阶段 E4）**：`export_to_word` 新增可选参数 `company_name / benchmark_rows / citations_by_chapter`（均缺省兼容旧调用）：① 封面页（项目名居中大标题 + 公司名 + 编制日期，公司名取 `settings.company_name`/BID_COMPANY_NAME）后分页；② 「目录」标题 + TOC 域（`TOC \o "1-3" \h \z \u`，fldChar begin/separate/end，Word 打开自动更新）；③ 页脚 PAGE 域页码（居中）；④ 章节标题 `page_break_before` 章前分页；⑤ 评分对标附表（「附表 评分对标一览」：条款号/评分项/分值/覆盖度/风险/应对策略，数据来自 `benchmark_service.build_benchmark`）；⑥ 引用溯源标注——章末追加 `【来源：{doc_title} P{page_no}】` 行（数据来自 `proposal_sections.citations` 按章首编号聚合）。export_node 读取引用/对标数据失败时降级不附加，不阻塞导出。
 
 ### 3.8 流式输出模块
 
@@ -276,7 +279,7 @@ class BidState(TypedDict):
 - **AI 辅助生成**（`assist_service`）：仅 assignee，`POST /chapter-assignments/{id}/assist-generate`（body `{prompt, mode: append|overwrite}`）；检索范围 = 项目挂载（库级 ∪ 文档级）∪ 本人个人库素材；上下文 = 前文摘要 + 本章评分点 + 技术需求 + 用户 prompt；复用 generate_chapter 的 on_delta 流式经 WS `section_token`（source=assist）推送；append 追加到现有正文末尾/overwrite 整章覆盖，落库复用双写口径（state.chapters + proposal_sections + 摘要重算）；prompt 与检索素材外发前 redact 脱敏。
 - **暂停机制**：`call_llm_stream` 支持 `asyncio.Event` 取消令牌（每 chunk 检查，mock 模式同样分段支持）；任务注册表 `project_id:chapter_no → Event`，`POST .../assist-generate/stop` 置位 → 已累积部分按 mode 落库（空部分不落库）+ `section_done`（stopped=true）；暂停仅对辅助生成生效，整章工作流生成不支持暂停。
 - **图片插入**：`POST /projects/{pid}/images`（jpg/png/gif/webp ≤10MB，存 MinIO `images/{project_id}/`，返回 storage_key + 签名 URL；GET signed 读限本项目 images 目录防跨项目越权）；前端工具栏上传后在光标处插入 `![名称](url)`，预览态 MarkdownRenderer 渲染；Word 导出（export_service）解析 `![alt](url)` → 拉取 MinIO 字节 → `add_picture` 内嵌（宽度上限 15cm），拉取失败降级为文本说明不阻塞。
-- **章节级批注**：`chapter_annotations` 表（迁移 0015），`GET/POST /chapter-assignments/{id}/annotations`（项目成员可读，assignee/owner 可写，时间正序，附批注人姓名）；与审核打回意见字段并存；前端编辑器「批注」抽屉（留言列表 + 输入框）。
+- **章节级批注**：`chapter_annotations` 表（迁移 0015，阶段 E5 迁移 0016 补 `updated_at`），`GET/POST /chapter-assignments/{id}/annotations`（项目成员可读，assignee/owner 可写，时间正序，附批注人姓名）；与审核打回意见字段并存；前端编辑器「批注」抽屉（留言列表 + 输入框）。**章节维度批注 CRUD（阶段 E5）**：`GET/POST /projects/{pid}/chapters/{chapter_no}/annotations` 与 `PUT/DELETE .../annotations/{annotation_id}`（`app/api/annotations.py`）——写操作先项目成员校验 + `check_chapter_editable` 口径（无权限 403「无该章节批注权限」），PUT/DELETE 再限批注作者本人或项目 owner；content 1-2000 字；审计 annotation.create/update/delete（target_type=chapter_annotation）；ReviewView 以章级折叠面板懒加载展示与增删改。
 
 **审阅增强与意见回派（2026-08-18）**：ReviewView 左侧 a-tree 全量 2 级目录（章 + 子节，子节仅导航不可选，审阅操作仍章级与生成粒度一致），章卡片标「提交人：XXX」（无分工显示「AI 生成/未分配」）；confirm-review feedback 意见回派：按 chapter_no/标题匹配大纲后查分工，命中且有 assignee → 该 assignment 置 rejected + review_comment + 推送 task_reviewed（assignee 在分工页看到打回可重编），并从 feedback 移除避免重复重写；无 assignee 章节保持现有 rewrite 链路；全部意见均回派后 decision.action 改 `redispatched`（review_route 返回 review 自环，重新 interrupt 等待复审，响应 next_phase=redispatch），避免空 feedback 进入 rewrite 报错。
 
@@ -293,11 +296,11 @@ class BidState(TypedDict):
 
 **职责**：评审通过方案入版本库（下载查阅）与归档公司知识库供检索。
 
-**版本快照**（`version_service`）：`proposal_versions` 表（迁移 0015，UNIQUE(project_id,version)，version 续号）；快照 = 导出 Word（复用 export_to_word，含格式要求排版）+ Markdown 源（章/子节结构重建）双产物入 MinIO `versions/{project_id}/`。**自动触发**：division 审核 approved 后 `maybe_auto_snapshot` 检查「无 pending/in_progress/submitted 且至少 1 章 approved」即快照（created_by=NULL 标记自动，失败 rollback 不阻塞审核）；owner 可手动 `POST /projects/{pid}/versions`（附可选备注）。下载：`GET .../versions/{id}/download?type=docx|source` 返签名 URL。
+**版本快照**（`version_service`）：`proposal_versions` 表（迁移 0015，UNIQUE(project_id,version)，version 续号）；快照 = 导出 Word（复用 export_to_word，含格式要求排版）+ Markdown 源（章/子节结构重建）双产物入 MinIO `versions/{project_id}/`；**结构化快照（阶段 E5，迁移 0016 加 `snapshot_json`）**：快照同时落 `{outline, chapters}` JSON，供版本回滚。**版本回滚（阶段 E5）**：`POST .../versions/{id}/rollback`（仅 owner）——按 `snapshot_json` 回写章级 `proposal_sections`（content_md + status=draft，缺失章节按大纲标题新建）并经 `workflow_runtime.update_state` 同步图状态；无结构化快照的旧版本 400「仅支持 E5 后创建的版本」；审计 version.rollback。**自动触发**：division 审核 approved 后 `maybe_auto_snapshot` 检查「无 pending/in_progress/submitted 且至少 1 章 approved」即快照（created_by=NULL 标记自动，失败 rollback 不阻塞审核）；owner 可手动 `POST /projects/{pid}/versions`（附可选备注）。下载：`GET .../versions/{id}/download?type=docx|source` 返签名 URL。
 
 **归档**：`POST .../versions/{id}/archive`（仅 owner，body kb_id 限公司级库否则 400）：创建全局素材记录（documents：project_id=NULL、doc_type=kb_material、kb_id=目标库、标题「归档-{项目名}-v{n}」，project_id=NULL 保证 kb/search 全局检索可命中）+ 审计 proposal.archive + 入队现有 index 任务分块向量化；归档文档删除不影响版本记录。
 
-**前端**：ReviewView 底部「版本库」卡片：版本列表（版本号/自动快照标记/备注/创建人/时间）+ 手动快照弹窗（owner）+ 下载 Word/Markdown 源 + 归档选库弹窗（仅列公司级库）。
+**前端**：ReviewView 底部「版本库」卡片：版本列表（版本号/自动快照标记/备注/创建人/时间）+ 手动快照弹窗（owner）+ 下载 Word/Markdown 源 + 归档选库弹窗（仅列公司级库）；**阶段 E5**：版本行追加「回滚」danger 按钮（仅 owner，Modal.confirm 二次确认「将用该版本快照覆盖当前全部章节且状态回退草稿」，成功后刷新版本列表/工作流状态/清空本地草稿）+ 章节批注折叠面板（懒加载、作者/owner 可编辑删除、403 权限提示）。
 
 **表**：`proposal_versions`（迁移 0015）。
 
@@ -604,10 +607,15 @@ CREATE TABLE proposal_versions (
 | POST | /projects/{pid}/chapter-assignments/{id}/assist-generate/stop | 暂停辅助生成（2026-08-18：仅 assignee；置位取消令牌，生成端点保留已生成部分按 mode 落库；无进行中任务返 stopped=false） |
 | GET | /projects/{pid}/chapter-assignments/{id}/annotations | 章节批注列表（2026-08-18：项目成员可读；按时间正序，附批注人姓名） |
 | POST | /projects/{pid}/chapter-assignments/{id}/annotations | 新增批注（2026-08-18：assignee/owner 可写，其余成员 403；body.content 非空；审计 division.annotate） |
+| GET | /projects/{pid}/chapters/{chapter_no}/annotations | 章节批注列表（阶段 E5：项目成员可读，按 created_at 正序，附作者姓名/updated_at） |
+| POST | /projects/{pid}/chapters/{chapter_no}/annotations | 新增章节批注（阶段 E5：项目成员 + check_chapter_editable 口径可写，否则 403；content 1-2000；审计 annotation.create） |
+| PUT | /projects/{pid}/chapters/{chapter_no}/annotations/{annotation_id} | 编辑批注（阶段 E5：写权限校验后仅批注作者或项目 owner 可改，否则 403；审计 annotation.update） |
+| DELETE | /projects/{pid}/chapters/{chapter_no}/annotations/{annotation_id} | 删除批注（阶段 E5：同 PUT 权限口径；审计 annotation.delete） |
 | GET | /projects/{pid}/versions | 版本列表（2026-08-18：项目成员可读；version 倒序；created_by NULL = 自动快照标记 auto=true） |
 | POST | /projects/{pid}/versions | 手动版本快照（2026-08-18：**仅 owner**；body.snapshot_note 可选；Word + Markdown 源入 MinIO，version 续号；无章节内容 4000；审计 version.snapshot） |
 | GET | /projects/{pid}/versions/{id}/download | 版本下载（2026-08-18：项目成员；query type=docx\|source 二选一，返签名 URL） |
 | POST | /projects/{pid}/versions/{id}/archive | 归档公司知识库（2026-08-18：**仅 owner**；body.kb_id 限公司级库否则 400；登记全局素材（project_id=NULL）+ 入队分块向量化；审计 proposal.archive） |
+| POST | /projects/{pid}/versions/{id}/rollback | 版本回滚（阶段 E5：**仅 owner**；按 snapshot_json 回写章级 proposal_sections（status=draft）并同步图状态，返回 chapters_restored；无结构化快照 400；审计 version.rollback） |
 | GET | /workbench/summary | 工作台汇总（2026-08-20：登录即可；单端点返回双视图数据——我的任务分桶（待领取/编制中/被打回/已提审/已通过，含项目名与章节号）、我的参与项目进度（total/approved/percent/状态分布 + phase 附注）；owner 额外返回 owner_review_pending 待审核清单，非 owner 返空） |
 
 **前端 HITL 交互契约**（2026-08-16 补）：所有 confirm 端点均校验 pending interrupt，前端不得直接调用，须先确保工作流停在对应 interrupt：
@@ -664,6 +672,7 @@ graph.add_edge("export", END)
 1. **章节间上下文注入**：每章生成后提取 ≤200 字摘要存 `state.chapter_summaries`（去 Markdown 标记截断，`extract_chapter_summary`），`write_node` 按大纲顺序将已完成章节摘要注入下一章提示词（`chapter.yaml` 新增全文一致性约束：术语统一/编号连续/不得复述/衔接自然）；rewrite 后同步刷新摘要。
 2. **评分点覆盖矩阵**：`coverage_service.compute_coverage` 比对 confirmed 评分点与大纲 `covered_clauses`；未覆盖评分点注入各章提示词补写（supplement_points），`coverage_rate` 随 progress 事件推送前端。
 3. **全文一致性检查**：`consistency_check_node`（integrate 前）经 `consistency_service.check_consistency` 一次 LLM 调用检查术语冲突/重复段落/编号断裂；可修复 issues 按章聚合意见走一轮定向重写（复用 rewrite 链路，最多 1 次，落库+section_done 事件）；不可修复/已重写过/检查异常 → warning 事件降级，不阻塞导出；mock 模式直通空 issues（E2E 确定性）。
+4. **质量增强三件套（阶段 E）**：① **参数比对校验**（E1）——validate_node 接入 `param_check_service.check_chapter_params`（★条款正则断言抽取 + 正文数值比对，万/亿归一化，LLM 兜底，mock/异常降级 pass），issues 并入校验失败走 write 重试；② **术语表**（E2）——招标文件解析 schema 提取 `glossary: [{term, canonical, desc}]` 存 documents.meta 并注入 state.glossary，integrate 节点 unify_terms 统一术语（mock 直通），chapter.yaml `{glossary}` 段注入章节提示词；③ **引用溯源**（E3）——retrieve_node 采集检索命中 `{doc_title, page_no, chunk_id, score}` 入 state.retrieved_citations，write_node 落库章级 `proposal_sections.citations`，供前端展示与 E4 导出标注。
 
 **大纲节点输出契约（2026-08-16 增强）**：`generate_outline_node` 的 LLM 响应 schema 为 `{"chapters": [{chapter_no, title, sections, covered_clauses}]}`，`covered_clauses` 为本章节关联的评分点条款号数组（必填，可为空数组——前置章节如项目概述无关联条款；骨架章节不得为空），用于评分点覆盖校验与追溯。提示词正文（prompts/outline.yaml，2026-08-16 两次优化）：**核心章节按最终定稿骨架模板组织**（顺序与命名保持，子节由技术需求推导）——①需求分析（按性能/信创/安全/对接/实施交付类别归纳全部技术需求）②业务流程设计（巡检/告警处置/数据流转等）③总体架构设计（架构、选型、信创适配、性能指标支撑）④详细功能说明（功能类需求逐项实现要点）⑤对接方案（外部系统与设备接口/协议/联调）⑥培训与运维服务方案（培训、运维保障、实施交付）；无对应技术需求内容时允许精简合并相关章节，可补充项目概述等前置章节。**技术需求为核心唯一依据填充章节内容**——全部技术需求完整映射无遗漏；**评分点仅作追溯辅助**（covered_clauses 标注），不得以评分项/分值划分章节，不得直接采用评分项名称作为章节标题，无对应技术需求的评分项并入最相关章节；user_prompt 中技术需求优先于评分点呈现。大纲整段（含 covered_clauses）随 `proposal_skeletons.tree` JSONB 持久化，下游 confirm-outline HITL 可读取并编辑。
 
@@ -699,8 +708,8 @@ graph.add_edge("export", END)
 |---|---|---|---|
 | 招标解析器 | 评标办法原文 | JSON（评分点/资格/需求） | JSON Schema、禁止臆测分值 |
 | 骨架规划器 | 技术需求（核心）+评分点（追溯） | 章节树 JSON | 定稿骨架模版（2026-08-16 广东施组定稿）：需求分析/业务流程设计/总体架构设计/详细功能说明/对接方案/培训与运维服务方案 六章，顺序命名保持；技术需求全映射无遗漏；评分点经 covered_clauses 追溯、禁止评分项名称作章节标题 |
-| 章节撰写器 | 章节计划+检索素材+前文摘要+高风险对标要点（阶段 D：`{benchmark_high_risk}` 段，高风险评分点「- 条款号: 策略」行，脱敏后外发，缺省回退「（无）」） | Markdown 正文 | 只用检索素材、参数不低于★要求；「详细功能说明」类章节按模块固定结构撰写（系统概述→需求设计→功能架构→核心功能点[功能说明/界面设计/业务流程设计]）；高风险评分点须针对性正面响应 |
-| 校验器 | 正文+评分要求 | pass/fail+issues | 必答要点/字数/参数检查 |
+| 章节撰写器 | 章节计划+检索素材+前文摘要+高风险对标要点（阶段 D：`{benchmark_high_risk}` 段，高风险评分点「- 条款号: 策略」行，脱敏后外发，缺省回退「（无）」）+术语表（阶段 E2：`{glossary}` 段，term/canonical/desc 行，缺省回退「（无）」） | Markdown 正文 | 只用检索素材、参数不低于★要求；术语按术语表规范表述；「详细功能说明」类章节按模块固定结构撰写（系统概述→需求设计→功能架构→核心功能点[功能说明/界面设计/业务流程设计]）；高风险评分点须针对性正面响应 |
+| 校验器 | 正文+评分要求 | pass/fail+issues | 必答要点/字数/参数检查（阶段 E1：param_check_service 正则断言抽取+万/亿归一化规则比对，不确定时 LLM 兜底，mock/异常降级 pass） |
 | 批注重写器 | 原文+反馈+素材 | 重写后 Markdown | 仅改反馈涉及内容 |
 
 **大纲定稿模版说明**（2026-08-16 依《广东施组模版》固化，提示词层实现，schema 不变）：

@@ -163,6 +163,113 @@
                 v-else
                 :source="displayContent"
               />
+              <!-- 章节批注区：面板展开时懒加载该章批注列表 -->
+              <a-collapse
+                v-model:active-key="annotationPanelKeys"
+                class="annotation-panel"
+                @change="onAnnotationPanelChange"
+              >
+                <a-collapse-panel
+                  :key="activeChapter"
+                  :header="`批注（${annotationCountOf(activeChapter)}）`"
+                >
+                  <a-spin :spinning="annotationsLoading">
+                    <a-empty
+                      v-if="annotationListOf(activeChapter).length === 0"
+                      description="暂无批注"
+                    />
+                    <div
+                      v-else
+                      class="annotation-list"
+                    >
+                      <div
+                        v-for="item in annotationListOf(activeChapter)"
+                        :key="item.id"
+                        class="annotation-item"
+                      >
+                        <div class="annotation-item__header">
+                          <span class="annotation-item__author">{{ item.created_by_name || '未知用户' }}</span>
+                          <span class="annotation-item__time">{{ formatTime(item.created_at) }}</span>
+                          <a-space
+                            v-if="canManageAnnotation(item)"
+                            size="small"
+                            class="annotation-item__ops"
+                          >
+                            <a-button
+                              size="small"
+                              type="link"
+                              @click="startEditAnnotation(item)"
+                            >
+                              编辑
+                            </a-button>
+                            <a-popconfirm
+                              title="确认删除该条批注？"
+                              ok-text="删除"
+                              cancel-text="取消"
+                              @confirm="handleDeleteAnnotation(activeChapter, item.id)"
+                            >
+                              <a-button
+                                size="small"
+                                type="link"
+                                danger
+                              >
+                                删除
+                              </a-button>
+                            </a-popconfirm>
+                          </a-space>
+                        </div>
+                        <a-textarea
+                          v-if="editingAnnotationId === item.id"
+                          v-model:value="editingAnnotationContent"
+                          :rows="3"
+                          :maxlength="2000"
+                        />
+                        <div
+                          v-if="editingAnnotationId === item.id"
+                          class="annotation-item__edit-ops"
+                        >
+                          <a-button
+                            size="small"
+                            @click="editingAnnotationId = ''"
+                          >
+                            取消
+                          </a-button>
+                          <a-button
+                            size="small"
+                            type="primary"
+                            :loading="updatingAnnotation"
+                            @click="handleUpdateAnnotation(activeChapter, item.id)"
+                          >
+                            保存
+                          </a-button>
+                        </div>
+                        <a-typography-paragraph
+                          v-else
+                          :content="item.content"
+                          class="annotation-item__content"
+                        />
+                      </div>
+                    </div>
+                    <div class="annotation-add">
+                      <a-textarea
+                        v-model:value="newAnnotation"
+                        :rows="2"
+                        :maxlength="2000"
+                        placeholder="输入批注内容（1-2000 字），例如：此处需补充实施里程碑"
+                      />
+                      <a-button
+                        type="primary"
+                        size="small"
+                        :loading="addingAnnotation"
+                        :disabled="!newAnnotation.trim()"
+                        @click="handleAddAnnotation(activeChapter)"
+                      >
+                        添加批注
+                      </a-button>
+                    </div>
+                  </a-spin>
+                </a-collapse-panel>
+              </a-collapse>
             </a-card>
             <div class="feedback-hint">
               <InfoCircleOutlined /> 编辑保存后写入正式方案内容；或提交「反馈重写」触发 AI 重写
@@ -280,6 +387,15 @@
                     >
                       归档
                     </a-button>
+                    <a-button
+                      v-if="isOwner"
+                      size="small"
+                      danger
+                      :loading="rollingBackId === item.id"
+                      @click="confirmRollback(item)"
+                    >
+                      回滚
+                    </a-button>
                   </a-space>
                 </div>
               </a-list-item>
@@ -374,10 +490,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, h, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
-import { InfoCircleOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons-vue'
+import { message, Modal } from 'ant-design-vue'
+import {
+  ExclamationCircleOutlined,
+  InfoCircleOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+} from '@ant-design/icons-vue'
 import api from '@/api/client'
 import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
 import PageContainer from '@/components/PageContainer.vue'
@@ -431,6 +552,17 @@ interface VersionItem {
   created_at: string | null
 }
 
+/** 章节批注条目（GET /projects/{pid}/chapters/{chapter_no}/annotations） */
+interface AnnotationItem {
+  id: string
+  chapter_no: string
+  content: string
+  created_by: string
+  created_by_name: string
+  created_at: string
+  updated_at: string | null
+}
+
 /** 公司级知识库选项（归档选库弹窗） */
 interface KbBaseOption {
   value: string
@@ -468,7 +600,7 @@ const editDrafts = ref<Record<string, string>>({})
 const feedbackDrawerOpen = ref(false)
 const feedbackComment = ref('')
 
-// 版本库：列表/手动快照/下载/归档公司库
+// 版本库：列表/手动快照/下载/归档公司库/回滚
 const isOwner = ref(false)
 const versions = ref<VersionItem[]>([])
 const snapshotModalOpen = ref(false)
@@ -479,6 +611,18 @@ const archiving = ref(false)
 const archiveKbId = ref<string | undefined>(undefined)
 const archiveTarget = ref<VersionItem | null>(null)
 const companyBases = ref<KbBaseOption[]>([])
+const rollingBackId = ref('')
+
+// 章节批注：按章缓存列表（面板展开时懒加载），各章独立维护
+const annotationMap = ref<Record<string, AnnotationItem[]>>({})
+const annotationLoaded = ref<Record<string, boolean>>({})
+const annotationPanelKeys = ref<string[]>([])
+const annotationsLoading = ref(false)
+const newAnnotation = ref('')
+const addingAnnotation = ref(false)
+const editingAnnotationId = ref('')
+const editingAnnotationContent = ref('')
+const updatingAnnotation = ref(false)
 
 const chapterKeys = computed(() => Object.keys(chapters.value))
 const polling = computed(() => pollTimer !== null)
@@ -585,6 +729,124 @@ const handleSaveEditDraft = async () => {
   }
 }
 
+// ---------- 章节批注 ----------
+
+const annotationListOf = (chapterNo: string): AnnotationItem[] =>
+  annotationMap.value[chapterNo] || []
+
+const annotationCountOf = (chapterNo: string): number =>
+  annotationListOf(chapterNo).length
+
+/** 批注编辑/删除权限：作者本人或项目 owner（后端兜底，此处仅控制按钮可见性） */
+const canManageAnnotation = (item: AnnotationItem): boolean =>
+  item.created_by === currentUserId.value || isOwner.value
+
+/** 批注面板展开：首次展开时懒加载该章批注（时间正序由后端保证） */
+const onAnnotationPanelChange = (keys: string | string[]) => {
+  const active = Array.isArray(keys) ? keys : [keys]
+  for (const no of active) {
+    if (no && !annotationLoaded.value[no]) loadAnnotations(no)
+  }
+}
+
+const loadAnnotations = async (chapterNo: string) => {
+  annotationsLoading.value = true
+  try {
+    const res = await api.get(`/projects/${projectId}/chapters/${chapterNo}/annotations`)
+    if (res.data?.code === 0) {
+      annotationMap.value[chapterNo] = res.data.data.items || []
+      annotationLoaded.value[chapterNo] = true
+    } else {
+      message.error(res.data?.message || '批注加载失败')
+    }
+  } catch {
+    message.error('批注加载失败')
+  } finally {
+    annotationsLoading.value = false
+  }
+}
+
+/** 添加批注（仅章节负责人/项目负责人可写，后端强制；403 提示无权限） */
+const handleAddAnnotation = async (chapterNo: string) => {
+  const content = newAnnotation.value.trim()
+  if (!chapterNo || !content) return
+  addingAnnotation.value = true
+  try {
+    const res = await api.post(`/projects/${projectId}/chapters/${chapterNo}/annotations`, { content })
+    if (res.data?.code === 0) {
+      newAnnotation.value = ''
+      await loadAnnotations(chapterNo)
+    } else {
+      message.error(res.data?.message || '批注添加失败')
+    }
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status
+    if (status === 403) {
+      message.error('无该章节批注权限（仅章节负责人/项目负责人可写）')
+    } else {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      message.error(msg || '批注添加失败')
+    }
+  } finally {
+    addingAnnotation.value = false
+  }
+}
+
+const startEditAnnotation = (item: AnnotationItem) => {
+  editingAnnotationId.value = item.id
+  editingAnnotationContent.value = item.content
+}
+
+/** 更新批注（仅作者本人或项目负责人，后端强制） */
+const handleUpdateAnnotation = async (chapterNo: string, annotationId: string) => {
+  const content = editingAnnotationContent.value.trim()
+  if (!content) {
+    message.warning('批注内容不能为空')
+    return
+  }
+  updatingAnnotation.value = true
+  try {
+    const res = await api.put(
+      `/projects/${projectId}/chapters/${chapterNo}/annotations/${annotationId}`,
+      { content },
+    )
+    if (res.data?.code === 0) {
+      editingAnnotationId.value = ''
+      const items = annotationMap.value[chapterNo] || []
+      const idx = items.findIndex((it) => it.id === annotationId)
+      if (idx >= 0) items[idx] = { ...items[idx], ...res.data.data }
+      message.success('批注已更新')
+    } else {
+      message.error(res.data?.message || '批注更新失败')
+    }
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '批注更新失败')
+  } finally {
+    updatingAnnotation.value = false
+  }
+}
+
+/** 删除批注（仅作者本人或项目负责人，后端强制） */
+const handleDeleteAnnotation = async (chapterNo: string, annotationId: string) => {
+  try {
+    const res = await api.delete(
+      `/projects/${projectId}/chapters/${chapterNo}/annotations/${annotationId}`,
+    )
+    if (res.data?.code === 0) {
+      annotationMap.value[chapterNo] = (annotationMap.value[chapterNo] || []).filter(
+        (it) => it.id !== annotationId,
+      )
+      message.success('批注已删除')
+    } else {
+      message.error(res.data?.message || '批注删除失败')
+    }
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '批注删除失败')
+  }
+}
+
 let pollTimer: number | null = null
 
 const stopPolling = () => {
@@ -639,7 +901,7 @@ const fetchSubmitters = async () => {
   }
 }
 
-/** 版本库列表刷新（快照/归档成功后复用） */
+/** 版本库列表刷新（快照/归档/回滚成功后复用） */
 const fetchVersions = async () => {
   try {
     const res = await api.get(`/projects/${projectId}/versions`)
@@ -649,7 +911,7 @@ const fetchVersions = async () => {
   }
 }
 
-/** 项目 owner 判定（手动快照/归档入口可见性） */
+/** 项目 owner 判定（手动快照/归档/回滚入口可见性） */
 const fetchOwnerFlag = async () => {
   try {
     await fetchCurrentUserRole()
@@ -673,7 +935,7 @@ const openSnapshotModal = () => {
   snapshotModalOpen.value = true
 }
 
-/** 手动快照（仅 owner）：POST versions 后续号入库 */
+/** 手动快照（仅 owner）：POST versions 续号入库 */
 const handleCreateSnapshot = async () => {
   snapshotting.value = true
   try {
@@ -749,6 +1011,50 @@ const handleArchive = async () => {
     message.error(msg || '归档失败')
   } finally {
     archiving.value = false
+  }
+}
+
+/** 版本回滚二次确认（仅 owner）：快照覆盖当前全部章节内容，章节状态回退草稿 */
+const confirmRollback = (item: VersionItem) => {
+  Modal.confirm({
+    title: '回滚版本',
+    content: `将用版本 v${item.version} 的快照覆盖当前全部章节内容，且章节状态回退为草稿。确认回滚？`,
+    okText: '确认回滚',
+    cancelText: '取消',
+    okButtonProps: { danger: true },
+    icon: () => h(ExclamationCircleOutlined),
+    onOk: () => handleRollback(item),
+  })
+}
+
+/** 执行回滚：成功后刷新版本列表与章节正文数据（复用 fetchStatus/applyStatus） */
+const handleRollback = async (item: VersionItem) => {
+  rollingBackId.value = item.id
+  try {
+    const res = await api.post(`/projects/${projectId}/versions/${item.id}/rollback`)
+    if (res.data?.code !== 0) {
+      message.error(res.data?.message || '版本回滚失败')
+      return
+    }
+    const restored = res.data.data?.chapters_restored ?? 0
+    await fetchVersions()
+    // 回滚后章节正文与状态已变化：重拉状态并清空本地编辑草稿
+    const data = await fetchStatus()
+    if (data) {
+      applyStatus(data)
+      editDrafts.value = {}
+    }
+    message.success(`回滚成功，已恢复 ${restored} 个章节内容`)
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status
+    if (status === 403) {
+      message.error('仅项目负责人可回滚')
+    } else {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      message.error(msg || '版本回滚失败')
+    }
+  } finally {
+    rollingBackId.value = ''
   }
 }
 
@@ -1025,6 +1331,66 @@ onUnmounted(() => {
   margin-top: 8px;
   font-size: 12px;
   color: var(--text-secondary, #999);
+}
+
+/* 章节批注区 */
+.annotation-panel {
+  margin-top: 16px;
+  background: transparent;
+}
+
+.annotation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.annotation-item {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color, #f0f0f0);
+  border-radius: 6px;
+  background: var(--bg-block, rgba(0, 0, 0, 0.02));
+}
+
+.annotation-item__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.annotation-item__author {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.annotation-item__time {
+  font-size: 12px;
+  color: var(--text-secondary, #999);
+}
+
+.annotation-item__ops {
+  margin-left: auto;
+}
+
+.annotation-item__content {
+  margin-bottom: 0;
+  white-space: pre-wrap;
+}
+
+.annotation-item__edit-ops {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.annotation-add {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
 }
 
 .actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px; }

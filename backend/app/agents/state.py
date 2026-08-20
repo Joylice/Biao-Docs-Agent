@@ -17,6 +17,8 @@ class BidState(TypedDict, total=False):
     tech_requirements: list[dict]
     project_name: str
     tender_no: str
+    # 阶段 E2 术语表：[{term, canonical, desc}]，parse 节点从招标文件 meta 载入
+    glossary: list[dict]
 
     # ── 大纲 ──
     outline: list[dict]  # [{chapter_no, title, sections: [...]}]
@@ -30,6 +32,8 @@ class BidState(TypedDict, total=False):
     chapters: Annotated[dict[str, str], operator.or_]
     current_chapter: str
     retrieved_context: str  # 当前章节 RAG 检索素材
+    # 阶段 E3 引用溯源：当前章节检索命中 [{chunk_id, doc_title, page_no}]，随章节落库
+    retrieved_citations: list[dict]
     validate_retries: int  # 校验失败重试计数（≤2）
     validation_ok: bool
     # 章节间上下文：{chapter_no: {title, summary}}，每章生成后提取 ≤200 字摘要

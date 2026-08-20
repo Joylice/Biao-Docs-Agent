@@ -1,6 +1,7 @@
 """节点函数单测 — mock LLM/DB/事件."""
 
 import uuid
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -54,31 +55,43 @@ class FakeDB:
         pass
 
 
+# 阶段 E1 后 validate_node 为 async；参数比对隔离为无 issue
+# （其自身单测在 test_param_check_service.py）
+_NO_PARAM_ISSUE = patch(
+    "app.services.param_check_service.check_chapter_params",
+    AsyncMock(return_value=[]),
+)
+
+
 class TestValidateNode:
     """validate 节点规则校验."""
 
-    def test_short_content_fails(self) -> None:
+    @_NO_PARAM_ISSUE
+    async def test_short_content_fails(self) -> None:
         state = {"current_chapter": "1", "chapters": {"1": "短"}, "validate_retries": 0}
-        result = nodes.validate_node(state)
+        result = await nodes.validate_node(state)
         assert result["validation_ok"] is False
         assert result["validate_retries"] == 1
 
-    def test_long_content_passes(self) -> None:
+    @_NO_PARAM_ISSUE
+    async def test_long_content_passes(self) -> None:
         content = "# 章节\n\n" + "内容" * 200
         state = {"current_chapter": "1", "chapters": {"1": content}, "validate_retries": 0}
-        result = nodes.validate_node(state)
+        result = await nodes.validate_node(state)
         assert result["validation_ok"] is True
 
-    def test_retries_capped(self) -> None:
+    @_NO_PARAM_ISSUE
+    async def test_retries_capped(self) -> None:
         state = {
             "current_chapter": "1",
             "chapters": {"1": "短"},
             "validate_retries": nodes.MAX_VALIDATE_RETRIES,
         }
-        result = nodes.validate_node(state)
+        result = await nodes.validate_node(state)
         assert result["validation_ok"] is True  # 达到上限后放行
 
-    def test_star_score_point_coverage(self) -> None:
+    @_NO_PARAM_ISSUE
+    async def test_star_score_point_coverage(self) -> None:
         content = "# 章节\n\n" + "内容" * 200
         state = {
             "current_chapter": "1",
@@ -86,8 +99,24 @@ class TestValidateNode:
             "validate_retries": 0,
             "score_points": [{"clause_no": "1", "item": "技术方案完整性", "is_star": True}],
         }
-        result = nodes.validate_node(state)
+        result = await nodes.validate_node(state)
         assert result["validation_ok"] is False  # 未覆盖 ★ 评分点
+
+    async def test_param_mismatch_fails(self) -> None:
+        """阶段 E1：参数比对 issue 走同一重试链路."""
+        with patch(
+            "app.services.param_check_service.check_chapter_params",
+            AsyncMock(return_value=["参数不符评分点 2：要求不低于500路"]),
+        ):
+            content = "# 章节\n\n" + "内容" * 200
+            state = {
+                "current_chapter": "1",
+                "chapters": {"1": content},
+                "validate_retries": 0,
+            }
+            result = await nodes.validate_node(state)
+            assert result["validation_ok"] is False
+            assert result["validate_retries"] == 1
 
 
 class TestRoutes:

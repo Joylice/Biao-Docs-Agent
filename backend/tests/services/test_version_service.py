@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.core.exceptions import ValidationError
+from app.models.proposal import ProposalSection, ProposalVersion
 from app.services import version_service
 
 
@@ -76,6 +77,11 @@ async def test_create_snapshot_version_increment(monkeypatch) -> None:
     assert record.storage_key_source == "versions/pid/p.md"
     assert record.snapshot_note == "手动快照"
     assert record.created_by is not None
+    # 阶段 E5：结构化快照落库（回滚数据源）
+    assert record.snapshot_json == {
+        "outline": [{"chapter_no": "1", "title": "概述"}],
+        "chapters": {"1": "内容"},
+    }
     export_mock.assert_awaited_once()
 
 
@@ -146,3 +152,91 @@ async def test_maybe_auto_snapshot_failure_not_blocking(monkeypatch) -> None:
     )
     assert await version_service.maybe_auto_snapshot(session, uuid.uuid4(), "项目") is None
     session.rollback.assert_awaited()
+
+
+# ── 阶段 E5：版本回滚 ──
+
+
+def _version_record(pid: uuid.UUID, snapshot_json: dict | None) -> ProposalVersion:
+    return ProposalVersion(
+        id=uuid.uuid4(),
+        project_id=pid,
+        version=1,
+        snapshot_note=None,
+        storage_key_docx="versions/x/a.docx",
+        storage_key_source="versions/x/a.md",
+        created_by=None,
+        snapshot_json=snapshot_json,
+    )
+
+
+@pytest.mark.asyncio
+async def test_rollback_version_writes_back_sections(monkeypatch) -> None:
+    """回滚：章级行内容回写 + 状态置 draft + 图状态同步."""
+    pid = uuid.uuid4()
+    section = ProposalSection(
+        project_id=pid,
+        section_id="1",
+        title="概述",
+        content_md="旧内容",
+        status="approved",
+    )
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = section
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.execute = AsyncMock(return_value=result)
+    update_state = AsyncMock()
+    monkeypatch.setattr(version_service.workflow_runtime, "update_state", update_state)
+
+    record = _version_record(
+        pid,
+        {
+            "outline": [{"chapter_no": "1", "title": "概述", "sections": []}],
+            "chapters": {"1": "恢复的正文"},
+        },
+    )
+    count = await version_service.rollback_version(session, pid, record)
+    assert count == 1
+    assert section.content_md == "恢复的正文"
+    assert section.status == "draft"
+    update_state.assert_awaited_once()
+    values = update_state.await_args.args[1]
+    assert values["chapters"] == {"1": "恢复的正文"}
+
+
+@pytest.mark.asyncio
+async def test_rollback_version_creates_missing_section(monkeypatch) -> None:
+    """章节行不存在时新建（标题取自大纲）."""
+    pid = uuid.uuid4()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.execute = AsyncMock(return_value=result)
+    monkeypatch.setattr(
+        version_service.workflow_runtime, "update_state", AsyncMock()
+    )
+    record = _version_record(
+        pid,
+        {
+            "outline": [{"chapter_no": "2", "title": "架构", "sections": []}],
+            "chapters": {"2": "正文"},
+        },
+    )
+    count = await version_service.rollback_version(session, pid, record)
+    assert count == 1
+    added = session.add.call_args.args[0]
+    assert isinstance(added, ProposalSection)
+    assert added.title == "架构"
+    assert added.content_md == "正文"
+
+
+@pytest.mark.asyncio
+async def test_rollback_version_requires_snapshot_json() -> None:
+    """旧版本无结构化快照 → 拒绝回滚."""
+    pid = uuid.uuid4()
+    with pytest.raises(ValidationError):
+        await version_service.rollback_version(
+            AsyncMock(), pid, _version_record(pid, None)
+        )

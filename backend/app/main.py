@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import (
+    annotations,
     audit,
     auth,
     benchmark,
@@ -100,6 +101,7 @@ app.include_router(documents.router, prefix=f"{settings.api_prefix}/projects", t
 app.include_router(requirements.router, prefix=f"{settings.api_prefix}/projects", tags=["技术需求"])
 app.include_router(workflow.router, prefix=f"{settings.api_prefix}/projects", tags=["工作流"])
 app.include_router(division.router, prefix=f"{settings.api_prefix}/projects", tags=["分工协作"])
+app.include_router(annotations.router, prefix=f"{settings.api_prefix}/projects", tags=["章节批注"])
 app.include_router(benchmark.router, prefix=f"{settings.api_prefix}/projects", tags=["评分对标"])
 app.include_router(workbench.router, prefix=f"{settings.api_prefix}/workbench", tags=["工作台"])
 app.include_router(versions.router, prefix=f"{settings.api_prefix}/projects", tags=["版本库"])

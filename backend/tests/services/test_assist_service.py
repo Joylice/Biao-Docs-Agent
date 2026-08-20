@@ -93,7 +93,7 @@ class TestAssistGenerate:
                 return "已生成的部分"
             return "新生成的正文内容"
 
-        async def fake_upsert(db, pid, chapter_no, title, content, status=None):
+        async def fake_upsert(db, pid, chapter_no, title, content, status=None, citations=None):
             captured["sections"].append((chapter_no, content, status))
 
         async def fake_publish(pid, event):

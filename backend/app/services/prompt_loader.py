@@ -57,6 +57,7 @@ def load_chapter_prompt(
     prior_summaries: str = "",
     supplement_points: str = "",
     benchmark_high_risk: str = "",
+    glossary: str = "",
 ) -> tuple[str, str]:
     """加载章节生成提示词模板."""
     config = _load_template("chapter")
@@ -73,6 +74,7 @@ def load_chapter_prompt(
         prior_summaries=prior_summaries,
         supplement_points=supplement_points,
         benchmark_high_risk=benchmark_high_risk or "（无）",
+        glossary=glossary or "（无）",
     )
     return system_prompt, user_prompt
 
@@ -89,6 +91,18 @@ def load_review_prompt(
     user_prompt = user_prompt_template.format(
         chapter_summary=chapter_summary,
         score_points=score_points,
+    )
+    return system_prompt, user_prompt
+
+
+def load_param_check_prompt(assertion: str, content_excerpt: str) -> tuple[str, str]:
+    """加载参数比对校验提示词模板（阶段 E1：review.yaml param_check 段）."""
+    config = _load_template("review")
+    system_prompt = config.get("param_check_system", "")
+    user_prompt_template = config.get("param_check_user", "")
+    user_prompt = user_prompt_template.format(
+        assertion=assertion,
+        content_excerpt=content_excerpt,
     )
     return system_prompt, user_prompt
 

@@ -165,6 +165,7 @@ async def generate_chapter(
     prior_summaries: list[dict] | None = None,
     supplement_points: list[dict] | None = None,
     benchmark_high_risk: list[dict] | None = None,
+    glossary: list[dict] | None = None,
     extra_instruction: str = "",
     stop_event: asyncio.Event | None = None,
 ) -> str:
@@ -178,6 +179,7 @@ async def generate_chapter(
     prior_summaries: 已完成章节摘要 [{chapter_no, title, summary}]，注入提示词防重复保衔接。
     supplement_points: 大纲未覆盖的 confirmed 评分点，注入提示词要求本章补写。
     benchmark_high_risk（阶段 D）：高风险评分点 [{clause_no, strategy}]，注入对标要点段。
+    glossary（阶段 E2）：术语表 [{term, canonical, desc}]，注入提示词统一用语。
     extra_instruction（阶段 2）：用户自定义提示词，脱敏后追加到用户提示词末尾。
     stop_event（阶段 2）：流式取消令牌，置位后中止并返回已累积部分。
     """
@@ -262,6 +264,18 @@ async def generate_chapter(
     else:
         hr_text = ""
 
+    # 阶段 E2：术语表注入（统一用语）；脱敏后外发
+    if glossary:
+        gl_text = redact(
+            "\n".join(
+                f"- {g.get('term', '')} → {g.get('canonical', '')}"
+                for g in glossary
+                if g.get("term") and g.get("canonical")
+            )
+        )
+    else:
+        gl_text = ""
+
     system_prompt, user_prompt = load_chapter_prompt(
         chapter_title=chapter_title,
         sections=sections,
@@ -271,6 +285,7 @@ async def generate_chapter(
         prior_summaries=prior_text,
         supplement_points=supp_text,
         benchmark_high_risk=hr_text,
+        glossary=gl_text,
     )
 
     # 阶段 2：用户自定义提示词（辅助生成）——脱敏后追加，不外泄敏感信息

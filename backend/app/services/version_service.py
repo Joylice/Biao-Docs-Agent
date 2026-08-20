@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ValidationError
 from app.models.document import Document
-from app.models.proposal import ChapterAssignment, ProposalVersion
+from app.models.proposal import ChapterAssignment, ProposalSection, ProposalVersion
 from app.services import workflow_runtime
 from app.services.export_service import export_to_word
 from app.services.storage_service import upload_file
@@ -116,11 +116,56 @@ async def create_snapshot(
         storage_key_docx=storage_key_docx,
         storage_key_source=storage_key_source,
         created_by=user_id,
+        # 阶段 E5：结构化快照（回滚数据源；旧版本无此字段不可回滚）
+        snapshot_json={"outline": outline, "chapters": chapters},
     )
     db.add(record)
     await db.flush()
     await db.refresh(record)
     return record
+
+
+async def rollback_version(
+    db: AsyncSession, project_id: uuid.UUID, version: ProposalVersion
+) -> int:
+    """版本回滚：snapshot_json → 回写 proposal_sections 章级行 + 同步图状态.
+
+    回写后章状态置 draft（需重新审阅）；章节行缺失时按大纲标题新建。
+    返回恢复的章节数；无结构化快照抛 ValidationError。
+    """
+    data = version.snapshot_json or {}
+    chapters: dict[str, str] = data.get("chapters") or {}
+    outline: list[dict] = data.get("outline") or []
+    if not chapters:
+        raise ValidationError("该版本无结构化快照，无法回滚（仅支持 E5 后创建的版本）")
+
+    titles = {str(c.get("chapter_no", "")): str(c.get("title", "")) for c in outline}
+    for chapter_no, content in chapters.items():
+        chapter_no = str(chapter_no)
+        result = await db.execute(
+            select(ProposalSection).where(
+                ProposalSection.project_id == project_id,
+                ProposalSection.section_id == chapter_no,
+            )
+        )
+        section = result.scalar_one_or_none()
+        if section is not None:
+            section.content_md = content
+            section.status = "draft"
+        else:
+            db.add(
+                ProposalSection(
+                    project_id=project_id,
+                    section_id=chapter_no,
+                    title=titles.get(chapter_no, chapter_no),
+                    content_md=content,
+                    status="draft",
+                )
+            )
+
+    # 图状态同步（ReviewView/生成页即时可见回滚后正文）
+    await workflow_runtime.update_state(project_id, {"chapters": chapters, "outline": outline})
+    return len(chapters)
 
 
 async def maybe_auto_snapshot(

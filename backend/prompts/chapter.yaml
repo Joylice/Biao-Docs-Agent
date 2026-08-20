@@ -42,6 +42,9 @@ user_prompt: |
   ## 高风险评分点对标要点（阶段 D：资料库素材缺口大的高分项，本章须针对性正面响应）
   {benchmark_high_risk}
 
+  ## 术语表（阶段 E2：本章用语须统一为规范全称，格式 缩写/别名 → 规范全称）
+  {glossary}
+
   ## 需要满足的技术需求
   {tech_requirements}
 

@@ -15,11 +15,12 @@ import uuid
 
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.database import async_session_factory
 from app.models.document import Document, ScorePoint, TechRequirement
 from app.models.project import Project
 from app.models.proposal import ProposalSection, ProposalSkeleton, ProposalWorkflow
-from app.services import benchmark_service, kb_base_service
+from app.services import benchmark_service, kb_base_service, settings_service
 from app.services.event_service import publish_event
 
 logger = logging.getLogger(__name__)
@@ -63,8 +64,10 @@ async def _update_workflow(
     await db.flush()
 
 
-async def _load_tender_context(db, project_id: str) -> tuple[str, str, list[dict], list[dict]]:
-    """读取项目名称/编号 + 已解析的评分点与技术需求."""
+async def _load_tender_context(
+    db, project_id: str
+) -> tuple[str, str, list[dict], list[dict], list[dict]]:
+    """读取项目名称/编号 + 已解析的评分点、技术需求与术语表（阶段 E2）."""
     proj_result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
     project = proj_result.scalar_one_or_none()
     project_name = project.name if project else ""
@@ -104,7 +107,17 @@ async def _load_tender_context(db, project_id: str) -> tuple[str, str, list[dict
         }
         for tr in tr_result.scalars().all()
     ]
-    return project_name, tender_no, score_points, tech_requirements
+
+    # 术语表：解析阶段写入招标文件 meta.glossary（阶段 E2）
+    doc_result = await db.execute(
+        select(Document).where(
+            Document.project_id == uuid.UUID(project_id),
+            Document.doc_type == "tender_file",
+        )
+    )
+    tender_doc = doc_result.scalar_one_or_none()
+    glossary = (tender_doc.meta or {}).get("glossary", []) if tender_doc else []
+    return project_name, tender_no, score_points, tech_requirements, glossary
 
 
 async def _upsert_skeleton(db, project_id: str, tree: list[dict]) -> None:
@@ -128,8 +141,9 @@ async def _upsert_section(
     title: str,
     content_md: str,
     status: str = "draft",
+    citations: list | None = None,
 ) -> None:
-    """保存章节到 proposal_sections（upsert）."""
+    """保存章节到 proposal_sections（upsert）；citations 为阶段 E3 引用溯源元数据."""
     result = await db.execute(
         select(ProposalSection).where(
             ProposalSection.project_id == uuid.UUID(project_id),
@@ -145,11 +159,15 @@ async def _upsert_section(
             content_md=content_md,
             status=status,
         )
+        if citations is not None:
+            section.citations = citations
         db.add(section)
     else:
         section.title = title
         section.content_md = content_md
         section.status = status
+        if citations is not None:
+            section.citations = citations
     await db.flush()
 
 
@@ -161,15 +179,19 @@ async def _persist_chapter_content(
     content: str,
     status: str = "draft",
     sections_tree: list | None = None,
+    citations: list | None = None,
 ) -> None:
     """章节落库统一入口：章级行（全文）+ 嵌套大纲时切分子节行.
 
     state.chapters 保持章级全文（检索/摘要用），proposal_sections 子节行为
     子节真源（子节分工/编辑粒度）；string[] 大纲仅写章级行（向后兼容）。
+    citations（阶段 E3）：检索命中溯源元数据，写章级行供导出标注。
     """
     from app.services.chapter_service import split_chapter_to_sections
 
-    await _upsert_section(db, project_id, chapter_no, title, content, status=status)
+    await _upsert_section(
+        db, project_id, chapter_no, title, content, status=status, citations=citations
+    )
     for sec in split_chapter_to_sections(content, sections_tree or [], chapter_no):
         await _upsert_section(
             db, project_id, sec["section_id"], sec["title"], sec["content"], status=status
@@ -187,9 +209,13 @@ async def parse_tender_node(state: dict) -> dict:
 
     try:
         async with async_session_factory() as db:
-            project_name, tender_no, score_points, tech_requirements = await _load_tender_context(
-                db, project_id
-            )
+            (
+                project_name,
+                tender_no,
+                score_points,
+                tech_requirements,
+                glossary,
+            ) = await _load_tender_context(db, project_id)
             if not score_points:
                 return {
                     "error": "项目尚未完成招标解析（无评分点），请先解析招标文件",
@@ -200,6 +226,7 @@ async def parse_tender_node(state: dict) -> dict:
         return {
             "score_points": score_points,
             "tech_requirements": tech_requirements,
+            "glossary": glossary,
             "project_name": project_name,
             "tender_no": tender_no,
             "current_phase": "confirm",
@@ -399,9 +426,10 @@ async def retrieve_node(state: dict) -> dict:
     # 找到下一个未生成的章节
     next_chapter = next((c for c in outline if c["chapter_no"] not in chapters), None)
     if not next_chapter:
-        return {"current_chapter": "", "retrieved_context": ""}
+        return {"current_chapter": "", "retrieved_context": "", "retrieved_citations": []}
 
     context = ""
+    citations: list[dict] = []
     try:
         sec_text = " ".join(flatten_sections(next_chapter.get("sections", [])))
         query = f"{next_chapter.get('title', '')} {sec_text}"
@@ -419,10 +447,35 @@ async def retrieve_node(state: dict) -> dict:
                 doc_ids=doc_ids,
             )
         context = "\n\n---\n\n".join(r.content for r in results)
+        # 阶段 E3 引用溯源：命中 chunk 元数据按 chunk_id 去重，补齐文档标题后随章节落库
+        if results:
+            from app.models.document import Document
+
+            doc_id_set = list({r.doc_id for r in results})
+            title_result = await db.execute(
+                select(Document.id, Document.title).where(Document.id.in_(doc_id_set))
+            )
+            titles = {row[0]: row[1] for row in title_result.all()}
+            seen: set = set()
+            for r in results:
+                if r.chunk_id in seen:
+                    continue
+                seen.add(r.chunk_id)
+                citations.append(
+                    {
+                        "chunk_id": str(r.chunk_id),
+                        "doc_title": titles.get(r.doc_id, ""),
+                        "page_no": r.page_no,
+                    }
+                )
     except Exception as e:
         logger.warning("RAG 检索失败（降级无素材）: %s", e)
 
-    return {"current_chapter": next_chapter["chapter_no"], "retrieved_context": context}
+    return {
+        "current_chapter": next_chapter["chapter_no"],
+        "retrieved_context": context,
+        "retrieved_citations": citations,
+    }
 
 
 async def write_node(state: dict) -> dict:
@@ -508,6 +561,7 @@ async def write_node(state: dict) -> dict:
                 prior_summaries=prior_summaries,
                 supplement_points=coverage["uncovered"],
                 benchmark_high_risk=high_risk,
+                glossary=state.get("glossary", []),
             )
     except Exception as e:
         logger.exception("章节生成失败")
@@ -524,6 +578,7 @@ async def write_node(state: dict) -> dict:
             content,
             status="draft",
             sections_tree=chapter.get("sections", []),
+            citations=state.get("retrieved_citations") or None,
         )
         total = len(outline)
         progress = round(0.4 + 0.35 * (len(chapters) + 1) / max(total, 1), 2)
@@ -564,8 +619,10 @@ async def write_node(state: dict) -> dict:
     }
 
 
-def validate_node(state: dict) -> dict:
-    """节点：校验章节 — 字数下限 + 评分点关键词覆盖（失败可重试 ≤2 次）."""
+async def validate_node(state: dict) -> dict:
+    """节点：校验章节 — 字数下限 + 评分点关键词覆盖 + E1 参数比对（失败可重试 ≤2 次）."""
+    from app.services.param_check_service import check_chapter_params
+
     chapter_no = state.get("current_chapter", "")
     content = state.get("chapters", {}).get(chapter_no, "")
     retries = state.get("validate_retries", 0)
@@ -579,6 +636,9 @@ def validate_node(state: dict) -> dict:
     for sp in score_points:
         if sp.get("is_star") and sp.get("item") and sp["item"][:4] not in content:
             issues.append(f"未覆盖评分点 {sp.get('clause_no', '')}：{sp['item'][:20]}")
+
+    # 阶段 E1：★ 评分点参数断言 vs 正文（param_mismatch 走同一重试链路）
+    issues.extend(await check_chapter_params(content, score_points))
 
     if issues and retries < MAX_VALIDATE_RETRIES:
         return {"validation_ok": False, "validate_retries": retries + 1}
@@ -681,19 +741,41 @@ async def consistency_check_node(state: dict) -> dict:
 
 
 async def integrate_node(state: dict) -> dict:
-    """节点：全文整合 — 校验章节齐全，进入审阅阶段."""
+    """节点：全文整合 — 校验章节齐全 + E2 术语统一，进入审阅阶段."""
+    from app.services.glossary_service import unify_terms
+
     project_id = state.get("project_id", "")
     outline = state.get("outline", [])
-    chapters = state.get("chapters", {})
+    chapters = dict(state.get("chapters", {}))
     missing = [c["chapter_no"] for c in outline if c["chapter_no"] not in chapters]
     if missing:
         return {"error": f"章节未生成完整，缺失: {missing}", "current_phase": "generate"}
+
+    # 阶段 E2：术语表统一（mock 直通保证确定性输出；真实模式规则替换并落库）
+    glossary = state.get("glossary") or []
+    if glossary and not await settings_service.is_mock_enabled():
+        for chapter_no in chapters:
+            unified = unify_terms(chapters[chapter_no], glossary)
+            if unified != chapters[chapter_no]:
+                chapters[chapter_no] = unified
+                chapter_obj = next((c for c in outline if c["chapter_no"] == chapter_no), None)
+                async with async_session_factory() as db:
+                    await _persist_chapter_content(
+                        db,
+                        project_id,
+                        chapter_no,
+                        (chapter_obj or {}).get("title", ""),
+                        unified,
+                        status="draft",
+                        sections_tree=(chapter_obj or {}).get("sections", []),
+                    )
+                    await db.commit()  # 术语统一后的章节显式提交
 
     async with async_session_factory() as db:
         await _update_workflow(db, project_id, phase="review", progress=0.85, status="waiting")
         await db.commit()  # BUG-2：workflow 元数据写入显式提交
     await publish_event(project_id, {"type": "progress", "phase": "review", "progress": 0.85})
-    return {"current_phase": "review", "progress": 0.85}
+    return {"current_phase": "review", "progress": 0.85, "chapters": chapters}
 
 
 async def review_node(state: dict) -> dict:
@@ -821,12 +903,34 @@ async def export_node(state: dict) -> dict:
     except Exception:
         logger.exception("读取格式要求失败，使用默认排版")
 
+    # 阶段 E4：引用溯源（E3 citations 按章聚合）+ 对标附表数据；失败降级不附加
+    citations_by_chapter: dict[str, list[dict]] = {}
+    benchmark_rows: list[dict] | None = None
+    try:
+        async with async_session_factory() as db:
+            sec_result = await db.execute(
+                select(ProposalSection.section_id, ProposalSection.citations).where(
+                    ProposalSection.project_id == uuid.UUID(project_id)
+                )
+            )
+            for section_id, cits in sec_result.all():
+                if isinstance(cits, list) and cits:
+                    citations_by_chapter.setdefault(section_id.split(".")[0], []).extend(cits)
+            benchmark_rows = await benchmark_service.build_benchmark(
+                db, uuid.UUID(project_id)
+            )
+    except Exception:
+        logger.exception("引用/对标数据读取失败，导出降级不附加")
+
     try:
         storage_key = await export_to_word(
             chapters=chapters,
             outline=outline,
             project_name=project_name,
             format_requirements=format_requirements,
+            company_name=settings.company_name,
+            benchmark_rows=benchmark_rows or None,
+            citations_by_chapter=citations_by_chapter or None,
         )
         async with async_session_factory() as db:
             doc = Document(

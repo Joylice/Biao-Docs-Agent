@@ -2,6 +2,7 @@
 
 import io
 import re
+from datetime import date
 from urllib.parse import unquote, urlparse
 
 from app.core.config import settings
@@ -120,16 +121,91 @@ def _apply_heading_size(heading, size_pt: float | None) -> None:
         run.font.size = Pt(size_pt)
 
 
+def _add_toc_field(doc) -> None:
+    """目录域（TOC field）：Word 打开时提示更新域即可生成目录."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    para = doc.add_paragraph()
+    run = para.add_run()
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = r'TOC \o "1-3" \h \z \u'
+    separate = OxmlElement("w:fldChar")
+    separate.set(qn("w:fldCharType"), "separate")
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    for el in (begin, instr, separate, end):
+        run._element.append(el)
+
+
+def _add_footer_page_number(doc) -> None:
+    """页脚页码域（PAGE field，居中）."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    para = doc.sections[0].footer.paragraphs[0]
+    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = para.add_run()
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText")
+    instr.text = "PAGE"
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    for el in (begin, instr, end):
+        run._element.append(el)
+
+
+_BENCHMARK_HEADERS = ["条款号", "评分项", "分值", "覆盖度", "风险", "应对策略"]
+
+
+def _add_benchmark_table(doc, rows: list[dict]) -> None:
+    """附表：评分对标一览（阶段 D benchmark 数据，独立新页）."""
+    heading = doc.add_heading("附表 评分对标一览", level=1)
+    heading.paragraph_format.page_break_before = True
+    table = doc.add_table(rows=1, cols=len(_BENCHMARK_HEADERS))
+    table.style = "Table Grid"
+    for cell, text in zip(table.rows[0].cells, _BENCHMARK_HEADERS, strict=True):
+        cell.text = text
+    for row in rows:
+        cells = table.add_row().cells
+        values = [
+            str(row.get("clause_no") or ""),
+            str(row.get("item") or ""),
+            f"{row.get('score', 0):g}",
+            f"{row.get('coverage', 0):.0%}",
+            str(row.get("risk") or ""),
+            str(row.get("strategy") or ""),
+        ]
+        for cell, value in zip(cells, values, strict=True):
+            cell.text = value
+
+
+def _citation_label(cite: dict) -> str:
+    """引用标注文本：【来源：{doc_title} P{page_no}】（缺页码省略）."""
+    title = cite.get("doc_title") or ""
+    page_no = cite.get("page_no")
+    return f"【来源：{title} P{page_no}】" if page_no else f"【来源：{title}】"
+
+
 async def export_to_word(
     chapters: dict[str, str],
     outline: list[dict],
     project_name: str = "技术方案",
     format_requirements: list[dict] | None = None,
+    company_name: str = "",
+    benchmark_rows: list[dict] | None = None,
+    citations_by_chapter: dict[str, list[dict]] | None = None,
 ) -> str:
     """将章节内容导出为 Word 文档，返回 MinIO storage_key.
 
     format_requirements 来自招标文件 meta，经 format_spec 解析后驱动排版；
     未提供或不可解析时回退默认样式（正文 12pt、行距 1.5 倍、默认边距）。
+    阶段 E4：封面页/目录域/页码页脚域/章节前分页/对标附表/引用标注内联。
     """
     try:
         from docx import Document
@@ -141,10 +217,22 @@ async def export_to_word(
     spec = build_format_spec(format_requirements)
     doc = Document()
     _apply_margins(doc, spec)
+    _add_footer_page_number(doc)
 
-    # 标题
+    # 封面（阶段 E4）：项目名标题 + 公司名 + 编制日期，随后分页
     title = doc.add_heading(project_name, level=0)
     title.alignment = 1  # 居中
+    if company_name:
+        company_para = doc.add_paragraph(company_name)
+        company_para.alignment = 1
+    date_para = doc.add_paragraph(f"编制日期：{date.today().isoformat()}")
+    date_para.alignment = 1
+    doc.add_page_break()
+
+    # 目录域（阶段 E4）：打开时更新域生成目录
+    toc_heading = doc.add_heading("目录", level=1)
+    _apply_heading_size(toc_heading, spec.heading_size_pt)
+    _add_toc_field(doc)
 
     # 按大纲顺序写入章节
     for chapter_info in outline:
@@ -152,8 +240,9 @@ async def export_to_word(
         chapter_title = chapter_info.get("title", "")
         content = chapters.get(chapter_no, "")
 
-        # 章节标题
+        # 章节标题（前分页：每章起始新页）
         heading = doc.add_heading(f"{chapter_no} {chapter_title}", level=1)
+        heading.paragraph_format.page_break_before = True
         _apply_heading_size(heading, spec.heading_size_pt)
 
         # 章节内容（按段落拆分，识别 Markdown 图片内嵌）
@@ -167,6 +256,14 @@ async def export_to_word(
                     doc.add_heading(stripped[4:], level=3)
                 else:
                     _add_content_paragraph(doc, stripped, spec)
+
+        # 引用标注内联（阶段 E4，消费 E3 citations）
+        for cite in (citations_by_chapter or {}).get(chapter_no) or []:
+            _add_content_paragraph(doc, _citation_label(cite), spec)
+
+    # 附表：评分对标一览（阶段 D benchmark 数据）
+    if benchmark_rows:
+        _add_benchmark_table(doc, benchmark_rows)
 
     # 保存到内存
     buffer = io.BytesIO()

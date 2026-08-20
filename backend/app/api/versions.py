@@ -132,6 +132,35 @@ class ArchiveBody(BaseModel):
     kb_id: uuid.UUID
 
 
+@router.post("/{project_id}/versions/{version_id}/rollback")
+async def rollback_version(
+    project_id: uuid.UUID,
+    version_id: uuid.UUID,
+    owner_id: uuid.UUID = Depends(get_current_owner_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """版本回滚（仅 owner）：快照回写 proposal_sections + 图状态，审计 version.rollback."""
+    version = await _get_version(db, project_id, version_id)
+    chapters_restored = await version_service.rollback_version(db, project_id, version)
+    await audit.record(
+        db,
+        owner_id,
+        "version.rollback",
+        project_id=project_id,
+        target_type="proposal_version",
+        target_id=str(version.id),
+        detail={"version": version.version, "chapters_restored": chapters_restored},
+    )
+    await db.commit()
+    return success(
+        data={
+            "id": str(version.id),
+            "version": version.version,
+            "chapters_restored": chapters_restored,
+        }
+    )
+
+
 @router.post("/{project_id}/versions/{version_id}/archive")
 async def archive_version(
     project_id: uuid.UUID,

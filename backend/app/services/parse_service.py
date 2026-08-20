@@ -23,6 +23,8 @@ class ParsedTender:
     tender_no: str | None = None
     # 施组/技术方案格式要求（排版规范）：[{category, requirement}]，存 Document.meta
     format_requirements: list[dict] = field(default_factory=list)
+    # 阶段 E2 术语表：[{term, canonical, desc}]，存 Document.meta.glossary
+    glossary: list[dict] = field(default_factory=list)
 
 
 # LLM 输入字符预算（DeepSeek 64k 上下文，预留输出与提示词空间）
@@ -224,6 +226,20 @@ async def parse_tender_with_llm(
         },
     }
 
+    # 阶段 E2 术语表：缩写/别名 → 规范全称，生成链路统一术语
+    properties["glossary"] = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "term": {"type": "string"},
+                "canonical": {"type": "string"},
+                "desc": {"type": "string"},
+            },
+            "required": ["term", "canonical"],
+        },
+    }
+
     result = await call_llm_with_schema(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -249,6 +265,7 @@ async def parse_tender_with_llm(
         project_name=result.get("project_name"),
         tender_no=result.get("tender_no"),
         format_requirements=result.get("format_requirements", []),
+        glossary=result.get("glossary", []),
     )
 
 
@@ -289,12 +306,16 @@ async def save_parse_result(
         db.add(tr)
         tr_count += 1
 
-    # 更新文档状态与格式要求（存 meta；整体替换新 dict 确保 JSON 列标记脏）
+    # 更新文档状态与格式要求/术语表（存 meta；整体替换新 dict 确保 JSON 列标记脏）
     result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if doc:
         doc.status = "parsed"
-        doc.meta = {**doc.meta, "format_requirements": parsed.format_requirements}
+        doc.meta = {
+            **(doc.meta or {}),
+            "format_requirements": parsed.format_requirements,
+            "glossary": parsed.glossary,
+        }
 
     await db.flush()
     return sp_count, tr_count

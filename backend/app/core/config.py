@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     minio_bucket: str = "bid-documents"
     minio_secure: bool = False
 
+    # ── 导出（阶段 E4 封面）──
+    company_name: str = ""  # 投标公司名（封面占位，可空）
+
     # ── LLM ──
     llm_mock: bool = False  # 测试模式：mock LLM 调用
     llm_model: str = "deepseek/deepseek-chat"

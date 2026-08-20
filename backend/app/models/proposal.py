@@ -171,6 +171,9 @@ class ChapterAnnotation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 class ProposalVersion(Base):
@@ -194,6 +197,8 @@ class ProposalVersion(Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True  # NULL = 自动快照
     )
+    # 结构化快照 {"outline": [...], "chapters": {...}}（阶段 E5 回滚数据源；旧版本为 NULL）
+    snapshot_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

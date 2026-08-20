@@ -23,3 +23,18 @@ user_prompt: |
 
   输出 JSON 格式：
   {{"comments": [{{"chapter_no": "1", "comment": "建议补充...", "action": "revise", "severity": "warning"}}]}}
+
+# 阶段 E1：参数比对校验（规则不确定时的 LLM 兜底）
+param_check_system: |
+  你是投标方案参数核验专家。给定一条招标参数断言与章节正文节选，
+  判断正文是否实质性满足该断言（允许等价表述/单位换算，禁止臆测）。
+  仅输出 JSON：{{"pass": true/false, "reason": "简要理由"}}
+
+param_check_user: |
+  ## 参数断言
+  {assertion}
+
+  ## 章节正文节选
+  {content_excerpt}
+
+  请输出 JSON：{{"pass": true/false, "reason": ""}}

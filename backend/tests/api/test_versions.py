@@ -9,6 +9,7 @@ from httpx import AsyncClient
 
 import app.api.versions as versions_api
 from app.core.database import get_db
+from app.core.exceptions import ValidationError
 from app.core.security import create_access_token
 from app.main import app
 from app.models.document import Document
@@ -244,3 +245,60 @@ async def test_archive_non_owner_403(client: AsyncClient, override_db) -> None:
         json={"kb_id": str(uuid.uuid4())},
     )
     assert resp.status_code == 403
+
+
+class TestRollbackVersion:
+    """阶段 E5：版本回滚（回写 proposal_sections + 审计 version.rollback）."""
+
+    @pytest.mark.asyncio
+    async def test_owner_rollback_with_audit(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """owner 回滚：调 rollback_version + 审计 + commit."""
+        version = _version(2)
+        session = override_db([_result(_project()), _result(version)])
+        rollback = AsyncMock(return_value=3)
+        monkeypatch.setattr(versions_api.version_service, "rollback_version", rollback)
+        resp = await client.post(
+            f"{_url()}/{version.id}/rollback", headers=_headers(OWNER_ID)
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["version"] == 2
+        assert data["chapters_restored"] == 3
+        rollback.assert_awaited_once()
+        actions = [
+            c.args[0].action
+            for c in session.add.call_args_list
+            if hasattr(c.args[0], "action")
+        ]
+        assert "version.rollback" in actions
+        session.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rollback_without_snapshot_400(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """无结构化快照的旧版本回滚 → 400."""
+        version = _version(1)
+        override_db([_result(_project()), _result(version)])
+        monkeypatch.setattr(
+            versions_api.version_service,
+            "rollback_version",
+            AsyncMock(side_effect=ValidationError("该版本无结构化快照")),
+        )
+        resp = await client.post(
+            f"{_url()}/{version.id}/rollback", headers=_headers(OWNER_ID)
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_rollback_non_owner_403(
+        self, client: AsyncClient, override_db
+    ) -> None:
+        """非 owner 回滚 403."""
+        override_db([_result(_project())])
+        resp = await client.post(
+            f"{_url()}/{_version(1).id}/rollback", headers=_headers(MEMBER_ID)
+        )
+        assert resp.status_code == 403
