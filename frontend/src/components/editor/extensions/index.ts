@@ -1,13 +1,13 @@
 /**
  * 编辑器扩展集合：统一导出 createEditorExtensions()
  * 含：StarterKit、下划线、字体/字号/行高/颜色/高亮、对齐、任务列表、
- * 图片/链接、占位符、字数统计，以及自实现的缩进扩展（text-indent 步进 2em）。
+ * 图片（扩展尺寸/浮动/边框属性）/链接、占位符、字数统计，表格（Table/Row/Cell/Header）、
+ * 分页符，以及自实现的缩进扩展（text-indent 步进 2em）。
  */
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import TextStyle from '@tiptap/extension-text-style'
 import TextAlign from '@tiptap/extension-text-align'
-import Image from '@tiptap/extension-image'
 import Link from '@tiptap/extension-link'
 import CharacterCount from '@tiptap/extension-character-count'
 import TaskList from '@tiptap/extension-task-list'
@@ -19,6 +19,9 @@ import { LineHeight } from './line-height'
 import { TextColor } from './text-color'
 import { Highlight } from './highlight'
 import { createPlaceholderExtension } from './placeholder'
+import { ImageExt } from './image'
+import { TableExt, TableExtRow, TableExtCell, TableExtHeader } from './table'
+import { PageBreak } from './page-break'
 
 /* ---------------- 缩进扩展（text-indent） ---------------- */
 
@@ -108,6 +111,10 @@ export interface EditorExtensionOptions {
  * 创建 WordEditor 使用的扩展集合。
  * 说明：StarterKit 提供的 bold/italic/strike/heading/列表/引用/history 等
  * 与自定义扩展无功能重叠，整体保留；富文本样式类能力由下方自定义扩展承担。
+ * - ImageExt：在官方 Image 基础上追加尺寸/浮动/边框属性（供图片工具栏使用）。
+ * - 表格四件套（TableExt/Row/Cell/Header）需一起注册才能完整工作；Cell/Header
+ *   已扩展对齐+边框+底纹属性。
+ * - PageBreak 为自实现块级原子节点，提供分页符能力。
  */
 export const createEditorExtensions = (options: EditorExtensionOptions = {}) => [
   StarterKit.configure({
@@ -125,7 +132,15 @@ export const createEditorExtensions = (options: EditorExtensionOptions = {}) => 
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
   TaskList,
   TaskItem.configure({ nested: true }),
-  Image,
+  // 扩展图片：尺寸/浮动/边框属性（节点名仍为 image，向后兼容）
+  ImageExt,
+  // 表格四件套：Cell/Header 已扩展对齐+边框+底纹属性
+  TableExt,
+  TableExtRow,
+  TableExtCell,
+  TableExtHeader,
+  // 分页符：块级原子节点
+  PageBreak,
   Link.configure({
     openOnClick: false,
     autolink: true,

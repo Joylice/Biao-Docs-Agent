@@ -1,14 +1,60 @@
 <template>
   <div class="word-editor">
-    <div class="word-editor__scroll">
+    <div
+      ref="scrollRef"
+      class="word-editor__scroll"
+    >
       <!-- A4 纸面：宽 210mm、最小高 297mm、页边距 25.4mm -->
-      <div class="word-editor__paper">
+      <div
+        ref="paperRef"
+        class="word-editor__paper"
+      >
         <EditorContent
           :editor="editor"
           class="word-editor__content"
         />
       </div>
     </div>
+
+    <!-- 虚拟页码（滚动位置 → 当前页 / 总页数） -->
+    <div
+      v-if="totalPages > 1"
+      class="word-editor__page-number"
+    >
+      第 {{ currentPage }} 页 / 共 {{ totalPages }} 页
+    </div>
+
+    <!-- 图片上传进度 / 失败重试（fixed overlay） -->
+    <Teleport to="body">
+      <div
+        v-if="uploading || uploadError"
+        class="word-editor__upload-overlay"
+      >
+        <div class="word-editor__upload-card">
+          <template v-if="uploading">
+            <LoadingOutlined spin />
+            <span class="word-editor__upload-text">图片上传中 {{ uploadProgress }}%</span>
+            <a-progress
+              :percent="uploadProgress"
+              :show-info="false"
+              size="small"
+              class="word-editor__upload-progress"
+            />
+          </template>
+          <template v-else>
+            <span class="word-editor__upload-error">{{ uploadError }}</span>
+            <a-button
+              size="small"
+              type="link"
+              :disabled="!lastImageJob"
+              @click="retryImageUpload"
+            >
+              重试
+            </a-button>
+          </template>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -16,12 +62,18 @@
 /**
  * WordEditor：类 Word 富文本编辑区
  * - 外层灰色滚动区 + 居中 A4 白纸（深色模式下纸面强制白色，见样式注释）
- * - props：content(HTML)/readonly/placeholder；emit update:content
+ * - props：content(HTML)/readonly/placeholder/projectId；emit update:content
+ * - 图片拖拽/粘贴上传：editorProps.handleDrop/handlePaste 拦截 image/* →
+ *   useImageUpload 上传 → insertContent 插入；上传进度/失败 overlay
+ * - 虚拟页码：按滚动位置与 A4 高度计算当前页/总页数
  * - defineExpose：getHTML/getJSON/getText/setContent/focus/editor
  */
-import { watch } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, toRef, shallowRef } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
+import type { Editor } from '@tiptap/core'
+import { LoadingOutlined } from '@ant-design/icons-vue'
 import { createEditorExtensions } from './extensions'
+import { useImageUpload } from '@/composables/useImageUpload'
 
 interface WordEditorProps {
   /** 初始内容（HTML 字符串）；外部变化时编辑器同步刷新 */
@@ -30,18 +82,80 @@ interface WordEditorProps {
   readonly?: boolean
   /** 空文档占位提示文案 */
   placeholder?: string
+  /** 项目 ID（用于图片上传，缺失时禁用拖拽/粘贴上传） */
+  projectId?: string
 }
 
 const props = withDefaults(defineProps<WordEditorProps>(), {
   content: '',
   readonly: false,
   placeholder: '请输入内容...',
+  projectId: undefined,
 })
 
 const emit = defineEmits<{
   (e: 'update:content', value: string): void
 }>()
 
+/* ---------------- 图片上传 ---------------- */
+const projectIdRef = toRef(props, 'projectId')
+const {
+  uploadImage,
+  uploading,
+  uploadProgress,
+  error: uploadError,
+  clearError,
+} = useImageUpload(projectIdRef)
+
+/**
+ * 编辑器实例延迟句柄：editorProps 中的异步回调（上传完成后插入）通过此句柄
+ * 访问编辑器，避免在 useEditor 初始化阶段引用未声明的 editor 绑定（TDZ）。
+ */
+const editorInstance = shallowRef<Editor | undefined>(undefined)
+
+/** 最近一次失败的图片上传任务（供「重试」使用） */
+const lastImageJob = ref<{ files: File[]; pos?: number } | null>(null)
+
+/** 从 DataTransfer 中提取图片文件 */
+const imageFilesFromTransfer = (dt: DataTransfer | null | undefined): File[] => {
+  if (!dt) return []
+  return Array.from(dt.files ?? []).filter((f) => f.type.startsWith('image/'))
+}
+
+/** 上传并插入图片：逐个上传，全部失败时记录任务供重试 */
+const handleImageFiles = async (files: File[], pos?: number) => {
+  const urls: string[] = []
+  for (const file of files) {
+    try {
+      urls.push(await uploadImage(file))
+    } catch {
+      // 错误已写入 uploadError
+    }
+  }
+  if (urls.length === 0) {
+    lastImageJob.value = { files, pos }
+    return
+  }
+  lastImageJob.value = null
+  const inst = editorInstance.value
+  if (!inst || inst.isDestroyed) return
+  const content = urls.map((u) => ({ type: 'image', attrs: { src: u } }))
+  if (typeof pos === 'number') {
+    inst.chain().focus().insertContentAt(pos, content).run()
+  } else {
+    inst.chain().focus().insertContent(content).run()
+  }
+}
+
+/** 重试上一次失败的图片上传 */
+const retryImageUpload = () => {
+  const job = lastImageJob.value
+  if (!job) return
+  clearError()
+  void handleImageFiles(job.files, job.pos)
+}
+
+/* ---------------- 编辑器 ---------------- */
 const editor = useEditor({
   extensions: createEditorExtensions({ placeholder: props.placeholder }),
   content: props.content,
@@ -51,11 +165,35 @@ const editor = useEditor({
       class: 'word-editor__prosemirror',
       'aria-label': '富文本编辑区',
     },
+    // 拖拽图片 → 上传后插入到落点位置
+    handleDrop: (view, event) => {
+      const files = imageFilesFromTransfer(event.dataTransfer)
+      if (!files.length || !props.projectId) return false
+      const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? undefined
+      void handleImageFiles(files, pos)
+      return true
+    },
+    // 粘贴图片 → 上传后插入到当前选区
+    handlePaste: (_view, event) => {
+      const files = imageFilesFromTransfer(event.clipboardData)
+      if (!files.length || !props.projectId) return false
+      void handleImageFiles(files)
+      return true
+    },
   },
   onUpdate: ({ editor: instance }) => {
     emit('update:content', instance.getHTML())
   },
 })
+
+// 编辑器就绪后绑定句柄，供异步回调使用
+watch(
+  editor,
+  (e) => {
+    editorInstance.value = e ?? undefined
+  },
+  { immediate: true },
+)
 
 // readonly 变化 → 同步编辑器可编辑状态
 watch(
@@ -75,6 +213,53 @@ watch(
   },
 )
 
+/* ---------------- 虚拟页码 ---------------- */
+const scrollRef = ref<HTMLElement | null>(null)
+const paperRef = ref<HTMLElement | null>(null)
+const currentPage = ref(1)
+const totalPages = ref(1)
+
+/** A4 高度（px）：1mm = 96/25.4 px */
+const PAGE_HEIGHT_PX = 297 * (96 / 25.4)
+
+/** 根据滚动位置与纸面高度重算当前页/总页数 */
+const recomputePages = () => {
+  const scroll = scrollRef.value
+  const paper = paperRef.value
+  if (!scroll || !paper) {
+    currentPage.value = 1
+    totalPages.value = 1
+    return
+  }
+  const total = Math.max(1, Math.ceil(paper.scrollHeight / PAGE_HEIGHT_PX))
+  totalPages.value = total
+  // 以视口垂直中心所在「页带」作为当前页
+  const viewportCenter = scroll.scrollTop + scroll.clientHeight / 2
+  const relToPaper = viewportCenter - paper.offsetTop
+  let page = Math.floor(relToPaper / PAGE_HEIGHT_PX) + 1
+  page = Math.min(Math.max(page, 1), total)
+  currentPage.value = page
+}
+
+let resizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  const scroll = scrollRef.value
+  scroll?.addEventListener('scroll', recomputePages, { passive: true })
+  const paper = paperRef.value
+  if (paper && typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => recomputePages())
+    resizeObserver.observe(paper)
+  }
+  recomputePages()
+})
+
+onBeforeUnmount(() => {
+  scrollRef.value?.removeEventListener('scroll', recomputePages)
+  resizeObserver?.disconnect()
+})
+
+/* ---------------- 对外方法 ---------------- */
 /** 获取当前 HTML */
 const getHTML = (): string => editor.value?.getHTML() ?? ''
 /** 获取当前文档 JSON */
@@ -95,6 +280,7 @@ defineExpose({ editor, getHTML, getJSON, getText, setContent, focus })
 
 <style scoped>
 .word-editor {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -118,13 +304,15 @@ defineExpose({ editor, getHTML, getJSON, getText, setContent, focus })
    深色模式下纸张必须保持白色、文字保持深色，以模拟真实纸张
    并保证与 Word 导出效果一致。 */
 .word-editor__paper {
-  width: 210mm;
-  min-height: 297mm;
-  padding: 25.4mm;
+  width: var(--paper-width, 210mm);
+  min-height: var(--paper-height, 297mm);
+  padding: var(--paper-padding, 25.4mm);
   box-sizing: border-box;
   background: #ffffff; /* 纸面恒白，不随主题变化 */
   color: #1f2329; /* 纸面文字恒深色，保证白纸可读性 */
   box-shadow: var(--shadow-md);
+  transform: scale(var(--paper-zoom, 1));
+  transform-origin: top center;
 }
 
 .word-editor__content {
@@ -214,16 +402,63 @@ defineExpose({ editor, getHTML, getJSON, getText, setContent, focus })
   width: 100%;
   margin: 8px 0;
 }
+/* 可调宽表格的容器：横向滚动，避免撑破纸面 */
+.word-editor :deep(.word-editor__prosemirror .tableWrapper) {
+  overflow-x: auto;
+}
 .word-editor :deep(.word-editor__prosemirror th),
 .word-editor :deep(.word-editor__prosemirror td) {
   border: 1px solid #dee0e3;
   padding: 6px 8px;
   vertical-align: top;
   min-width: 1em;
+  position: relative;
 }
 .word-editor :deep(.word-editor__prosemirror th) {
   background: #f5f6f7; /* 纸面表头底色 */
   font-weight: 600;
+}
+/* 选中单元格高亮：::after 半透明主色覆盖层（纸面字面量，保证深浅一致） */
+.word-editor :deep(.word-editor__prosemirror .selectedCell::after) {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(59, 130, 246, 0.1);
+  pointer-events: none;
+  z-index: 0;
+}
+/* 列宽拖拽手柄：纸面主色细条 */
+.word-editor :deep(.word-editor__prosemirror .column-resize-handle) {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: #3370ff;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+/* 分页符：虚线 + "分页符" 文字，打印时 page-break-after 生效 */
+.word-editor :deep(.word-editor__prosemirror .page-break) {
+  border-top: 2px dashed #dee0e3;
+  margin: 2em 0;
+  page-break-after: always;
+  break-after: page;
+  position: relative;
+  height: 0;
+}
+.word-editor :deep(.word-editor__prosemirror .page-break::after) {
+  content: '分页符';
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #ffffff;
+  color: #8f959e;
+  font-size: 12px;
+  padding: 0 8px;
+  line-height: 1;
 }
 
 /* 代码/分割线/图片/链接（纸面内样式，使用字面量） */
@@ -270,5 +505,51 @@ defineExpose({ editor, getHTML, getJSON, getText, setContent, focus })
   height: 0;
   pointer-events: none;
   color: #8f959e; /* 纸面占位文字色 */
+}
+
+/* ---------- 虚拟页码（编辑区右下角） ---------- */
+.word-editor__page-number {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  z-index: 5;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  padding: 2px 8px;
+  pointer-events: none;
+}
+
+/* ---------- 图片上传进度/错误 overlay ---------- */
+.word-editor__upload-overlay {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+}
+.word-editor__upload-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-2) var(--space-3);
+}
+.word-editor__upload-text {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.word-editor__upload-progress {
+  width: 160px;
+}
+.word-editor__upload-error {
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
 }
 </style>
