@@ -144,6 +144,10 @@ class ChapterAssignment(Base):
     # pending(已分配待接收)|in_progress(编制中)|submitted(已提交待审)|approved(通过)|rejected(打回)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 章节正文（Markdown 源，章节内容读写端点落库；迁移 0018）
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    # 富文本编辑器 HTML（与 Markdown 源并存储；可空，迁移 0018）
+    content_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     assigned_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -1,4 +1,4 @@
-"""章节分工协作 API — 分配/列表/领取/生成初稿/提交（审核端点见后续）.
+"""章节分工协作 API — 分配/列表/领取/生成初稿/提交/章节内容读写（审核端点见后续）.
 
 DB 操作统一委托 division_service（批次 1c 分层重构）；
 本层保留路由/依赖注入/请求 schema/审计埋点/事件推送/显式 commit。
@@ -49,6 +49,13 @@ class AnnotationBody(BaseModel):
     """章节批注请求体（阶段 4）."""
 
     content: str = Field(..., min_length=1)
+
+
+class ChapterContentBody(BaseModel):
+    """章节内容保存请求体：content 可空串（已清空），content_html 可空."""
+
+    content: str = Field(..., min_length=0)
+    content_html: str | None = None
 
 
 @router.get("/{project_id}/chapter-assignments")
@@ -396,3 +403,52 @@ async def review_assignment(
         if project is not None:
             await version_service.maybe_auto_snapshot(db, project_id, project.name)
     return success(data={"id": str(assignment.id), "status": assignment.status})
+
+
+@router.get("/{project_id}/chapters/{chapter_no}/content")
+async def get_chapter_content(
+    project_id: uuid.UUID,
+    chapter_no: str,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """读取章节内容（项目成员可读；chapter_no 无对应分工记录 4004）."""
+    await _check_project_member(db, project_id, user_id)
+    assignment = await division_service.get_assignment_by_chapter(db, project_id, chapter_no)
+    if assignment is None:
+        raise NotFoundError("章节分工")
+    return success(data={"content": assignment.content, "content_html": assignment.content_html})
+
+
+@router.put("/{project_id}/chapters/{chapter_no}/content")
+async def save_chapter_content(
+    project_id: uuid.UUID,
+    chapter_no: str,
+    body: ChapterContentBody,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """保存章节内容（项目成员可写）：Markdown + 富文本 HTML 双字段落库 + 审计 + commit."""
+    await _check_project_member(db, project_id, user_id)
+    assignment = await division_service.get_assignment_by_chapter(db, project_id, chapter_no)
+    if assignment is None:
+        raise NotFoundError("章节分工")
+    await division_service.update_chapter_content(db, assignment, body.content, body.content_html)
+    await audit.record(
+        db,
+        user_id,
+        "chapter.content_update",
+        project_id=project_id,
+        target_type="chapter_assignment",
+        target_id=str(assignment.id),
+        detail={"chapter_no": chapter_no},
+    )
+    # 事务约定（BUG-1）：写入 + 审计响应前显式提交
+    await db.commit()
+    return success(
+        data={
+            "chapter_no": assignment.chapter_no,
+            "content": assignment.content,
+            "content_html": assignment.content_html,
+        }
+    )

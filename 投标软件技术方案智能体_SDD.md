@@ -280,6 +280,7 @@ class BidState(TypedDict):
 - **暂停机制**：`call_llm_stream` 支持 `asyncio.Event` 取消令牌（每 chunk 检查，mock 模式同样分段支持）；任务注册表 `project_id:chapter_no → Event`，`POST .../assist-generate/stop` 置位 → 已累积部分按 mode 落库（空部分不落库）+ `section_done`（stopped=true）；暂停仅对辅助生成生效，整章工作流生成不支持暂停。
 - **图片插入**：`POST /projects/{pid}/images`（jpg/png/gif/webp ≤10MB，存 MinIO `images/{project_id}/`，返回 storage_key + 签名 URL；GET signed 读限本项目 images 目录防跨项目越权）；前端工具栏上传后在光标处插入 `![名称](url)`，预览态 MarkdownRenderer 渲染；Word 导出（export_service）解析 `![alt](url)` → 拉取 MinIO 字节 → `add_picture` 内嵌（宽度上限 15cm），拉取失败降级为文本说明不阻塞。
 - **章节级批注**：`chapter_annotations` 表（迁移 0015，阶段 E5 迁移 0016 补 `updated_at`），`GET/POST /chapter-assignments/{id}/annotations`（项目成员可读，assignee/owner 可写，时间正序，附批注人姓名）；与审核打回意见字段并存；前端编辑器「批注」抽屉（留言列表 + 输入框）。**章节维度批注 CRUD（阶段 E5）**：`GET/POST /projects/{pid}/chapters/{chapter_no}/annotations` 与 `PUT/DELETE .../annotations/{annotation_id}`（`app/api/annotations.py`）——写操作先项目成员校验 + `check_chapter_editable` 口径（无权限 403「无该章节批注权限」），PUT/DELETE 再限批注作者本人或项目 owner；content 1-2000 字；审计 annotation.create/update/delete（target_type=chapter_annotation）；ReviewView 以章级折叠面板懒加载展示与增删改。
+- **章节内容读写**（2026-08-21）：`GET/PUT /projects/{pid}/chapters/{chapter_no}/content`（`app/api/division.py`），落库 `chapter_assignments.content`（Markdown 源）+ `content_html`（富文本编辑器 HTML 主存储，可空；迁移 0018 补列）；权限为项目成员校验（非成员 403），chapter_no 无分工记录 4004；PUT body `{content 必填非空, content_html?}` 双字段落库，审计 `chapter.content_update`（target_type=chapter_assignment）；对齐前端既有封装 fetchChapterContent/saveChapterContent（消除潜伏 404）。
 
 **审阅增强与意见回派（2026-08-18）**：ReviewView 左侧 a-tree 全量 2 级目录（章 + 子节，子节仅导航不可选，审阅操作仍章级与生成粒度一致），章卡片标「提交人：XXX」（无分工显示「AI 生成/未分配」）；confirm-review feedback 意见回派：按 chapter_no/标题匹配大纲后查分工，命中且有 assignee → 该 assignment 置 rejected + review_comment + 推送 task_reviewed（assignee 在分工页看到打回可重编），并从 feedback 移除避免重复重写；无 assignee 章节保持现有 rewrite 链路；全部意见均回派后 decision.action 改 `redispatched`（review_route 返回 review 自环，重新 interrupt 等待复审，响应 next_phase=redispatch），避免空 feedback 进入 rewrite 报错。
 
@@ -290,7 +291,7 @@ class BidState(TypedDict):
 - **审阅下沉**：accept/submit/review 端点对子节 assignment 生效；自动快照触发按**最细粒度**判定（无任何 pending/in_progress/submitted 且 ≥1 approved）；confirm-review 意见回派匹配支持子节编号/标题。
 - **自然序导出**：export_service 读 proposal_sections 按自然序排序（`1.1 < 1.2 < 2`，修复字典序 `10 < 2` 隐患）。
 
-**表**：`chapter_assignments`（迁移 0013，chapter_no String(32) 天然支持 `1.1` 子节编号）、`chapter_annotations`（迁移 0015）。
+**表**：`chapter_assignments`（迁移 0013，chapter_no String(32) 天然支持 `1.1` 子节编号；迁移 0018 补 `content` Markdown 正文与 `content_html` 富文本 HTML 字段）、`chapter_annotations`（迁移 0015）。
 
 ### 3.10 方案版本库与归档模块（2026-08-18）
 
@@ -508,6 +509,8 @@ CREATE TABLE chapter_assignments (
   assigned_by    UUID NOT NULL REFERENCES users(id),   -- 分配人（仅 owner 可分配）
   status         VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending|in_progress|submitted|approved|rejected
   review_comment TEXT,                     -- 打回意见（rejected 时必填）
+  content        TEXT NOT NULL DEFAULT '', -- 章节正文 Markdown 源（迁移 0018；章节内容读写端点落库）
+  content_html   TEXT,                     -- 富文本编辑器 HTML 主存储（迁移 0018；可空）
   assigned_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   accepted_at    TIMESTAMPTZ,              -- 领取时间（pending/rejected → in_progress）
   submitted_at   TIMESTAMPTZ,              -- 提交待审时间
@@ -644,6 +647,8 @@ CREATE TABLE proposal_versions (
 | POST | /projects/{pid}/chapters/{chapter_no}/annotations | 新增章节批注（阶段 E5：项目成员 + check_chapter_editable 口径可写，否则 403；content 1-2000；审计 annotation.create） |
 | PUT | /projects/{pid}/chapters/{chapter_no}/annotations/{annotation_id} | 编辑批注（阶段 E5：写权限校验后仅批注作者或项目 owner 可改，否则 403；审计 annotation.update） |
 | DELETE | /projects/{pid}/chapters/{chapter_no}/annotations/{annotation_id} | 删除批注（阶段 E5：同 PUT 权限口径；审计 annotation.delete） |
+| GET | /projects/{pid}/chapters/{chapter_no}/content | 读取章节内容（2026-08-21：项目成员可读；返回 `{content, content_html}`（HTML 可空）；无分工记录 4004） |
+| PUT | /projects/{pid}/chapters/{chapter_no}/content | 保存章节内容（2026-08-21：项目成员可写；body `{content 非空, content_html?}` 双字段落库；审计 chapter.content_update） |
 | GET | /projects/{pid}/versions | 版本列表（2026-08-18：项目成员可读；version 倒序；created_by NULL = 自动快照标记 auto=true） |
 | POST | /projects/{pid}/versions | 手动版本快照（2026-08-18：**仅 owner**；body.snapshot_note 可选；Word + Markdown 源入 MinIO，version 续号；无章节内容 4000；审计 version.snapshot） |
 | GET | /projects/{pid}/versions/{id}/download | 版本下载（2026-08-18：项目成员；query type=docx\|source 二选一，返签名 URL） |

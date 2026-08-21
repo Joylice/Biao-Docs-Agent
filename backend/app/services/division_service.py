@@ -418,3 +418,28 @@ async def create_annotation(
     await db.flush()
     await db.refresh(ann)
     return ann
+
+
+# ───────────────────────── 章节内容读写（content Markdown + content_html 富文本）
+
+
+async def get_assignment_by_chapter(
+    db: AsyncSession, project_id: uuid.UUID, chapter_no: str
+) -> ChapterAssignment | None:
+    """按章节号读取分工记录（内容读写端点定位载体；不存在返 None）."""
+    result = await db.execute(
+        select(ChapterAssignment).where(
+            ChapterAssignment.project_id == project_id,
+            ChapterAssignment.chapter_no == chapter_no,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_chapter_content(
+    db: AsyncSession, assignment: ChapterAssignment, content: str, content_html: str | None
+) -> None:
+    """保存章节内容（Markdown + 富文本 HTML 双字段；仅 flush 不 commit）."""
+    assignment.content = content
+    assignment.content_html = content_html
+    await db.flush()
