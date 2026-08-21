@@ -14,6 +14,19 @@ from app.core.exceptions import BizError
 from app.models.document import DisqualificationClause, Document, ScorePoint, TechRequirement
 
 
+def clause_to_dict(c: DisqualificationClause) -> dict:
+    """废标条款序列化（与前端废标风险卡片字段对齐）."""
+    return {
+        "id": str(c.id),
+        "clause_no": c.clause_no,
+        "title": c.title,
+        "risk_category": c.risk_category,
+        "severity": c.severity,
+        "recommendation": c.recommendation,
+        "confirmed": c.confirmed,
+    }
+
+
 async def get_document(db: AsyncSession, project_id: uuid.UUID, document_id: uuid.UUID) -> Document:
     """按 id 载入属本项目的文档；不存在或跨项目 → 4004（防越权）."""
     result = await db.execute(select(Document).where(Document.id == document_id))

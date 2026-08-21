@@ -21,7 +21,6 @@ from app.core.database import get_db
 from app.core.deps import get_current_user_id
 from app.core.exceptions import BizError, ValidationError
 from app.core.response import paginated, success
-from app.models.document import DisqualificationClause
 from app.schemas.document import (
     DocumentListOut,
     DocumentUploadOut,
@@ -66,19 +65,6 @@ class DisqualificationClausesBody(BaseModel):
     """废标条款保存请求体 — 完整数组幂等覆盖（阶段 H）."""
 
     items: list[dict]
-
-
-def _clause_to_dict(c: DisqualificationClause) -> dict:
-    """废标条款序列化（与前端废标风险卡片字段对齐）."""
-    return {
-        "id": str(c.id),
-        "clause_no": c.clause_no,
-        "title": c.title,
-        "risk_category": c.risk_category,
-        "severity": c.severity,
-        "recommendation": c.recommendation,
-        "confirmed": c.confirmed,
-    }
 
 
 def _clean_format_requirements(items: list[dict]) -> list[dict]:
@@ -374,7 +360,7 @@ async def get_disqualification_clauses(
     await _check_project_member(db, project_id, user_id)
     await document_service.load_tender_doc_for_format(db, project_id, document_id)
     clauses = await document_service.list_doc_clauses(db, project_id, document_id)
-    items = [_clause_to_dict(c) for c in clauses]
+    items = [document_service.clause_to_dict(c) for c in clauses]
     return success(data={"items": items})
 
 
@@ -435,7 +421,7 @@ async def list_project_disqualification_clauses(
     """项目级废标条款汇总（跨文档，供生成页风险横幅）."""
     await _check_project_member(db, project_id, user_id)
     clauses = await dq_service.load_project_clauses(db, project_id)
-    return success(data={"items": [_clause_to_dict(c) for c in clauses]})
+    return success(data={"items": [document_service.clause_to_dict(c) for c in clauses]})
 
 
 @router.get("/{project_id}/disqualification-risks")
