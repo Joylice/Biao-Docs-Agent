@@ -1,0 +1,237 @@
+INFO:     Will watch for changes in these directories: ['D:\\AI\\WorkBuddy\\2026-08-15-17-35-34\\backend']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [31008] using StatReload
+INFO:     Started server process [3512]
+INFO:     Waiting for application startup.
+°²È«¸æ¾¯£ºBID_JWT_SECRET ÈÔÎªÄ¬ÈÏÖµ 'change-me-in-production' ÇÒ llm_mock ÒÑ¹Ø±Õ¡ª¡ªJWT Ç©ÃûÓë LLM ÃÜÔ¿¼ÓÃÜ¾ù²»°²È«£¡Éú²ú»·¾³ÇëÁ¢¼´ÉèÖÃ BID_JWT_SECRET Óë BID_LLM_CRYPTO_SECRET
+INFO:     Application startup complete.
+INFO:     127.0.0.1:56797 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTE3MzEsInR5cGUiOiJhY2Nlc3MifQ.xH-LIEh0mvwe2lpud4T5fMsUInfAPj1H6r95DG-6bFI" [accepted]
+INFO:     connection open
+BID_LLM_CRYPTO_SECRET Î´ÅäÖÃ£¬LLM ÃÜÔ¿¼ÓÃÜ»ØÍËÊ¹ÓÃ jwt_secret ÅÉÉú£¬½¨ÒéÅäÖÃ¶ÀÁ¢¼ÓÃÜÃÜÔ¿£¨W-2£©
+[92m01:41:10 - LiteLLM:WARNING[0m: get_model_cost_map.py:289 - LiteLLM: Failed to fetch remote model cost map from https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json: The read operation timed out. Falling back to local backup.
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+RAG ¼ìË÷Ê§°Ü£¨½µ¼¶ÎÞËØ²Ä£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+INFO:     127.0.0.1:56952 - "WebSocket /ws/298bb4ef-abbe-4314-9143-a7bd8408f8fb?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTE3MzEsInR5cGUiOiJhY2Nlc3MifQ.xH-LIEh0mvwe2lpud4T5fMsUInfAPj1H6r95DG-6bFI" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:64276 - "WebSocket /ws/298bb4ef-abbe-4314-9143-a7bd8408f8fb?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTE3MzEsInR5cGUiOiJhY2Nlc3MifQ.xH-LIEh0mvwe2lpud4T5fMsUInfAPj1H6r95DG-6bFI" [accepted]
+INFO:     connection open
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+RAG ¼ìË÷Ê§°Ü£¨½µ¼¶ÎÞËØ²Ä£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+RAG ¼ìË÷Ê§°Ü£¨½µ¼¶ÎÞËØ²Ä£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+RAG ¼ìË÷Ê§°Ü£¨½µ¼¶ÎÞËØ²Ä£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+RAG ¼ìË÷Ê§°Ü£¨½µ¼¶ÎÞËØ²Ä£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+RAG ¼ìË÷Ê§°Ü£¨½µ¼¶ÎÞËØ²Ä£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+INFO:     127.0.0.1:57897 - "WebSocket /ws/user/16a9f924-2afa-40cd-9484-fe25e65cc1ed?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxNmE5ZjkyNC0yYWZhLTQwY2QtOTQ4NC1mZTI1ZTY1Y2MxZWQiLCJleHAiOjE3ODcyNTU0MDEsInR5cGUiOiJhY2Nlc3MifQ.PM0U8B56IU8gP8mn_gsQPvPdkmOvqFrkS3LcklrSd7M" [accepted]
+INFO:     connection open
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+RAG ¼ìË÷Ê§°Ü£¨½µ¼¶ÎÞËØ²Ä£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+RAG ¼ìË÷Ê§°Ü£¨½µ¼¶ÎÞËØ²Ä£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+RAG ¼ìË÷Ê§°Ü£¨½µ¼¶ÎÞËØ²Ä£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+RAG ¼ìË÷Ê§°Ü£¨½µ¼¶ÎÞËØ²Ä£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+RAG ¼ìË÷Ê§°Ü£¨½µ¼¶ÎÞËØ²Ä£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+È«ÎÄÒ»ÖÂÐÔ¼ì²éÊ§°Ü£¨½µ¼¶¼ÌÐø£©: LLM ·µ»Ø·Ç JSON: Expecting value: line 831 column 1 (char 20866)
+INFO:     127.0.0.1:60041 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+INFO:     127.0.0.1:59943 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+WARNING:  StatReload detected changes in 'app\services\requirements_service.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3512]
+INFO:     Started server process [30356]
+INFO:     Waiting for application startup.
+°²È«¸æ¾¯£ºBID_JWT_SECRET ÈÔÎªÄ¬ÈÏÖµ 'change-me-in-production' ÇÒ llm_mock ÒÑ¹Ø±Õ¡ª¡ªJWT Ç©ÃûÓë LLM ÃÜÔ¿¼ÓÃÜ¾ù²»°²È«£¡Éú²ú»·¾³ÇëÁ¢¼´ÉèÖÃ BID_JWT_SECRET Óë BID_LLM_CRYPTO_SECRET
+INFO:     Application startup complete.
+INFO:     127.0.0.1:62911 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:52458 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:52221 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:55780 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:63701 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:61946 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57506 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:60915 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:51240 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:56090 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:59580 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:54594 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57777 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNTU5ODQsInR5cGUiOiJhY2Nlc3MifQ.QuPT1a2AAe1a1AXH-GM9QFpsCZT-6IYdwvAfAFLtxYE" [accepted]
+INFO:     connection open
+BID_LLM_CRYPTO_SECRET Î´ÅäÖÃ£¬LLM ÃÜÔ¿¼ÓÃÜ»ØÍËÊ¹ÓÃ jwt_secret ÅÉÉú£¬½¨ÒéÅäÖÃ¶ÀÁ¢¼ÓÃÜÃÜÔ¿£¨W-2£©
+[92m03:45:32 - LiteLLM:WARNING[0m: get_model_cost_map.py:289 - LiteLLM: Failed to fetch remote model cost map from https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json: The read operation timed out. Falling back to local backup.
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+INFO:     127.0.0.1:54425 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:55296 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:56537 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:59339 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:60977 - "WebSocket /ws/af7262be-7501-400c-8a71-9d9c1bb8e6c1?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI4ZWNjOTllYS04YTVjLTQ0ZDktOTc2YS00ZjMzZDI4OTNiZTciLCJleHAiOjE3ODcyNjY3NTEsInR5cGUiOiJhY2Nlc3MifQ.m9iVefblRxt_Xkg3foNVC2dWh92Ri0SP2_C_5bZAk9I" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:59957 - "WebSocket /ws/554afcc4-f567-4c6c-83c3-fcee5d72e1d4" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:52122 - "WebSocket /ws/554afcc4-f567-4c6c-83c3-fcee5d72e1d4?token=invalid-token" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:52670 - "WebSocket /ws/6907a094-76e9-4bb3-8b6b-4eba24c6f0b4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYTkxYTg4MC1kMmJlLTQxYWQtODhkYi0xMGMzNGRkODRlZjAiLCJleHAiOjE3ODcyNjY3NTMsInR5cGUiOiJhY2Nlc3MifQ.VWUs5BiPKSZU3jSrLodqHLSzOZeV1l6Zld7Yo_pQPlc" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:53813 - "WebSocket /ws/user/581a7a64-2803-4552-8e57-f844179e3d38?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI1ODFhN2E2NC0yODAzLTQ1NTItOGU1Ny1mODQ0MTc5ZTNkMzgiLCJleHAiOjE3ODcyNjY3NTUsInR5cGUiOiJhY2Nlc3MifQ.h_QgXEP0FgwtIjlretfUzq05Hvfu_e3JYVIIDHgYyeM" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:55211 - "WebSocket /ws/user/7fa1d731-e05a-4df9-a179-81f1c269c3bd?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI3ZmExZDczMS1lMDVhLTRkZjktYTE3OS04MWYxYzI2OWMzYmQiLCJleHAiOjE3ODcyNjY3NzIsInR5cGUiOiJhY2Nlc3MifQ.gwirB2PFomouBME0FNp4NH0drHGfhBmYfQypyWYlKJg" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:58909 - "WebSocket /ws/user/67e1ceda-17d7-4d8d-9a7d-b695a631e0f7" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:54527 - "WebSocket /ws/user/67e1ceda-17d7-4d8d-9a7d-b695a631e0f7?token=invalid-token" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:50507 - "WebSocket /ws/user/67e1ceda-17d7-4d8d-9a7d-b695a631e0f7?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyYzA1ZjAxNi1hYTAxLTRkZTItYjRkZC1jNTBhNmJlZmI3MTciLCJleHAiOjE3ODcyNjY3NzQsInR5cGUiOiJhY2Nlc3MifQ.RyXrfZ4oHJFbwYA9IR_zLwb5ocVlGMSPuaxF5nWTeIM" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:61841 - "WebSocket /ws/user/b89bf035-1312-4e4a-875f-0fcbe6d2bf83?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiODliZjAzNS0xMzEyLTRlNGEtODc1Zi0wZmNiZTZkMmJmODMiLCJleHAiOjE3ODcyNjY4ODEsInR5cGUiOiJhY2Nlc3MifQ.uDN5vhzo5fab_DEEiCoqbt7OiRi4GZLf6j4ePln70Ag" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:52147 - "WebSocket /ws/user/75cb9c34-75e7-4cb6-aea3-1ba5ed34a631?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI3NWNiOWMzNC03NWU3LTRjYjYtYWVhMy0xYmE1ZWQzNGE2MzEiLCJleHAiOjE3ODcyNjY4OTcsInR5cGUiOiJhY2Nlc3MifQ.NPjBlsWst0d47X3I8nbyJqBQ4FIgDlgbTJn0Gofq_ak" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:52533 - "WebSocket /ws/user/1d04e1b3-db19-4793-8ea6-f9da031f826c" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:64883 - "WebSocket /ws/user/1d04e1b3-db19-4793-8ea6-f9da031f826c?token=invalid-token" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:57834 - "WebSocket /ws/user/1d04e1b3-db19-4793-8ea6-f9da031f826c?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwYjFlYTZkNy0zOGRmLTQyMjItOThmOC1lMzgzZWZmOTE1OTgiLCJleHAiOjE3ODcyNjY4OTgsInR5cGUiOiJhY2Nlc3MifQ.g39KdixmXAJOe2Qqzytw_mzIw9y4F_0xlNDhYNpE6Tc" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:59453 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:54520 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:61720 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:63149 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:52864 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:58042 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:49856 - "WebSocket /ws/user/8d14be71-0c76-4e3b-bbbc-8ec951c8e098?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI4ZDE0YmU3MS0wYzc2LTRlM2ItYmJiYy04ZWM5NTFjOGUwOTgiLCJleHAiOjE3ODcyNjY5NjUsInR5cGUiOiJhY2Nlc3MifQ.nc-8EacLNJqv523gxo804pVJnm_eem6Wy9RqIXAsHiU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:56143 - "WebSocket /ws/user/e64aa262-6e6c-4122-bdb2-4b7a6ae96e1e?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJlNjRhYTI2Mi02ZTZjLTQxMjItYmRiMi00YjdhNmFlOTZlMWUiLCJleHAiOjE3ODcyNjY5ODAsInR5cGUiOiJhY2Nlc3MifQ.UF3C0vv9L4o9NXxrfnSpU5Sn1F0Ei_IFusu75WQYaqg" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:49287 - "WebSocket /ws/user/ff6857dc-9d78-419c-a579-3976e99d86e6" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:50464 - "WebSocket /ws/user/ff6857dc-9d78-419c-a579-3976e99d86e6?token=invalid-token" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:56039 - "WebSocket /ws/user/ff6857dc-9d78-419c-a579-3976e99d86e6?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MmFkZWU2ZC1mNjA4LTRjYTUtOWQ3OS1hMjhkYTczODRhY2QiLCJleHAiOjE3ODcyNjY5ODIsInR5cGUiOiJhY2Nlc3MifQ.cY8zqMemruBILU-AablhZrA1AUy2ncW6H95HPq8sZzw" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:64324 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:53814 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:58311 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:53036 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:55930 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:58075 - "WebSocket /ws/a53678e5-ac71-49c9-9c98-95c256c0c206?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI4NGU5ZGRiOC1kODU3LTRmZTktYTJmOS03NWZmMWE5NDNiZTUiLCJleHAiOjE3ODcyNjcwNjksInR5cGUiOiJhY2Nlc3MifQ.jX7PJkjSeuD9xvjvKRjbe6LldGacrb_2SxEa8edJvyU" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:64142 - "WebSocket /ws/9a06275f-d4f8-4fd0-92fe-c79edd2f236d" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:52474 - "WebSocket /ws/9a06275f-d4f8-4fd0-92fe-c79edd2f236d?token=invalid-token" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:55417 - "WebSocket /ws/db429db4-399e-4f97-9cb2-797ceee9b94b?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkNDllNDU2NC1iMmYyLTQwNjMtYmY4Yi0xZGY4MmJiMTQ0NmMiLCJleHAiOjE3ODcyNjcwNzEsInR5cGUiOiJhY2Nlc3MifQ.d7BDIzstchadx-AFzYRPrZ5yV6qX7yuhOGUM5mAz6Pk" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:53795 - "WebSocket /ws/user/4ae758c6-c757-4000-b457-79a8f13670c0?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0YWU3NThjNi1jNzU3LTQwMDAtYjQ1Ny03OWE4ZjEzNjcwYzAiLCJleHAiOjE3ODcyNjcwNzMsInR5cGUiOiJhY2Nlc3MifQ.fcrK0ifLjnbNegK2n6cFRhkHW28a5x-4tqcngL6MRwA" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:60375 - "WebSocket /ws/user/80738fb5-8a5f-4224-ba02-e2049403011f" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:57501 - "WebSocket /ws/user/80738fb5-8a5f-4224-ba02-e2049403011f?token=invalid-token" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:50500 - "WebSocket /ws/user/80738fb5-8a5f-4224-ba02-e2049403011f?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwMzljYTQ5Yi00MWJmLTQxODItYjRiMS0zOGQ1Y2Y5NWJkNmYiLCJleHAiOjE3ODcyNjcwNzQsInR5cGUiOiJhY2Nlc3MifQ.JrW15UqDaBDrznq9II9hWFKw2kK_LKIhPq5jj8pyt7w" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:60503 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjgwNDgsInR5cGUiOiJhY2Nlc3MifQ.6N8rPTaO6XKp-RtrEyC2_od-TlxPf2-_u1Ywf23qK6A" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:58560 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNzM2ODAsInR5cGUiOiJhY2Nlc3MifQ.AobA_XT8zjQEKs5RvpmgA4Lk53wjq2jjI39BwPdRV1M" [accepted]
+INFO:     connection open
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+¶Ô±ê coverage ¼ìË÷Ê§°Ü£¨½µ¼¶ 0.0£©: Embedding ·þÎñµ÷ÓÃÊ§°Ü: litellm.APIConnectionError: APIConnectionError: DashscopeException - Missing API key for DashScope. Set DASHSCOPE_API_KEY environment variable or pass api_key parameter.
+WARNING:  StatReload detected changes in 'tests\services\test_version_service.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [30356]
+INFO:     Started server process [29272]
+INFO:     Waiting for application startup.
+°²È«¸æ¾¯£ºBID_JWT_SECRET ÈÔÎªÄ¬ÈÏÖµ 'change-me-in-production' ÇÒ llm_mock ÒÑ¹Ø±Õ¡ª¡ªJWT Ç©ÃûÓë LLM ÃÜÔ¿¼ÓÃÜ¾ù²»°²È«£¡Éú²ú»·¾³ÇëÁ¢¼´ÉèÖÃ BID_JWT_SECRET Óë BID_LLM_CRYPTO_SECRET
+INFO:     Application startup complete.
+INFO:     127.0.0.1:50500 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:58523 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:63424 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:55032 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:50486 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:51113 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:58766 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:58377 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" 403
+INFO:     connection rejected (403 Forbidden)
+WARNING:  StatReload detected changes in 'app\api\audit.py'. Reloading...
+INFO:     127.0.0.1:62417 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     127.0.0.1:54792 - "WebSocket /ws/user/d293ef4c-5a2e-4d65-9a46-37f5f3b980d4?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkMjkzZWY0Yy01YTJlLTRkNjUtOWE0Ni0zN2Y1ZjNiOTgwZDQiLCJleHAiOjE3ODcyNjI2NDEsInR5cGUiOiJhY2Nlc3MifQ.zUBoGlc9pfvNm8-qTF8-LGuzqu_KQAAC0d7BLvC0wSU" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [29272]
+INFO:     Started server process [22588]
+INFO:     Waiting for application startup.
+°²È«¸æ¾¯£ºBID_JWT_SECRET ÈÔÎªÄ¬ÈÏÖµ 'change-me-in-production' ÇÒ llm_mock ÒÑ¹Ø±Õ¡ª¡ªJWT Ç©ÃûÓë LLM ÃÜÔ¿¼ÓÃÜ¾ù²»°²È«£¡Éú²ú»·¾³ÇëÁ¢¼´ÉèÖÃ BID_JWT_SECRET Óë BID_LLM_CRYPTO_SECRET
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'tests\unit\test_kb_material_service.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [22588]
+INFO:     Started server process [23044]
+INFO:     Waiting for application startup.
+°²È«¸æ¾¯£ºBID_JWT_SECRET ÈÔÎªÄ¬ÈÏÖµ 'change-me-in-production' ÇÒ llm_mock ÒÑ¹Ø±Õ¡ª¡ªJWT Ç©ÃûÓë LLM ÃÜÔ¿¼ÓÃÜ¾ù²»°²È«£¡Éú²ú»·¾³ÇëÁ¢¼´ÉèÖÃ BID_JWT_SECRET Óë BID_LLM_CRYPTO_SECRET
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'app\services\kb_base_service.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [23044]
+INFO:     Started server process [11396]
+INFO:     Waiting for application startup.
+°²È«¸æ¾¯£ºBID_JWT_SECRET ÈÔÎªÄ¬ÈÏÖµ 'change-me-in-production' ÇÒ llm_mock ÒÑ¹Ø±Õ¡ª¡ªJWT Ç©ÃûÓë LLM ÃÜÔ¿¼ÓÃÜ¾ù²»°²È«£¡Éú²ú»·¾³ÇëÁ¢¼´ÉèÖÃ BID_JWT_SECRET Óë BID_LLM_CRYPTO_SECRET
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in '_patch_service.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [11396]
+INFO:     Started server process [33844]
+INFO:     Waiting for application startup.
+°²È«¸æ¾¯£ºBID_JWT_SECRET ÈÔÎªÄ¬ÈÏÖµ 'change-me-in-production' ÇÒ llm_mock ÒÑ¹Ø±Õ¡ª¡ªJWT Ç©ÃûÓë LLM ÃÜÔ¿¼ÓÃÜ¾ù²»°²È«£¡Éú²ú»·¾³ÇëÁ¢¼´ÉèÖÃ BID_JWT_SECRET Óë BID_LLM_CRYPTO_SECRET
+INFO:     Application startup complete.

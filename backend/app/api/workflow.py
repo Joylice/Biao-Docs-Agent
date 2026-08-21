@@ -1,12 +1,14 @@
-"""工作流 API 路由 — LangGraph 编排控制（经 workflow_runtime 服务层）."""
+"""工作流 API 路由 — LangGraph 编排控制（经 workflow_runtime 服务层）.
+
+DB 操作统一委托 workflow_runtime（批次 1c 分层重构）；
+本层保留路由/依赖注入/请求 schema/审计埋点/事件推送/显式 commit。
+"""
 
 import uuid
-from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
@@ -14,8 +16,6 @@ from app.core.database import get_db
 from app.core.deps import get_current_owner_id, get_current_user_id
 from app.core.exceptions import BizError, ForbiddenError
 from app.core.response import success
-from app.models.project import ProjectMember
-from app.models.proposal import ChapterAssignment
 from app.services import division_service, workflow_runtime
 from app.services.event_service import publish_event, publish_user_event
 from app.services.project_service import _check_project_member
@@ -142,10 +142,8 @@ async def confirm_outline(
             decision["mounted_kb_ids"] = [str(x) for x in body.mounted_kb_ids]
     workflow_runtime.resume_workflow_in_background(project_id, decision)
     # 阶段 C：大纲确认后通知全体成员刷新工作台（用户级频道，去重含 owner）
-    members_result = await db.execute(
-        select(ProjectMember.user_id).where(ProjectMember.project_id == project_id)
-    )
-    targets = {str(uid) for uid in members_result.scalars().all()} | {str(user_id)}
+    member_ids = await workflow_runtime.list_project_member_ids(db, project_id)
+    targets = {str(uid) for uid in member_ids} | {str(user_id)}
     for uid in targets:
         await publish_user_event(uid, {"type": "workbench_refresh", "project_id": str(project_id)})
     return success(data={"status": "confirmed", "next_phase": "generate"})
@@ -226,78 +224,6 @@ async def clear_outline_draft(
     return success(data={"cleared": True})
 
 
-async def _redispatch_feedback(
-    db: AsyncSession, project_id: uuid.UUID, feedback: dict[str, str]
-) -> dict[str, str]:
-    """审阅意见回派章节/子节负责人（阶段 5）.
-
-    feedback 键支持章级/子节编号或标题匹配（子节编号/标题来自大纲嵌套树）：
-    - 命中分工 → assignment 置 rejected + 意见落库 + 推送 task_reviewed
-      （assignee 在分工页「我的任务」看到打回可重编）；
-    - 子节无分工时降级匹配父章分工；
-    - 无分工章节 → 保留原 rewrite 链路。
-    返回未被回派的剩余 feedback（避免重复重写）。
-    """
-    if not feedback:
-        return {}
-    from app.services.chapter_service import numbered_sections
-
-    snapshot = await workflow_runtime.get_state(project_id)
-    outline = (snapshot.values or {}).get("outline", []) or []
-    nos: set[str] = set()
-    title_to_no: dict[str, str] = {}
-    for c in outline:
-        no = str(c.get("chapter_no", ""))
-        nos.add(no)
-        title_to_no[str(c.get("title", ""))] = no
-        # 子节编号/标题同样参与匹配（嵌套树推导，与分工编号规则一致）
-        for sub_no, sub_title in numbered_sections(c.get("sections", []) or [], no):
-            nos.add(sub_no)
-            title_to_no.setdefault(sub_title, sub_no)
-    remaining: dict[str, str] = {}
-    for key, comment in feedback.items():
-        chapter_no = key if key in nos else title_to_no.get(key, "")
-        if not chapter_no:
-            remaining[key] = comment
-            continue
-        result = await db.execute(
-            select(ChapterAssignment).where(
-                ChapterAssignment.project_id == project_id,
-                ChapterAssignment.chapter_no == chapter_no,
-            )
-        )
-        assignment = result.scalar_one_or_none()
-        if assignment is None and "." in chapter_no:
-            # 子节无分工 → 降级回派父章负责人（章级分工覆盖子节）
-            parent_no = chapter_no.rsplit(".", 1)[0]
-            result = await db.execute(
-                select(ChapterAssignment).where(
-                    ChapterAssignment.project_id == project_id,
-                    ChapterAssignment.chapter_no == parent_no,
-                )
-            )
-            assignment = result.scalar_one_or_none()
-        if assignment is None:
-            remaining[key] = comment
-            continue
-        assignment.status = "rejected"
-        assignment.review_comment = comment
-        assignment.reviewed_at = datetime.now(UTC)
-        await publish_event(
-            str(project_id),
-            {
-                "type": "task_reviewed",
-                "chapter_no": chapter_no,
-                "assignee_id": str(assignment.assignee_id),
-                "action": "rejected",
-            },
-        )
-    await db.flush()
-    # 事务约定（BUG-1）：回派状态在 resume 前显式提交，assignee 立即可见打回
-    await db.commit()
-    return remaining
-
-
 @router.post("/{project_id}/workflow/confirm-review")
 async def confirm_review(
     project_id: uuid.UUID,
@@ -317,7 +243,12 @@ async def confirm_review(
 
     # 意见回派：命中分工的章节退回负责人重编，不再走 rewrite；无分工保持原链路
     if decision["action"] == "feedback" and decision["feedback"]:
-        decision["feedback"] = await _redispatch_feedback(db, project_id, decision["feedback"])
+        remaining, events = await workflow_runtime.redispatch_feedback(
+            db, project_id, decision["feedback"]
+        )
+        decision["feedback"] = remaining
+        for event in events:
+            await publish_event(str(project_id), event)
         # 全部意见均已回派负责人 → 无需 AI 重写，保持审阅中等待重编后复审
         if not decision["feedback"]:
             decision["action"] = "redispatched"
@@ -325,7 +256,7 @@ async def confirm_review(
     # 审计埋点：审阅确认（security.md §4）
     await audit.record(db, user_id, "workflow.confirm_review", project_id=project_id)
 
-    # 事务约定（BUG-1）：审计写入响应前显式提交
+    # 事务约定（BUG-1）：审计 + 回派状态在 resume 前显式提交，assignee 立即可见打回
     await db.commit()
 
     workflow_runtime.resume_workflow_in_background(project_id, decision)

@@ -1,45 +1,24 @@
-"""方案版本库 API — 列表/手动快照/签名下载/归档公司知识库."""
+"""方案版本库 API — 列表/手动快照/签名下载/归档公司知识库.
+
+DB 操作统一委托 version_service（批次 1a 分层重构）；
+审计留痕/commit/入队保留在 api 层（事务约定 BUG-1）。
+"""
 
 import uuid
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
 from app.core.database import get_db
 from app.core.deps import get_current_owner_id, get_current_user_id
-from app.core.exceptions import NotFoundError, ValidationError
 from app.core.response import success
-from app.models.document import Document
-from app.models.knowledge_base import SCOPE_COMPANY, KnowledgeBase
-from app.models.project import Project
-from app.models.proposal import ProposalVersion
-from app.models.user import User
 from app.services import task_service, version_service
 from app.services.project_service import _check_project_member
 from app.services.storage_service import presigned_url
 
 router = APIRouter()
-
-
-async def _get_project(db: AsyncSession, project_id: uuid.UUID) -> Project:
-    result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if project is None:
-        raise NotFoundError("项目")
-    return project
-
-
-async def _get_version(
-    db: AsyncSession, project_id: uuid.UUID, version_id: uuid.UUID
-) -> ProposalVersion:
-    result = await db.execute(select(ProposalVersion).where(ProposalVersion.id == version_id))
-    version = result.scalar_one_or_none()
-    if version is None or version.project_id != project_id:
-        raise NotFoundError("版本记录")
-    return version
 
 
 @router.get("/{project_id}/versions")
@@ -50,25 +29,7 @@ async def list_versions(
 ) -> dict:
     """版本列表（项目成员可读，version 倒序；created_by NULL = 自动快照）."""
     await _check_project_member(db, project_id, user_id)
-    result = await db.execute(
-        select(ProposalVersion, User.display_name)
-        .outerjoin(User, User.id == ProposalVersion.created_by)
-        .where(ProposalVersion.project_id == project_id)
-        .order_by(ProposalVersion.version.desc())
-    )
-    items = []
-    for version, creator_name in result.all():
-        items.append(
-            {
-                "id": str(version.id),
-                "version": version.version,
-                "snapshot_note": version.snapshot_note,
-                "created_by": str(version.created_by) if version.created_by else None,
-                "created_by_name": creator_name if version.created_by else None,
-                "auto": version.created_by is None,
-                "created_at": version.created_at.isoformat() if version.created_at else None,
-            }
-        )
+    items = await version_service.list_versions(db, project_id)
     return success(data={"items": items})
 
 
@@ -86,7 +47,7 @@ async def create_version(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """手动创建版本快照（仅 owner；Word + Markdown 源入 MinIO，version 续号）."""
-    project = await _get_project(db, project_id)
+    project = await version_service.get_project(db, project_id)
     version = await version_service.create_snapshot(
         db,
         project_id,
@@ -119,7 +80,7 @@ async def download_version(
 ) -> dict:
     """版本下载（项目成员；返回签名 URL，docx 与 Markdown 源二选一）."""
     await _check_project_member(db, project_id, user_id)
-    version = await _get_version(db, project_id, version_id)
+    version = await version_service.get_version(db, project_id, version_id)
     storage_key = version.storage_key_docx if type == "docx" else version.storage_key_source
     return success(data={"url": presigned_url(storage_key), "storage_key": storage_key})
 
@@ -138,7 +99,7 @@ async def rollback_version(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """版本回滚（仅 owner）：快照回写 proposal_sections + 图状态，审计 version.rollback."""
-    version = await _get_version(db, project_id, version_id)
+    version = await version_service.get_version(db, project_id, version_id)
     chapters_restored = await version_service.rollback_version(db, project_id, version)
     await audit.record(
         db,
@@ -168,30 +129,7 @@ async def archive_version(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """归档版本到公司知识库（仅 owner）：登记全局素材并入队分块向量化."""
-    result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == body.kb_id))
-    base = result.scalar_one_or_none()
-    if base is None:
-        raise NotFoundError("知识库")
-    if base.scope != SCOPE_COMPANY:
-        raise ValidationError("仅公司级知识库可归档")
-
-    version = await _get_version(db, project_id, version_id)
-    project = await _get_project(db, project_id)
-    title = f"归档-{project.name}-v{version.version}"
-
-    # 全局素材（project_id=NULL）入公司库，kb/search 检索范围可命中
-    doc = Document(
-        project_id=None,
-        doc_type="kb_material",
-        kb_id=base.id,
-        title=title,
-        storage_key=version.storage_key_docx,
-        status="uploaded",
-        created_by=owner_id,
-    )
-    db.add(doc)
-    await db.flush()
-    await db.refresh(doc)
+    data = await version_service.archive_version(db, project_id, version_id, body.kb_id, owner_id)
 
     # 审计埋点：方案归档（security.md §4）
     await audit.record(
@@ -200,20 +138,16 @@ async def archive_version(
         "proposal.archive",
         project_id=project_id,
         target_type="proposal_version",
-        target_id=str(version.id),
-        detail={"kb_id": str(base.id), "version": version.version, "document_id": str(doc.id)},
+        target_id=data["id"],
+        detail={
+            "kb_id": data["kb_id"],
+            "version": data["version"],
+            "document_id": str(data["document_id"]),
+        },
     )
 
     # 事务约定（BUG-1）：登记 + 审计在入队前显式提交，确保 worker 领取时文档行可见
     await db.commit()
-    await task_service.enqueue_index_document(None, doc.id)
+    await task_service.enqueue_index_document(None, data["document_id"])
 
-    return success(
-        data={
-            "id": str(version.id),
-            "version": version.version,
-            "document_id": str(doc.id),
-            "kb_id": str(base.id),
-            "title": title,
-        }
-    )
+    return success(data=data)

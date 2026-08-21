@@ -4,15 +4,13 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
 from app.core.database import get_db
 from app.core.deps import get_current_admin_id
 from app.core.response import paginated
-from app.models.audit_log import AuditLog
-from app.models.user import User
+from app.services import audit_service
 
 router = APIRouter()
 
@@ -31,41 +29,17 @@ async def list_audit_logs(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """审计日志查询（仅管理员；按 created_at 倒序分页；LEFT JOIN 操作人姓名）."""
-    query = select(AuditLog, User.display_name).join(
-        User, AuditLog.user_id == User.id, isouter=True
+    items, total = await audit_service.query_logs(
+        db,
+        page,
+        page_size,
+        action=action,
+        user_id=user_id,
+        project_id=project_id,
+        target_type=target_type,
+        start=start,
+        end=end,
     )
-    if action:
-        query = query.where(AuditLog.action.startswith(action))
-    if user_id:
-        query = query.where(AuditLog.user_id == user_id)
-    if project_id:
-        query = query.where(AuditLog.project_id == project_id)
-    if target_type:
-        query = query.where(AuditLog.target_type == target_type)
-    if start:
-        query = query.where(AuditLog.created_at >= start)
-    if end:
-        query = query.where(AuditLog.created_at <= end)
-
-    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar() or 0
-    result = await db.execute(
-        query.order_by(AuditLog.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    )
-    items = []
-    for log, user_name in result.all():
-        items.append(
-            {
-                "id": str(log.id),
-                "user_id": str(log.user_id),
-                "user_name": user_name or "",  # 用户已删除（JOIN 未命中）时空串
-                "action": log.action,
-                "project_id": str(log.project_id) if log.project_id else None,
-                "target_type": log.target_type,
-                "target_id": log.target_id,
-                "detail": log.detail,
-                "created_at": log.created_at.isoformat() if log.created_at else None,
-            }
-        )
 
     # 查询行为自身留痕（detail 记录过滤条件，敏感键由 _sanitize 兜底）
     await audit.record(

@@ -1,12 +1,14 @@
-"""章节分工协作 API — 分配/列表/领取/生成初稿/提交（审核端点见后续）."""
+"""章节分工协作 API — 分配/列表/领取/生成初稿/提交（审核端点见后续）.
+
+DB 操作统一委托 division_service（批次 1c 分层重构）；
+本层保留路由/依赖注入/请求 schema/审计埋点/事件推送/显式 commit。
+"""
 
 import uuid
-from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
@@ -14,9 +16,6 @@ from app.core.database import get_db
 from app.core.deps import get_current_owner_id, get_current_user_id
 from app.core.exceptions import BizError, ForbiddenError, NotFoundError, ValidationError
 from app.core.response import success
-from app.models.project import Project
-from app.models.proposal import ChapterAnnotation
-from app.models.user import User
 from app.services import division_service, version_service, workflow_runtime
 from app.services.event_service import publish_event, publish_user_event
 from app.services.project_service import _check_project_member
@@ -145,11 +144,7 @@ async def accept_assignment(
 ) -> dict:
     """领取任务：pending/rejected → in_progress（仅 assignee）."""
     assignment = await _load_my_assignment(db, project_id, assignment_id, user_id)
-    if assignment.status not in ("pending", "rejected"):
-        raise ValidationError(f"当前状态 {assignment.status} 不可领取")
-    assignment.status = "in_progress"
-    assignment.accepted_at = datetime.now(UTC)
-    await db.flush()
+    await division_service.accept_assignment(db, assignment)
     await audit.record(
         db,
         user_id,
@@ -265,11 +260,7 @@ async def submit_assignment(
 ) -> dict:
     """提交待审：in_progress/rejected → submitted（仅 assignee），推送 task_submitted."""
     assignment = await _load_my_assignment(db, project_id, assignment_id, user_id)
-    if assignment.status not in ("in_progress", "rejected"):
-        raise ValidationError(f"当前状态 {assignment.status} 不可提交")
-    assignment.status = "submitted"
-    assignment.submitted_at = datetime.now(UTC)
-    await db.flush()
+    await division_service.submit_assignment(db, assignment)
     await audit.record(
         db,
         user_id,
@@ -289,8 +280,7 @@ async def submit_assignment(
         },
     )
     # 阶段 C：提交待审 → 定向推送项目 owner（待审核待办）
-    project_result = await db.execute(select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
+    project = await division_service.get_project(db, project_id)
     if project is not None:
         await publish_user_event(
             str(project.owner_id),
@@ -317,26 +307,7 @@ async def list_annotations(
     assignment = await division_service.get_assignment(db, project_id, assignment_id)
     if assignment is None:
         raise NotFoundError("分工记录")
-    result = await db.execute(
-        select(ChapterAnnotation, User.display_name)
-        .join(User, User.id == ChapterAnnotation.created_by)
-        .where(
-            ChapterAnnotation.project_id == project_id,
-            ChapterAnnotation.chapter_no == assignment.chapter_no,
-        )
-        .order_by(ChapterAnnotation.created_at.asc())
-    )
-    items = [
-        {
-            "id": str(ann.id),
-            "chapter_no": ann.chapter_no,
-            "content": ann.content,
-            "created_by": str(ann.created_by),
-            "created_by_name": name or "",
-            "created_at": ann.created_at.isoformat() if ann.created_at else None,
-        }
-        for ann, name in result.all()
-    ]
+    items = await division_service.list_annotations(db, project_id, assignment.chapter_no)
     return success(data={"items": items})
 
 
@@ -353,21 +324,9 @@ async def create_annotation(
     assignment = await division_service.get_assignment(db, project_id, assignment_id)
     if assignment is None:
         raise NotFoundError("分工记录")
-    project_result = await db.execute(select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    is_owner = project is not None and project.owner_id == user_id
-    if assignment.assignee_id != user_id and not is_owner:
-        raise ForbiddenError("仅章节负责人或项目负责人可批注")
-
-    ann = ChapterAnnotation(
-        project_id=project_id,
-        chapter_no=assignment.chapter_no,
-        content=body.content.strip(),
-        created_by=user_id,
+    ann = await division_service.create_annotation(
+        db, project_id, assignment, body.content, user_id
     )
-    db.add(ann)
-    await db.flush()
-    await db.refresh(ann)
     await audit.record(
         db,
         user_id,
@@ -400,12 +359,7 @@ async def review_assignment(
     assignment = await division_service.get_assignment(db, project_id, assignment_id)
     if assignment is None:
         raise NotFoundError("分工记录")
-    if assignment.status != "submitted":
-        raise ValidationError(f"当前状态 {assignment.status} 不可审核（仅待审章节可审核）")
-    assignment.status = body.action
-    assignment.review_comment = body.comment or None
-    assignment.reviewed_at = datetime.now(UTC)
-    await db.flush()
+    await division_service.review_assignment(db, assignment, body.action, body.comment)
     await audit.record(
         db,
         owner_id,
@@ -438,8 +392,7 @@ async def review_assignment(
     )
     # 审核通过后检查自动快照条件（全部章节定稿 → 版本库自动入库；失败不阻塞审核）
     if body.action == "approved":
-        result = await db.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one_or_none()
+        project = await division_service.get_project(db, project_id)
         if project is not None:
             await version_service.maybe_auto_snapshot(db, project_id, project.name)
     return success(data={"id": str(assignment.id), "status": assignment.status})

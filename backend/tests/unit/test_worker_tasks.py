@@ -172,9 +172,7 @@ class TestTaskParseTenderIdempotentCleanup:
     """解析任务保存前清理该文档旧评分点（幂等，防并发 reparse 数据翻倍）."""
 
     @pytest.mark.asyncio
-    async def test_parse_cleans_old_score_points_before_save(
-        self, parse_env, monkeypatch
-    ) -> None:
+    async def test_parse_cleans_old_score_points_before_save(self, parse_env, monkeypatch) -> None:
         """保存新结果前必须已对该文档旧评分点发起 DELETE（按 doc_id 限定）."""
         from app.services import parse_service
 
@@ -208,9 +206,7 @@ class TestTaskParseTenderIdempotentCleanup:
 
         # 清理语句限定本文档（score_points + doc_id 条件），避免误删同项目其他文档
         delete_stmts = [
-            str(s)
-            for s in db.executed_statements
-            if str(s).lstrip().upper().startswith("DELETE")
+            str(s) for s in db.executed_statements if str(s).lstrip().upper().startswith("DELETE")
         ]
         assert len(delete_stmts) == 1
         assert "score_points" in delete_stmts[0]

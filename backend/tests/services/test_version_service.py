@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.exceptions import ValidationError
+from app.core.exceptions import NotFoundError, ValidationError
+from app.models.document import Document
+from app.models.knowledge_base import KnowledgeBase
+from app.models.project import Project
 from app.models.proposal import ProposalSection, ProposalVersion
 from app.services import version_service
 
@@ -230,3 +233,123 @@ async def test_rollback_version_requires_snapshot_json() -> None:
     pid = uuid.uuid4()
     with pytest.raises(ValidationError):
         await version_service.rollback_version(AsyncMock(), pid, _version_record(pid, None))
+
+
+# ── 批次 1a：api 层查询/归档 DB 操作下沉 ──
+
+
+def _result(scalar: object) -> MagicMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = scalar
+    return result
+
+
+def _project(pid: uuid.UUID, owner_id: uuid.UUID) -> Project:
+    return Project(id=pid, name="测试项目", owner_id=owner_id, status="active")
+
+
+class TestGetProjectAndVersion:
+    @pytest.mark.asyncio
+    async def test_get_project_not_found(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_result(None))
+        with pytest.raises(NotFoundError):
+            await version_service.get_project(session, uuid.uuid4())
+
+    @pytest.mark.asyncio
+    async def test_get_version_not_found_or_mismatch(self) -> None:
+        """版本不存在或 project 不匹配 → NotFoundError."""
+        pid = uuid.uuid4()
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_result(None))
+        with pytest.raises(NotFoundError):
+            await version_service.get_version(session, pid, uuid.uuid4())
+
+        other = _version_record(uuid.uuid4(), None)
+        session.execute = AsyncMock(return_value=_result(other))
+        with pytest.raises(NotFoundError):
+            await version_service.get_version(session, pid, other.id)
+
+    @pytest.mark.asyncio
+    async def test_get_version_ok(self) -> None:
+        pid = uuid.uuid4()
+        record = _version_record(pid, None)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_result(record))
+        assert await version_service.get_version(session, pid, record.id) is record
+
+
+class TestListVersions:
+    @pytest.mark.asyncio
+    async def test_serialization_desc_and_auto_flag(self) -> None:
+        """version 倒序；created_by NULL 标记 auto，created_by_name 随之为 None."""
+        pid = uuid.uuid4()
+        owner = uuid.uuid4()
+        v2 = _version_record(pid, None)
+        v2.version = 2
+        v2.created_by = owner
+        v1 = _version_record(pid, None)
+        v1.version = 1
+        v1.created_by = None
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_rows_result([(v2, "张三"), (v1, None)]))
+        items = await version_service.list_versions(session, pid)
+        assert [i["version"] for i in items] == [2, 1]
+        assert items[0]["created_by_name"] == "张三"
+        assert items[0]["auto"] is False
+        assert items[1]["auto"] is True
+        assert items[1]["created_by_name"] is None
+        assert "DESC" in str(session.execute.await_args.args[0])
+
+
+class TestArchiveVersion:
+    def _base(self, scope: str = "company") -> KnowledgeBase:
+        return KnowledgeBase(
+            id=uuid.uuid4(), name="公司公共库", scope=scope, owner_id=None, project_id=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_company_base(self) -> None:
+        """非公司级知识库 → ValidationError（400）."""
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_result(self._base("personal")))
+        with pytest.raises(ValidationError):
+            await version_service.archive_version(
+                session, uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+            )
+
+    @pytest.mark.asyncio
+    async def test_unknown_base_404(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_result(None))
+        with pytest.raises(NotFoundError):
+            await version_service.archive_version(
+                session, uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+            )
+
+    @pytest.mark.asyncio
+    async def test_registers_global_material(self) -> None:
+        """归档：登记全局素材（project_id NULL + kb_id）+ flush/refresh；入队由 api 层执行."""
+        pid = uuid.uuid4()
+        owner = uuid.uuid4()
+        base = self._base("company")
+        version = _version_record(pid, None)
+        version.version = 2
+        project = _project(pid, owner)
+        session = AsyncMock()
+        session.add = MagicMock()
+        session.execute = AsyncMock(side_effect=[_result(base), _result(version), _result(project)])
+        data = await version_service.archive_version(session, pid, version.id, base.id, owner)
+        doc = session.add.call_args.args[0]
+        assert isinstance(doc, Document)
+        assert doc.project_id is None
+        assert doc.kb_id == base.id
+        assert doc.doc_type == "kb_material"
+        assert doc.storage_key == version.storage_key_docx
+        session.flush.assert_awaited()
+        session.refresh.assert_awaited()
+        assert data["version"] == 2
+        assert data["document_id"] == doc.id
+        assert data["kb_id"] == str(base.id)
+        assert data["title"] == "归档-测试项目-v2"
+        session.commit.assert_not_awaited()  # commit 位置保留在 api 层（BUG-1 约定）

@@ -4,19 +4,18 @@
 角色变更留痕审计 user.role_change，权限点配置留痕审计 rbac.update。
 安全约束：不返回 password_hash；禁止变更自身角色；至少保留 1 名 admin；
 admin 角色不可移除 system:manage（防自我锁死）。
+DB 操作统一委托 user_service（批次 1a 分层重构）。
 """
 
 import uuid
-from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
 from app.core.database import get_db
-from app.core.deps import ROLE_ADMIN, get_current_admin_id, get_current_user_id
+from app.core.deps import get_current_admin_id, get_current_user_id
 from app.core.exceptions import BizError
 from app.core.rbac import (
     PERMISSION_CATEGORIES,
@@ -27,9 +26,6 @@ from app.core.rbac import (
     set_role_permissions,
 )
 from app.core.response import paginated, success
-from app.core.security import hash_password
-from app.models.project import Project
-from app.models.user import User
 from app.schemas.user import (
     PasswordResetIn,
     RolePermissionsUpdateIn,
@@ -38,6 +34,7 @@ from app.schemas.user import (
     UserListOut,
     UserUpdateIn,
 )
+from app.services import user_service
 
 router = APIRouter()
 
@@ -52,21 +49,8 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """用户列表（仅管理员）."""
-    query = select(User)
-    if keyword:
-        pattern = f"%{keyword}%"
-        query = query.where(or_(User.email.ilike(pattern), User.display_name.ilike(pattern)))
-    if role:
-        query = query.where(User.role == role)
-
-    count_query = select(func.count()).select_from(query.subquery())
-    total = (await db.execute(count_query)).scalar() or 0
-
-    items_query = (
-        query.order_by(User.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    )
-    result = await db.execute(items_query)
-    items = [UserListOut.model_validate(u).model_dump(mode="json") for u in result.scalars().all()]
+    users, total = await user_service.list_users(db, keyword, role, page, page_size)
+    items = [UserListOut.model_validate(u).model_dump(mode="json") for u in users]
     return paginated(items, total)
 
 
@@ -79,11 +63,7 @@ async def list_user_options(
 
     仅返回最小字段（id/email/display_name），不泄露角色以外的敏感信息。
     """
-    result = await db.execute(select(User).order_by(User.created_at.asc()).limit(500))
-    items = [
-        {"id": str(u.id), "email": u.email, "display_name": u.display_name}
-        for u in result.scalars().all()
-    ]
+    items = await user_service.list_user_options(db)
     return success(data={"items": items})
 
 
@@ -96,25 +76,7 @@ async def update_user_role(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """授予/变更用户角色（仅管理员）."""
-    if target_id == admin_id:
-        raise BizError(code=4000, message="不能变更自己的角色")
-
-    result = await db.execute(select(User).where(User.id == target_id))
-    target = result.scalar_one_or_none()
-    if target is None:
-        raise BizError(code=4004, message="用户不存在")
-
-    # 最后一名 admin 保护：降级 admin 前确认仍有其他管理员
-    if target.role == ROLE_ADMIN and req.role != ROLE_ADMIN:
-        count_result = await db.execute(
-            select(func.count()).select_from(User).where(User.role == ROLE_ADMIN)
-        )
-        admin_count = count_result.scalar_one_or_none() or 0
-        if admin_count <= 1:
-            raise BizError(code=4000, message="至少需要保留一名管理员")
-
-    old_role = target.role
-    target.role = req.role
+    target, old_role = await user_service.update_role(db, target_id, req.role, admin_id)
     await audit.record(
         db,
         admin_id,
@@ -136,19 +98,7 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """创建用户（仅管理员；审计 user.create）."""
-    result = await db.execute(select(User).where(User.email == req.email))
-    if result.scalar_one_or_none() is not None:
-        raise BizError(code=4000, message="该邮箱已注册")
-
-    user = User(
-        id=uuid.uuid4(),  # 显式生成：列 default 仅 INSERT 时生效，审计/响应需立即可用
-        email=req.email,
-        password_hash=hash_password(req.password),
-        display_name=req.display_name,
-        role=req.role,
-        created_at=datetime.now(UTC),
-    )
-    db.add(user)
+    user = await user_service.create_user(db, req.email, req.password, req.display_name, req.role)
     await audit.record(
         db,
         admin_id,
@@ -172,28 +122,9 @@ async def update_user(
     if req.display_name is None and req.role is None:
         raise BizError(code=4000, message="没有可更新的字段")
 
-    result = await db.execute(select(User).where(User.id == target_id))
-    target = result.scalar_one_or_none()
-    if target is None:
-        raise BizError(code=4004, message="用户不存在")
-
-    changes: dict[str, dict] = {}
-    if req.display_name is not None:
-        changes["display_name"] = {"from": target.display_name, "to": req.display_name}
-        target.display_name = req.display_name
-    if req.role is not None:
-        if target_id == admin_id:
-            raise BizError(code=4000, message="不能通过编辑变更自己的角色")
-        # 最后一名 admin 保护：降级前确认仍有其他管理员
-        if target.role == ROLE_ADMIN and req.role != ROLE_ADMIN:
-            count_result = await db.execute(
-                select(func.count()).select_from(User).where(User.role == ROLE_ADMIN)
-            )
-            if (count_result.scalar_one_or_none() or 0) <= 1:
-                raise BizError(code=4000, message="至少需要保留一名管理员")
-        changes["role"] = {"from": target.role, "to": req.role}
-        target.role = req.role
-
+    target, changes = await user_service.update_user(
+        db, target_id, req.display_name, req.role, admin_id
+    )
     await audit.record(
         db,
         admin_id,
@@ -216,12 +147,7 @@ async def reset_user_password(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """重置用户密码（仅管理员；审计 user.password_reset）."""
-    result = await db.execute(select(User).where(User.id == target_id))
-    target = result.scalar_one_or_none()
-    if target is None:
-        raise BizError(code=4004, message="用户不存在")
-
-    target.password_hash = hash_password(req.password)
+    await user_service.reset_password(db, target_id, req.password)
     await audit.record(
         db,
         admin_id,
@@ -243,36 +169,14 @@ async def delete_user(
 
     保护规则：不能删自己；名下有 owner 项目拒绝（需先转移）；至少保留一名 admin。
     """
-    if target_id == admin_id:
-        raise BizError(code=4000, message="不能删除自己")
-
-    result = await db.execute(select(User).where(User.id == target_id))
-    target = result.scalar_one_or_none()
-    if target is None:
-        raise BizError(code=4004, message="用户不存在")
-
-    owner_count_result = await db.execute(
-        select(func.count()).select_from(Project).where(Project.owner_id == target_id)
-    )
-    if (owner_count_result.scalar_one_or_none() or 0) > 0:
-        raise BizError(code=4000, message="该用户名下存在项目，请先转移项目负责人后再删除")
-
-    if target.role == ROLE_ADMIN:
-        count_result = await db.execute(
-            select(func.count()).select_from(User).where(User.role == ROLE_ADMIN)
-        )
-        if (count_result.scalar_one_or_none() or 0) <= 1:
-            raise BizError(code=4000, message="至少需要保留一名管理员")
-
-    detail = {"email": target.email, "role": target.role}
-    await db.delete(target)
+    target = await user_service.delete_user(db, target_id, admin_id)
     await audit.record(
         db,
         admin_id,
         "user.delete",
         target_type="user",
         target_id=str(target_id),
-        detail=detail,
+        detail={"email": target.email, "role": target.role},
     )
     await db.commit()
     invalidate_rbac_cache()

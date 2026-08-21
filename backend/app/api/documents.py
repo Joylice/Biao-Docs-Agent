@@ -1,4 +1,9 @@
-"""文档管理 API 路由."""
+"""文档管理 API 路由.
+
+DB 操作统一委托 document_service（批次 1c 分层重构）；
+本层保留路由/依赖注入/请求 schema/审计埋点/显式 commit，
+MinIO 存储与 worker 任务入队编排仍留本层（与 kb 模式一致）。
+"""
 
 import io
 import mimetypes
@@ -8,7 +13,6 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
@@ -17,7 +21,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user_id
 from app.core.exceptions import BizError, ValidationError
 from app.core.response import paginated, success
-from app.models.document import DisqualificationClause, Document, ScorePoint, TechRequirement
+from app.models.document import DisqualificationClause
 from app.schemas.document import (
     DocumentListOut,
     DocumentUploadOut,
@@ -26,7 +30,7 @@ from app.schemas.document import (
     TechRequirementOut,
 )
 from app.services import disqualification_service as dq_service  # 废标条款服务（阶段 H）
-from app.services import rag_service, task_service
+from app.services import document_service, rag_service, task_service
 from app.services.project_service import _check_project_member
 from app.services.storage_service import download_file, presigned_url, upload_file
 
@@ -91,19 +95,6 @@ def _clean_format_requirements(items: list[dict]) -> list[dict]:
     return cleaned
 
 
-async def _load_tender_doc_for_format(
-    db: AsyncSession, project_id: uuid.UUID, document_id: uuid.UUID
-) -> Document:
-    """加载属本项目的招标文件（格式要求读写共用前置校验）."""
-    result = await db.execute(select(Document).where(Document.id == document_id))
-    doc = result.scalar_one_or_none()
-    if not doc or doc.project_id != project_id:
-        raise BizError(code=4004, message="文档不存在")
-    if doc.doc_type != "tender_file":
-        raise BizError(code=4010, message="仅招标文件支持格式要求")
-    return doc
-
-
 @router.post("/{project_id}/documents")
 async def upload_document(
     project_id: uuid.UUID,
@@ -134,17 +125,9 @@ async def upload_document(
     )
 
     # 登记文档记录
-    doc = Document(
-        project_id=project_id,
-        doc_type=doc_type,
-        title=file.filename or "unknown",
-        storage_key=storage_key,
-        status="uploaded",
-        created_by=user_id,
+    doc = await document_service.register_document(
+        db, project_id, doc_type, file.filename or "unknown", storage_key, user_id
     )
-    db.add(doc)
-    await db.flush()
-    await db.refresh(doc)
 
     # 审计埋点：文档上传（security.md §4）
     await audit.record(
@@ -257,10 +240,7 @@ async def download_document(
 ) -> Response:
     """文档下载代理（阶段 2）：流式字节 + Content-Disposition，成员校验 + 审计."""
     await _check_project_member(db, project_id, user_id)
-    result = await db.execute(select(Document).where(Document.id == document_id))
-    doc = result.scalar_one_or_none()
-    if not doc or doc.project_id != project_id:
-        raise BizError(code=4004, message="文档不存在")
+    doc = await document_service.get_document(db, project_id, document_id)
 
     data = download_file(doc.storage_key)
 
@@ -297,34 +277,10 @@ async def reparse_document(
     """重新解析招标文件：清除旧评分点 → 状态重置 → 重新入队（仅评分点提取）.
 
     适用场景：解析结果不理想（评分点缺失/不准确）时重新提取。
-    只负责评分点提取，不做技术需求提取：招标原文技术需求保留，
-    基于旧评分点的 sp_derived 衍生需求一并清除（重新梳理即可重建）。
     """
     await _check_project_member(db, project_id, user_id)
 
-    result = await db.execute(select(Document).where(Document.id == document_id))
-    doc = result.scalar_one_or_none()
-    if not doc or doc.project_id != project_id:
-        raise BizError(code=4004, message="文档不存在")
-    if doc.doc_type != "tender_file":
-        raise BizError(code=4010, message="仅招标文件支持重新解析")
-    if doc.status == "parsing":
-        raise BizError(code=4010, message="文档正在解析中，请稍后重试")
-    if doc.status == "uploaded":
-        raise BizError(code=4010, message="解析任务已排队，请等待完成")
-
-    # 清除该文档的旧评分点（按 doc_id，不影响同项目其他文档）；
-    # 招标原文技术需求保留（重新解析只做评分点提取）；
-    # 衍生技术需求（sp_derived）基于旧评分点梳理，一并清除
-    await db.execute(delete(ScorePoint).where(ScorePoint.doc_id == document_id))
-    await db.execute(
-        delete(TechRequirement).where(
-            TechRequirement.project_id == project_id,
-            TechRequirement.source == "sp_derived",
-        )
-    )
-    doc.status = "uploaded"
-    await db.flush()
+    doc = await document_service.prepare_reparse(db, project_id, document_id)
 
     # 审计埋点：重新解析（security.md §4）
     await audit.record(
@@ -358,22 +314,7 @@ async def list_documents(
     """文档列表."""
     await _check_project_member(db, project_id, user_id)
 
-    query = select(Document).where(Document.project_id == project_id)
-    if doc_type:
-        query = query.where(Document.doc_type == doc_type)
-
-    # 总数
-    count_query = select(func.count()).select_from(query.subquery())
-    total_result = await db.execute(count_query)
-    total = total_result.scalar() or 0
-
-    # 分页
-    items_query = (
-        query.order_by(Document.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    )
-    result = await db.execute(items_query)
-    items = list(result.scalars().all())
-
+    items, total = await document_service.list_documents(db, project_id, doc_type, page, page_size)
     items_data = [DocumentListOut.model_validate(d).model_dump(mode="json") for d in items]
     return paginated(items_data, total)
 
@@ -387,7 +328,7 @@ async def get_format_requirements(
 ) -> dict:
     """读取招标文件格式要求汇总（项目成员可读）."""
     await _check_project_member(db, project_id, user_id)
-    doc = await _load_tender_doc_for_format(db, project_id, document_id)
+    doc = await document_service.load_tender_doc_for_format(db, project_id, document_id)
     items = doc.meta.get("format_requirements", []) if doc.meta else []
     return success(data={"items": items})
 
@@ -402,12 +343,9 @@ async def update_format_requirements(
 ) -> dict:
     """人工编辑格式要求：清洗后幂等覆盖 meta.format_requirements."""
     await _check_project_member(db, project_id, user_id)
-    doc = await _load_tender_doc_for_format(db, project_id, document_id)
 
     items = _clean_format_requirements(body.format_requirements)
-    # 整体替换新 dict 确保 JSON 列标记脏（原地改 key 不触发变更检测）
-    doc.meta = {**(doc.meta or {}), "format_requirements": items}
-    await db.flush()
+    doc = await document_service.save_format_requirements(db, project_id, document_id, items)
 
     # 审计埋点：格式要求人工修改（security.md §4）
     await audit.record(
@@ -434,16 +372,9 @@ async def get_disqualification_clauses(
 ) -> dict:
     """读取招标文件的废标/红线条款列表（项目成员可读，阶段 H）."""
     await _check_project_member(db, project_id, user_id)
-    await _load_tender_doc_for_format(db, project_id, document_id)
-    result = await db.execute(
-        select(DisqualificationClause)
-        .where(
-            DisqualificationClause.project_id == project_id,
-            DisqualificationClause.doc_id == document_id,
-        )
-        .order_by(DisqualificationClause.clause_no)
-    )
-    items = [_clause_to_dict(c) for c in result.scalars().all()]
+    await document_service.load_tender_doc_for_format(db, project_id, document_id)
+    clauses = await document_service.list_doc_clauses(db, project_id, document_id)
+    items = [_clause_to_dict(c) for c in clauses]
     return success(data={"items": items})
 
 
@@ -459,7 +390,7 @@ async def update_disqualification_clauses(
     from app.services.disqualification_service import normalize_risk_category, normalize_severity
 
     await _check_project_member(db, project_id, user_id)
-    doc = await _load_tender_doc_for_format(db, project_id, document_id)
+    doc = await document_service.load_tender_doc_for_format(db, project_id, document_id)
 
     # 清洗：缺 title 丢弃；枚举归一
     cleaned: list[dict] = []
@@ -478,15 +409,7 @@ async def update_disqualification_clauses(
             }
         )
 
-    await db.execute(
-        delete(DisqualificationClause).where(
-            DisqualificationClause.project_id == project_id,
-            DisqualificationClause.doc_id == document_id,
-        )
-    )
-    for item in cleaned:
-        db.add(DisqualificationClause(project_id=project_id, doc_id=doc.id, **item))
-    await db.flush()
+    await document_service.replace_doc_clauses(db, project_id, doc.id, cleaned)
 
     # 审计埋点：废标条款人工修改（security.md §4）
     await audit.record(
@@ -556,10 +479,7 @@ async def list_score_points(
     """评分点列表."""
     await _check_project_member(db, project_id, user_id)
 
-    result = await db.execute(
-        select(ScorePoint).where(ScorePoint.project_id == project_id).order_by(ScorePoint.clause_no)
-    )
-    items = list(result.scalars().all())
+    items = await document_service.list_score_points(db, project_id)
     items_data = [ScorePointOut.model_validate(sp).model_dump(mode="json") for sp in items]
     return success(data=items_data)
 
@@ -575,20 +495,9 @@ async def update_score_point(
     """更新评分点（人工编辑 strategy 或确认）."""
     await _check_project_member(db, project_id, user_id)
 
-    result = await db.execute(
-        select(ScorePoint).where(ScorePoint.id == sp_id, ScorePoint.project_id == project_id)
+    sp = await document_service.update_score_point(
+        db, project_id, sp_id, req.strategy, req.confirmed
     )
-    sp = result.scalar_one_or_none()
-    if not sp:
-        raise BizError(code=4004, message="评分点不存在")
-
-    if req.strategy is not None:
-        sp.strategy = req.strategy
-    if req.confirmed is not None:
-        sp.confirmed = req.confirmed
-
-    await db.flush()
-    await db.refresh(sp)
 
     # 事务约定（BUG-1）：确认/策略修改响应前显式提交，后续工作流立即可见
     await db.commit()
@@ -605,11 +514,6 @@ async def list_tech_requirements(
     """技术需求列表."""
     await _check_project_member(db, project_id, user_id)
 
-    result = await db.execute(
-        select(TechRequirement)
-        .where(TechRequirement.project_id == project_id)
-        .order_by(TechRequirement.seq)
-    )
-    items = list(result.scalars().all())
+    items = await document_service.list_tech_requirements(db, project_id)
     items_data = [TechRequirementOut.model_validate(tr).model_dump(mode="json") for tr in items]
     return success(data=items_data)

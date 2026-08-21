@@ -5,6 +5,9 @@
 
 权限（三期决策）：上传/列表/检索登录可用；删除限资料库管理员（get_current_kb_admin_id，
 role ∈ {kb_admin, admin}，白名单兼容并存）。
+
+DB 操作委托 kb_base_service / kb_material_service（批次 1b 分层重构）；
+本层保留路由/参数校验/MinIO 与入队编排/审计/显式 commit/响应组装。
 """
 
 import contextlib
@@ -15,20 +18,14 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Query, UploadFile
 from fastapi.responses import Response
-from sqlalchemy import cast, func, select
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_kb_admin_id, get_current_user_id
-from app.core.exceptions import BizError, ValidationError
+from app.core.exceptions import ValidationError
 from app.core.response import paginated, success
-from app.models.document import Document
-from app.models.knowledge_base import KnowledgeBase
-from app.models.project import ProjectMember
-from app.models.user import User
 from app.schemas.document import (
     DocumentListOut,
     DocumentUploadOut,
@@ -36,7 +33,13 @@ from app.schemas.document import (
     validate_category,
     validate_tags,
 )
-from app.services import kb_base_service, rag_service, storage_service, task_service
+from app.services import (
+    kb_base_service,
+    kb_material_service,
+    rag_service,
+    storage_service,
+    task_service,
+)
 
 router = APIRouter()
 
@@ -56,13 +59,9 @@ async def upload_material(
         raise ValidationError(f"不支持的文件类型: {file.content_type}")
 
     # 知识库归属校验（库存在且当前用户有写权限）
-    target_kb: KnowledgeBase | None = None
+    target_kb = None
     if kb_id is not None:
-        kb_result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
-        target_kb = kb_result.scalar_one_or_none()
-        if not target_kb:
-            raise BizError(code=4004, message="知识库不存在")
-        await kb_base_service.check_base_writable(db, target_kb, user_id)
+        target_kb = await kb_base_service.get_base_for_upload(db, kb_id, user_id)
 
     # 三期 S2：分类/标签校验（枚举 + 上限）
     try:
@@ -85,20 +84,15 @@ async def upload_material(
     )
 
     # 登记文档（project_id IS NULL = 全局资料；kb_id 归属知识库）
-    doc = Document(
-        project_id=None,
-        doc_type="kb_material",
+    doc = await kb_material_service.register_material(
+        db,
         title=file.filename or "unknown",
         storage_key=storage_key,
-        status="uploaded",
         category=doc_category,
         tags=doc_tags,
         kb_id=target_kb.id if target_kb else None,
-        created_by=user_id,
+        user_id=user_id,
     )
-    db.add(doc)
-    await db.flush()
-    await db.refresh(doc)
 
     await audit.record(
         db,
@@ -132,36 +126,17 @@ async def list_materials(
     可见性（2026-08-18）：kb_id IS NULL 存量未归档 / 公司库全员 / 本人个人库 /
     用户所属项目的项目库；他人个人库素材不可见。
     """
-    query = (
-        select(Document, User.display_name)
-        .join(User, Document.created_by == User.id, isouter=True)
-        .outerjoin(KnowledgeBase, KnowledgeBase.id == Document.kb_id)
-        .outerjoin(
-            ProjectMember,
-            (ProjectMember.project_id == KnowledgeBase.project_id)
-            & (ProjectMember.user_id == user_id),
-        )
-        .where(Document.project_id.is_(None), Document.doc_type == "kb_material")
-        .where(kb_base_service.material_visibility_clause(user_id, ProjectMember.user_id))
+    rows, total = await kb_material_service.list_global_materials(
+        db,
+        user_id,
+        page=page,
+        page_size=page_size,
+        category=category,
+        tag=tag,
+        kb_id=kb_id,
     )
-    if kb_id is not None:
-        query = query.where(Document.kb_id == kb_id)
-    if category:
-        query = query.where(Document.category == category)
-    if tag:
-        # PG JSON 包含匹配（tags @> '["tag"]'）；tags 列为 JSON 类型，@> 仅 jsonb 支持，
-        # 需 cast 右侧表达式为 JSONB（SQLite 测试下 CAST 无害）
-        query = query.where(cast(Document.tags, JSONB).op("@>")(cast([tag], JSONB)))
-
-    count_query = select(func.count()).select_from(query.subquery())
-    total = (await db.execute(count_query)).scalar() or 0
-
-    items_query = (
-        query.order_by(Document.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    )
-    result = await db.execute(items_query)
     items = []
-    for doc, uploader_name in result.all():
+    for doc, uploader_name in rows:
         item = DocumentListOut.model_validate(doc).model_dump(mode="json")
         item["uploader_name"] = uploader_name or ""  # created_by 为空时展示空串
         items.append(item)
@@ -176,12 +151,7 @@ async def delete_material(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """删除全局资料（仅资料库管理员；文件 + 文档记录 + 分块 CASCADE）."""
-    result = await db.execute(
-        select(Document).where(Document.id == doc_id, Document.project_id.is_(None))
-    )
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise BizError(code=4004, message="资料不存在")
+    doc = await kb_material_service.get_global_material(db, doc_id)
 
     # 删除 MinIO 文件（失败不阻断记录删除）
     with contextlib.suppress(Exception):
@@ -195,7 +165,7 @@ async def delete_material(
         target_id=str(doc.id),
         detail={"title": doc.title},
     )
-    await db.delete(doc)
+    await kb_material_service.delete_material(db, doc)
     await db.commit()
     return success(data={"id": str(doc_id)})
 
@@ -208,26 +178,9 @@ async def update_material(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """编辑全局素材（仅资料库管理员；title/category/tags 均可选）."""
-    result = await db.execute(
-        select(Document).where(Document.id == doc_id, Document.project_id.is_(None))
+    doc, changed = await kb_material_service.update_material(
+        db, doc_id, title=req.title, category=req.category, tags=req.tags
     )
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise BizError(code=4004, message="资料不存在")
-
-    changed: list[str] = []
-    if req.title is not None:
-        new_title = req.title.strip()
-        if not new_title:
-            raise ValidationError("标题不能为空")
-        doc.title = new_title
-        changed.append("title")
-    if req.category is not None:
-        doc.category = req.category
-        changed.append("category")
-    if req.tags is not None:
-        doc.tags = req.tags
-        changed.append("tags")
 
     await audit.record(
         db,
@@ -248,10 +201,7 @@ async def download_material(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """素材下载代理（阶段 2）：登录即可下载全局素材；项目级文档不可经本接口（隔离）."""
-    result = await db.execute(select(Document).where(Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc or doc.project_id is not None or doc.doc_type != "kb_material":
-        raise BizError(code=4004, message="资料不存在")
+    doc = await kb_material_service.get_material_for_download(db, doc_id)
 
     data = storage_service.download_file(doc.storage_key)
 
@@ -284,10 +234,7 @@ async def search_materials(
 ) -> dict:
     """全局资料库检索测试（RAG 命中验证）."""
     # 取全部全局资料的 doc_ids 作为检索范围
-    doc_result = await db.execute(
-        select(Document.id).where(Document.project_id.is_(None), Document.doc_type == "kb_material")
-    )
-    doc_ids = [row[0] for row in doc_result.all()]
+    doc_ids = await kb_material_service.global_material_doc_ids(db)
 
     items = await rag_service.search_materials(
         db=db,

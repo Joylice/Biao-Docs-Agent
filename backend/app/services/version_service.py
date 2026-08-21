@@ -7,9 +7,12 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ValidationError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.models.document import Document
+from app.models.knowledge_base import SCOPE_COMPANY, KnowledgeBase
+from app.models.project import Project
 from app.models.proposal import ChapterAssignment, ProposalSection, ProposalVersion
+from app.models.user import User
 from app.services import workflow_runtime
 from app.services.export_service import export_to_word
 from app.services.storage_service import upload_file
@@ -197,3 +200,95 @@ async def maybe_auto_snapshot(
         logger.exception("自动版本快照失败（不阻塞审核）")
         await db.rollback()
         return None
+
+
+# ── 批次 1a：api 层查询/归档 DB 操作下沉 ──
+
+
+async def get_project(db: AsyncSession, project_id: uuid.UUID) -> Project:
+    """按 id 载入项目；不存在抛 NotFoundError."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise NotFoundError("项目")
+    return project
+
+
+async def get_version(
+    db: AsyncSession, project_id: uuid.UUID, version_id: uuid.UUID
+) -> ProposalVersion:
+    """按 id 载入版本记录；不存在或 project 不匹配抛 NotFoundError."""
+    result = await db.execute(select(ProposalVersion).where(ProposalVersion.id == version_id))
+    version = result.scalar_one_or_none()
+    if version is None or version.project_id != project_id:
+        raise NotFoundError("版本记录")
+    return version
+
+
+async def list_versions(db: AsyncSession, project_id: uuid.UUID) -> list[dict]:
+    """版本列表（version 倒序；LEFT JOIN 创建人；created_by NULL = 自动快照）."""
+    result = await db.execute(
+        select(ProposalVersion, User.display_name)
+        .outerjoin(User, User.id == ProposalVersion.created_by)
+        .where(ProposalVersion.project_id == project_id)
+        .order_by(ProposalVersion.version.desc())
+    )
+    items = []
+    for version, creator_name in result.all():
+        items.append(
+            {
+                "id": str(version.id),
+                "version": version.version,
+                "snapshot_note": version.snapshot_note,
+                "created_by": str(version.created_by) if version.created_by else None,
+                "created_by_name": creator_name if version.created_by else None,
+                "auto": version.created_by is None,
+                "created_at": version.created_at.isoformat() if version.created_at else None,
+            }
+        )
+    return items
+
+
+async def archive_version(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    version_id: uuid.UUID,
+    kb_id: uuid.UUID,
+    owner_id: uuid.UUID,
+) -> dict:
+    """归档版本到公司知识库：校验目标库 + 登记全局素材（project_id=NULL）.
+
+    返回 {id, version, document_id, kb_id, title}；
+    事务约定（BUG-1）：commit 与入队由 api 层在审计留痕后执行，确保 worker 领取时行可见。
+    """
+    result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+    base = result.scalar_one_or_none()
+    if base is None:
+        raise NotFoundError("知识库")
+    if base.scope != SCOPE_COMPANY:
+        raise ValidationError("仅公司级知识库可归档")
+
+    version = await get_version(db, project_id, version_id)
+    project = await get_project(db, project_id)
+    title = f"归档-{project.name}-v{version.version}"
+
+    # 全局素材（project_id=NULL）入公司库，kb/search 检索范围可命中
+    doc = Document(
+        project_id=None,
+        doc_type="kb_material",
+        kb_id=base.id,
+        title=title,
+        storage_key=version.storage_key_docx,
+        status="uploaded",
+        created_by=owner_id,
+    )
+    db.add(doc)
+    await db.flush()
+    await db.refresh(doc)
+    return {
+        "id": str(version.id),
+        "version": version.version,
+        "document_id": doc.id,
+        "kb_id": str(base.id),
+        "title": title,
+    }

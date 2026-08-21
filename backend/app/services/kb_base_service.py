@@ -1,4 +1,9 @@
-"""知识库服务 — 多知识库（个人/项目/公司）可见性矩阵与检索范围解析."""
+"""知识库服务 — 多知识库（个人/项目/公司）可见性矩阵与检索范围解析.
+
+批次 1b 追加：知识库 CRUD 残余直查下沉（get_base_or_404 / get_base_for_upload /
+get_project_name / update_base_fields / check_base_readable / delete_base）。
+事务约定：写路径只 flush/delete 不 commit，由 api 层显式提交（BUG-1）。
+"""
 
 import uuid
 from typing import Any
@@ -228,3 +233,86 @@ def material_visibility_clause(user_id: uuid.UUID, member_alias):
         (KnowledgeBase.scope == SCOPE_PERSONAL) & (KnowledgeBase.owner_id == user_id),
         (KnowledgeBase.scope == SCOPE_PROJECT) & member_alias.is_not(None),
     )
+
+
+# ── 批次 1b：api/kb_bases.py 与 api/kb.py 残余直查下沉 ──────────────────
+
+
+async def get_base_or_404(db: AsyncSession, base_id: uuid.UUID) -> KnowledgeBase:
+    """按 id 取知识库，不存在 → NotFoundError（知识库）."""
+    result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == base_id))
+    base = result.scalar_one_or_none()
+    if not base:
+        raise NotFoundError("知识库")
+    return base
+
+
+async def get_base_for_upload(
+    db: AsyncSession, kb_id: uuid.UUID, user_id: uuid.UUID
+) -> KnowledgeBase:
+    """素材上传归属校验：库存在（否则 4004）且当前用户有写权限."""
+    result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+    base = result.scalar_one_or_none()
+    if not base:
+        raise BizError(code=4004, message="知识库不存在")
+    await check_base_writable(db, base, user_id)
+    return base
+
+
+async def get_project_name(db: AsyncSession, project_id: uuid.UUID) -> str | None:
+    """项目库归属项目名（项目不存在 → None）."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    return project.name if project else None
+
+
+def update_base_fields(base: KnowledgeBase, name: str | None, description: str | None) -> list[str]:
+    """编辑知识库名称/描述；返回 changed 字段清单供审计留痕."""
+    changed: list[str] = []
+    if name is not None:
+        new_name = name.strip()
+        if not new_name:
+            raise BizError(code=4000, message="知识库名称不能为空")
+        base.name = new_name
+        changed.append("name")
+    if description is not None:
+        base.description = description.strip() or None
+        changed.append("description")
+    return changed
+
+
+async def check_base_readable(db: AsyncSession, base: KnowledgeBase, user_id: uuid.UUID) -> None:
+    """库可见性校验（素材列表入口）：个人库仅本人；项目库限成员；公司库全员.
+
+    不可见抛 NotFoundError（404 而非空列表，防枚举探测）。
+    """
+    if base.scope == SCOPE_PERSONAL and base.owner_id != user_id:
+        raise NotFoundError("知识库")
+    if base.scope == SCOPE_PROJECT and (
+        base.project_id is None or not await _is_project_member(db, base.project_id, user_id)
+    ):
+        raise NotFoundError("知识库")
+
+
+async def delete_base(db: AsyncSession, base: KnowledgeBase, docs: list[Document]) -> None:
+    """删除知识库及库内素材记录（MinIO 清理由 api 层编排）；不 commit."""
+    for doc in docs:
+        await db.delete(doc)
+    await db.delete(base)
+
+
+def base_to_dict(
+    base: KnowledgeBase, material_count: int = 0, project_name: str | None = None
+) -> dict[str, Any]:
+    """知识库响应组装（api 层 _base_out 下沉；字段与列表口径一致）."""
+    return {
+        "id": str(base.id),
+        "name": base.name,
+        "description": base.description,
+        "scope": base.scope,
+        "project_id": str(base.project_id) if base.project_id else None,
+        "project_name": project_name,
+        "owner_id": str(base.owner_id) if base.owner_id else None,
+        "material_count": material_count,
+        "created_at": base.created_at.isoformat() if base.created_at else None,
+    }

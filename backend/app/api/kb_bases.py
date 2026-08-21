@@ -2,6 +2,10 @@
 
 设计（2026-08-18）：知识库为素材（kb_material）的分组与授权容器，不改变
 分块/向量链路；方案生成挂载由 confirm-outline 的 mounted_kb_ids 传入。
+
+DB 操作委托 kb_base_service / kb_material_service（批次 1b 分层重构）；
+本层保留路由/参数校验/MinIO 清理编排/审计/显式 commit/响应组装。
+scope 合法性由 kb_base_service.create_base 校验（非法 scope → 4000）。
 """
 
 import contextlib
@@ -9,20 +13,14 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
 from app.core.database import get_db
 from app.core.deps import get_current_user_id
-from app.core.exceptions import BizError, NotFoundError
 from app.core.response import paginated, success
-from app.models.document import Document
-from app.models.knowledge_base import SCOPE_PROJECT, VALID_SCOPES, KnowledgeBase
-from app.models.project import Project
-from app.models.user import User
 from app.schemas.document import DocumentListOut
-from app.services import kb_base_service, storage_service
+from app.services import kb_base_service, kb_material_service, storage_service
 
 router = APIRouter()
 
@@ -43,30 +41,6 @@ class KbBaseUpdateIn(BaseModel):
     description: str | None = None
 
 
-async def _get_base_or_404(db: AsyncSession, base_id: uuid.UUID) -> KnowledgeBase:
-    result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == base_id))
-    base = result.scalar_one_or_none()
-    if not base:
-        raise NotFoundError("知识库")
-    return base
-
-
-def _base_out(
-    base: KnowledgeBase, material_count: int = 0, project_name: str | None = None
-) -> dict:
-    return {
-        "id": str(base.id),
-        "name": base.name,
-        "description": base.description,
-        "scope": base.scope,
-        "project_id": str(base.project_id) if base.project_id else None,
-        "project_name": project_name,
-        "owner_id": str(base.owner_id) if base.owner_id else None,
-        "material_count": material_count,
-        "created_at": base.created_at.isoformat() if base.created_at else None,
-    }
-
-
 @router.get("/kb-bases")
 async def list_kb_bases(
     project_id: uuid.UUID | None = Query(None, description="项目上下文（返回该项目的项目库）"),
@@ -85,8 +59,6 @@ async def create_kb_base(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """创建知识库（personal 任意登录用户 / project 仅 owner / company 仅管理员）."""
-    if req.scope not in VALID_SCOPES:
-        raise BizError(code=4000, message=f"scope 非法：{req.scope}")
     base = await kb_base_service.create_base(
         db,
         user_id,
@@ -107,10 +79,8 @@ async def create_kb_base(
     await db.commit()
     project_name: str | None = None
     if base.project_id:
-        p_result = await db.execute(select(Project).where(Project.id == base.project_id))
-        project = p_result.scalar_one_or_none()
-        project_name = project.name if project else None
-    return success(data=_base_out(base, project_name=project_name))
+        project_name = await kb_base_service.get_project_name(db, base.project_id)
+    return success(data=kb_base_service.base_to_dict(base, project_name=project_name))
 
 
 @router.patch("/kb-bases/{base_id}")
@@ -121,19 +91,10 @@ async def update_kb_base(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """编辑知识库（名称/描述；写权限按 scope 判定）."""
-    base = await _get_base_or_404(db, base_id)
+    base = await kb_base_service.get_base_or_404(db, base_id)
     await kb_base_service.check_base_writable(db, base, user_id)
 
-    changed: list[str] = []
-    if req.name is not None:
-        new_name = req.name.strip()
-        if not new_name:
-            raise BizError(code=4000, message="知识库名称不能为空")
-        base.name = new_name
-        changed.append("name")
-    if req.description is not None:
-        base.description = req.description.strip() or None
-        changed.append("description")
+    changed = kb_base_service.update_base_fields(base, req.name, req.description)
 
     await audit.record(
         db,
@@ -145,7 +106,7 @@ async def update_kb_base(
         detail={"changed": changed},
     )
     await db.commit()
-    return success(data=_base_out(base))
+    return success(data=kb_base_service.base_to_dict(base))
 
 
 @router.delete("/kb-bases/{base_id}")
@@ -155,17 +116,14 @@ async def delete_kb_base(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """删除知识库（写权限按 scope 判定；库内素材一并删除：MinIO + 记录 + 分块 CASCADE）."""
-    base = await _get_base_or_404(db, base_id)
+    base = await kb_base_service.get_base_or_404(db, base_id)
     await kb_base_service.check_base_writable(db, base, user_id)
 
-    docs_result = await db.execute(
-        select(Document).where(Document.kb_id == base.id, Document.doc_type == "kb_material")
-    )
-    docs = list(docs_result.scalars().all())
+    docs = await kb_material_service.list_base_materials(db, base.id)
     for doc in docs:
         with contextlib.suppress(Exception):
             storage_service.delete_file(doc.storage_key)
-        await db.delete(doc)
+    await kb_base_service.delete_base(db, base, docs)
 
     await audit.record(
         db,
@@ -176,7 +134,6 @@ async def delete_kb_base(
         target_id=str(base.id),
         detail={"name": base.name, "scope": base.scope, "material_count": len(docs)},
     )
-    await db.delete(base)
     await db.commit()
     return success(data={"id": str(base_id)})
 
@@ -190,27 +147,15 @@ async def list_kb_base_materials(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """库内素材列表（复用全局素材列表口径，限可见库）."""
-    base = await _get_base_or_404(db, base_id)
+    base = await kb_base_service.get_base_or_404(db, base_id)
     # 可见性校验：个人库仅本人；项目库限成员；公司库全员
-    if base.scope == "personal" and base.owner_id != user_id:
-        raise NotFoundError("知识库")
-    if base.scope == SCOPE_PROJECT and (
-        base.project_id is None
-        or not await kb_base_service.is_project_member(db, base.project_id, user_id)
-    ):
-        raise NotFoundError("知识库")
+    await kb_base_service.check_base_readable(db, base, user_id)
 
-    query = (
-        select(Document, User.display_name)
-        .join(User, Document.created_by == User.id, isouter=True)
-        .where(Document.kb_id == base.id, Document.doc_type == "kb_material")
-    )
-    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar() or 0
-    result = await db.execute(
-        query.order_by(Document.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    rows, total = await kb_material_service.list_base_materials_paged(
+        db, base.id, page=page, page_size=page_size
     )
     items = []
-    for doc, uploader_name in result.all():
+    for doc, uploader_name in rows:
         item = DocumentListOut.model_validate(doc).model_dump(mode="json")
         item["uploader_name"] = uploader_name or ""
         items.append(item)

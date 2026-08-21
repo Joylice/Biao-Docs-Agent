@@ -7,9 +7,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import BizError
+from app.core.exceptions import BizError, ForbiddenError, ValidationError
 from app.models.project import Project, ProjectMember
-from app.models.proposal import ChapterAssignment, ProposalSection, ProposalSkeleton
+from app.models.proposal import (
+    ChapterAnnotation,
+    ChapterAssignment,
+    ProposalSection,
+    ProposalSkeleton,
+)
 from app.models.user import User
 from app.services.chapter_service import numbered_sections
 from app.services.export_service import natural_sort_key
@@ -317,3 +322,99 @@ async def check_chapter_editable(
 
     # 无任何分工 → 仅 owner（收紧）
     return await _owner_fallback(db, project_id, user_id)
+
+
+# ───────────────────────── 项目载入与状态机流转（批次 1c 自 api 下沉） ─────────────────────────
+
+
+async def get_project(db: AsyncSession, project_id: uuid.UUID) -> Project | None:
+    """按 id 载入项目（不含归属校验，供提交推送/批注权限/自动快照钩子使用）."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    return result.scalar_one_or_none()
+
+
+async def accept_assignment(db: AsyncSession, assignment: ChapterAssignment) -> None:
+    """领取任务：pending/rejected → in_progress（仅 flush 不 commit）."""
+    if assignment.status not in ("pending", "rejected"):
+        raise ValidationError(f"当前状态 {assignment.status} 不可领取")
+    assignment.status = "in_progress"
+    assignment.accepted_at = datetime.now(UTC)
+    await db.flush()
+
+
+async def submit_assignment(db: AsyncSession, assignment: ChapterAssignment) -> None:
+    """提交待审：in_progress/rejected → submitted（仅 flush 不 commit）."""
+    if assignment.status not in ("in_progress", "rejected"):
+        raise ValidationError(f"当前状态 {assignment.status} 不可提交")
+    assignment.status = "submitted"
+    assignment.submitted_at = datetime.now(UTC)
+    await db.flush()
+
+
+async def review_assignment(
+    db: AsyncSession, assignment: ChapterAssignment, action: str, comment: str
+) -> None:
+    """负责人审核：submitted → approved/rejected（rejected 回退可重编；仅 flush 不 commit）."""
+    if assignment.status != "submitted":
+        raise ValidationError(f"当前状态 {assignment.status} 不可审核（仅待审章节可审核）")
+    assignment.status = action
+    assignment.review_comment = comment or None
+    assignment.reviewed_at = datetime.now(UTC)
+    await db.flush()
+
+
+# ───────────────────────── 章节批注（分工维度，批次 1c 自 api 下沉） ─────────────────────────
+
+
+async def list_annotations(
+    db: AsyncSession, project_id: uuid.UUID, chapter_no: str
+) -> list[dict[str, Any]]:
+    """章节批注列表（JOIN 作者 display_name，按时间正序）."""
+    result = await db.execute(
+        select(ChapterAnnotation, User.display_name)
+        .join(User, User.id == ChapterAnnotation.created_by)
+        .where(
+            ChapterAnnotation.project_id == project_id,
+            ChapterAnnotation.chapter_no == chapter_no,
+        )
+        .order_by(ChapterAnnotation.created_at.asc())
+    )
+    return [
+        {
+            "id": str(ann.id),
+            "chapter_no": ann.chapter_no,
+            "content": ann.content,
+            "created_by": str(ann.created_by),
+            "created_by_name": name or "",
+            "created_at": ann.created_at.isoformat() if ann.created_at else None,
+        }
+        for ann, name in result.all()
+    ]
+
+
+async def create_annotation(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    assignment: ChapterAssignment,
+    content: str,
+    user_id: uuid.UUID,
+) -> ChapterAnnotation:
+    """新增章节批注（assignee 或项目 owner 可写；仅 flush 不 commit）.
+
+    与审核打回意见字段（review_comment）并存。
+    """
+    project = await get_project(db, project_id)
+    is_owner = project is not None and project.owner_id == user_id
+    if assignment.assignee_id != user_id and not is_owner:
+        raise ForbiddenError("仅章节负责人或项目负责人可批注")
+
+    ann = ChapterAnnotation(
+        project_id=project_id,
+        chapter_no=assignment.chapter_no,
+        content=content.strip(),
+        created_by=user_id,
+    )
+    db.add(ann)
+    await db.flush()
+    await db.refresh(ann)
+    return ann

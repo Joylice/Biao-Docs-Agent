@@ -12,6 +12,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import BizError
 from app.models.document import ScorePoint
 from app.services import settings_service
 
@@ -105,6 +106,26 @@ async def build_benchmark(db: AsyncSession, project_id: uuid.UUID) -> list[dict]
         )
     items.sort(key=lambda x: x["score"] * (1 - x["coverage"]), reverse=True)
     return items
+
+
+async def update_strategy(
+    db: AsyncSession, project_id: uuid.UUID, clause_no: str, strategy: str
+) -> ScorePoint:
+    """编辑评分点应对策略（strip 后为空置 None）；评分点不存在抛 BizError 4004.
+
+    审计留痕与 commit 由 api 层执行（事务约定 BUG-1）。
+    """
+    result = await db.execute(
+        select(ScorePoint).where(
+            ScorePoint.project_id == project_id,
+            ScorePoint.clause_no == clause_no,
+        )
+    )
+    sp = result.scalar_one_or_none()
+    if sp is None:
+        raise BizError(code=4004, message=f"评分点 {clause_no} 不存在")
+    sp.strategy = strategy.strip() or None
+    return sp
 
 
 async def load_high_risk_points(db: AsyncSession, project_id: uuid.UUID) -> list[dict]:

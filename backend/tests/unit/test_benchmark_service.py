@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.exceptions import BizError
 from app.models.document import ScorePoint
 from app.services import benchmark_service
 
@@ -185,3 +186,42 @@ class TestLoadHighRiskPoints:
             benchmark_service.settings_service, "is_mock_enabled", AsyncMock(return_value=False)
         ):
             assert await benchmark_service.load_high_risk_points(db, PROJECT_ID) == []
+
+
+# ── 批次 1a：api 层应对策略编辑 DB 操作下沉 ──
+
+
+class TestUpdateStrategy:
+    """PUT /benchmark/{clause_no}/strategy 的 DB 语义（审计/commit 保留在 api 层）."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_clause_4004(self) -> None:
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        db.execute = AsyncMock(return_value=result)
+        with pytest.raises(BizError) as ei:
+            await benchmark_service.update_strategy(db, PROJECT_ID, "9.9", "x")
+        assert ei.value.code == 4004
+
+    @pytest.mark.asyncio
+    async def test_updates_with_strip(self) -> None:
+        sp = _sp("1.1", "技术方案完整性", 6.0)
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = sp
+        db.execute = AsyncMock(return_value=result)
+        updated = await benchmark_service.update_strategy(db, PROJECT_ID, "1.1", " 补充历史案例 ")
+        assert updated is sp
+        assert sp.strategy == "补充历史案例"
+
+    @pytest.mark.asyncio
+    async def test_empty_strategy_clears_to_none(self) -> None:
+        """空白策略 → None（与原 api 语义一致：strip 后为空置 None）."""
+        sp = _sp("1.1", "技术方案完整性", 6.0, strategy="旧策略")
+        db = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = sp
+        db.execute = AsyncMock(return_value=result)
+        await benchmark_service.update_strategy(db, PROJECT_ID, "1.1", "   ")
+        assert sp.strategy is None

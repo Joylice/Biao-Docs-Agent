@@ -2,22 +2,19 @@
 
 GET /projects/{pid}/benchmark：项目成员读对标表（懒计算 coverage/risk 并回写）。
 PUT /projects/{pid}/benchmark/{clause_no}/strategy：仅 owner 编辑应对策略
-（审计 benchmark.strategy）。
+（审计 benchmark.strategy）。DB 操作统一委托 benchmark_service（批次 1a 分层重构）。
 """
 
 import uuid
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import audit
 from app.core.database import get_db
 from app.core.deps import get_current_owner_id, get_current_user_id
-from app.core.exceptions import BizError
 from app.core.response import success
-from app.models.document import ScorePoint
 from app.services import benchmark_service
 from app.services.project_service import _check_project_member
 
@@ -52,16 +49,7 @@ async def update_benchmark_strategy(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """编辑评分点应对策略（仅 owner；审计 benchmark.strategy）."""
-    result = await db.execute(
-        select(ScorePoint).where(
-            ScorePoint.project_id == project_id,
-            ScorePoint.clause_no == clause_no,
-        )
-    )
-    sp = result.scalar_one_or_none()
-    if sp is None:
-        raise BizError(code=4004, message=f"评分点 {clause_no} 不存在")
-    sp.strategy = body.strategy.strip() or None
+    sp = await benchmark_service.update_strategy(db, project_id, clause_no, body.strategy)
     await audit.record(
         db,
         owner_id,
