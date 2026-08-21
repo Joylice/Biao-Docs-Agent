@@ -24,3 +24,7 @@ backend/_logs/
 
 # 本地工作区状态（IDE 会话/记忆，不入库）
 .workbuddy/
+
+# Canvas 交付报告（本地产物，不入库）
+*.canvas.tsx
+*.canvas.status.json
