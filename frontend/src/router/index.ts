@@ -80,6 +80,13 @@ const routes: RouteRecordRaw[] = [
       },
     ],
   },
+  {
+    // 章节全屏富文本编辑页（Word-like 编辑器 P0）
+    path: '/project/:projectId/editor/:chapterNo',
+    name: 'ChapterEditor',
+    component: () => import('@/components/editor/WordEditorPage.vue'),
+    meta: { requiresAuth: true },
+  },
 ]
 
 const router = createRouter({

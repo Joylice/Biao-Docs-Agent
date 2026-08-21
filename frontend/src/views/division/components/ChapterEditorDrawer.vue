@@ -70,6 +70,17 @@
             </template>
             {{ saveSuccess ? '已保存' : '保存' }}
           </a-button>
+          <!-- 全屏编辑：跳转 Word-like 富文本编辑器页面 -->
+          <a-button
+            size="small"
+            aria-label="全屏编辑"
+            @click="handleFullscreenEdit"
+          >
+            <template #icon>
+              <FullscreenOutlined />
+            </template>
+            全屏编辑
+          </a-button>
         </a-space>
       </div>
 
@@ -156,8 +167,9 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { CheckOutlined } from '@ant-design/icons-vue'
+import { CheckOutlined, FullscreenOutlined } from '@ant-design/icons-vue'
 import type { AssignmentItem } from '@/types'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import {
@@ -184,6 +196,8 @@ const emit = defineEmits<{
   (e: 'close'): void
   (e: 'updated'): void
 }>()
+
+const router = useRouter()
 
 const editorContent = ref('')
 const mode = ref<'edit' | 'preview'>('edit')
@@ -268,12 +282,22 @@ const handleClose = () => {
   emit('close')
 }
 
+/** 全屏编辑：跳转 Word-like 富文本编辑器页面（携带 projectId/chapterNo） */
+const handleFullscreenEdit = () => {
+  if (!props.task) return
+  void router.push({
+    name: 'ChapterEditor',
+    params: { projectId: props.projectId, chapterNo: props.task.chapter_no },
+  })
+}
+
 const handleSave = async () => {
   const task = props.task
   if (!task) return
   saving.value = true
   const ok = await runWithSuccess(async () => {
-    await saveChapterContent(props.projectId, task.chapter_no, editorContent.value)
+    // 双字段封装：content 传 Markdown（content_html 缺省，由全屏编辑器维护）
+    await saveChapterContent(props.projectId, task.chapter_no, { content: editorContent.value })
   })
   saving.value = false
   if (ok) {

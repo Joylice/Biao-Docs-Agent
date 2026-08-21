@@ -7,6 +7,12 @@ import type {
   AssistRequest,
 } from '@/types'
 
+/** 章节内容：content 为 Markdown 文本；content_html 为富文本 HTML（后端双字段扩展） */
+export interface ChapterContent {
+  content: string
+  content_html?: string
+}
+
 /** 获取章节分工列表（树形） */
 export const fetchChapterAssignments = (projectId: string) =>
   api.get<ApiResponse<PaginatedResponse<AssignmentNode>>>(`/projects/${projectId}/chapter-assignments`)
@@ -47,15 +53,24 @@ export const rejectAssignment = (projectId: string, assignmentId: string, commen
     { action: 'rejected', comment },
   )
 
-/** 获取章节内容 */
+/** 获取章节内容（content_html 为后端扩展字段，可能缺省） */
 export const fetchChapterContent = (projectId: string, chapterNo: string) =>
-  api.get<ApiResponse<{ content: string }>>(`/projects/${projectId}/chapters/${chapterNo}/content`)
+  api.get<ApiResponse<ChapterContent>>(`/projects/${projectId}/chapters/${chapterNo}/content`)
 
-/** 保存章节内容 */
-export const saveChapterContent = (projectId: string, chapterNo: string, content: string) =>
-  api.put<ApiResponse<void>>(`/projects/${projectId}/chapters/${chapterNo}/content`, { content })
+/**
+ * 保存章节内容：PUT body 双字段 { content, content_html }
+ * content=Markdown（与旧版兼容）；content_html=富文本 HTML（后端 0018 迁移扩展，缺省时仅传 content）
+ */
+export const saveChapterContent = (
+  projectId: string,
+  chapterNo: string,
+  payload: ChapterContent,
+) =>
+  api.put<ApiResponse<ChapterContent>>(
+    `/projects/${projectId}/chapters/${chapterNo}/content`,
+    payload,
+  )
 
 /** AI 辅助编写 */
 export const assistChapter = (projectId: string, data: AssistRequest) =>
   api.post<ApiResponse<{ content: string }>>(`/projects/${projectId}/chapters/assist`, data)
-
