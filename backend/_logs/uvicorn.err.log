@@ -235,3 +235,81 @@ INFO:     Started server process [33844]
 INFO:     Waiting for application startup.
 安全告警：BID_JWT_SECRET 仍为默认值 'change-me-in-production' 且 llm_mock 已关闭——JWT 签名与 LLM 密钥加密均不安全！生产环境请立即设置 BID_JWT_SECRET 与 BID_LLM_CRYPTO_SECRET
 INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'app\services\division_service.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [33844]
+Process SpawnProcess-8:
+Traceback (most recent call last):
+  File "C:\Users\24237\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\multiprocessing\process.py", line 314, in _bootstrap
+    self.run()
+  File "C:\Users\24237\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\multiprocessing\process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "D:\AI\WorkBuddy\2026-08-15-17-35-34\backend\.venv\Lib\site-packages\uvicorn\_subprocess.py", line 80, in subprocess_started
+    target(sockets=sockets)
+  File "D:\AI\WorkBuddy\2026-08-15-17-35-34\backend\.venv\Lib\site-packages\uvicorn\server.py", line 77, in run
+    return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\24237\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\24237\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\24237\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\asyncio\base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "D:\AI\WorkBuddy\2026-08-15-17-35-34\backend\.venv\Lib\site-packages\uvicorn\server.py", line 81, in serve
+    await self._serve(sockets)
+  File "D:\AI\WorkBuddy\2026-08-15-17-35-34\backend\.venv\Lib\site-packages\uvicorn\server.py", line 88, in _serve
+    config.load()
+  File "D:\AI\WorkBuddy\2026-08-15-17-35-34\backend\.venv\Lib\site-packages\uvicorn\config.py", line 494, in load
+    self.loaded_app = self.load_app()
+                      ^^^^^^^^^^^^^^^
+  File "D:\AI\WorkBuddy\2026-08-15-17-35-34\backend\.venv\Lib\site-packages\uvicorn\config.py", line 428, in load_app
+    return import_from_string(self.app)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\AI\WorkBuddy\2026-08-15-17-35-34\backend\.venv\Lib\site-packages\uvicorn\importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\24237\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\importlib\__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 999, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "D:\AI\WorkBuddy\2026-08-15-17-35-34\backend\app\main.py", line 11, in <module>
+    from app.api import (
+  File "D:\AI\WorkBuddy\2026-08-15-17-35-34\backend\app\api\division.py", line 33, in <module>
+    class ReviewBody(BaseModel):
+  File "D:\AI\WorkBuddy\2026-08-15-17-35-34\backend\app\api\division.py", line 36, in ReviewBody
+    action: Literal["approved", "rejected"]
+            ^^^^^^^
+NameError: name 'Literal' is not defined
+WARNING:  StatReload detected changes in 'app\api\division.py'. Reloading...
+INFO:     Started server process [42276]
+INFO:     Waiting for application startup.
+安全告警：BID_JWT_SECRET 仍为默认值 'change-me-in-production' 且 llm_mock 已关闭——JWT 签名与 LLM 密钥加密均不安全！生产环境请立即设置 BID_JWT_SECRET 与 BID_LLM_CRYPTO_SECRET
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'app\api\workflow.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [42276]
+INFO:     Started server process [32340]
+INFO:     Waiting for application startup.
+安全告警：BID_JWT_SECRET 仍为默认值 'change-me-in-production' 且 llm_mock 已关闭——JWT 签名与 LLM 密钥加密均不安全！生产环境请立即设置 BID_JWT_SECRET 与 BID_LLM_CRYPTO_SECRET
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'app\services\document_service.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [32340]
+INFO:     Started server process [16196]
+INFO:     Waiting for application startup.
+安全告警：BID_JWT_SECRET 仍为默认值 'change-me-in-production' 且 llm_mock 已关闭——JWT 签名与 LLM 密钥加密均不安全！生产环境请立即设置 BID_JWT_SECRET 与 BID_LLM_CRYPTO_SECRET
+INFO:     Application startup complete.
