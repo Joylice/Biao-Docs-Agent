@@ -65,7 +65,7 @@ import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { FileSearchOutlined, LockOutlined, UserOutlined } from '@ant-design/icons-vue'
-import api from '@/api/client'
+import { login } from '@/api'
 
 interface ApiErrorBody {
   code?: number
@@ -85,7 +85,7 @@ const handleLogin = async () => {
   try {
     // 同时发送 username 和 email，兼容新旧后端（新后端优先 username，旧后端用 email）
     const payload = { username: form.username, email: form.username, password: form.password }
-    const { data } = await api.post('/auth/login', payload)
+    const { data } = await login(payload)
     if (data.code === 0) {
       localStorage.setItem('access_token', data.data.access_token)
       if (data.data.refresh_token) {

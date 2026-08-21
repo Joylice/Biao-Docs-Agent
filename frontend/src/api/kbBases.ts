@@ -10,12 +10,12 @@ export const fetchKbBases = (params?: PaginationParams & { project_id?: string; 
 export const fetchKbBase = (kbBaseId: string) =>
   api.get<ApiResponse<KnowledgeBase>>(`/kb-bases/${kbBaseId}`)
 
-/** 创建知识库 */
+/** 创建知识库（description/project_id 允许 null） */
 export const createKbBase = (data: {
   name: string
   scope: 'personal' | 'project' | 'company'
-  description?: string
-  project_id?: string
+  description?: string | null
+  project_id?: string | null
 }) => api.post<ApiResponse<KnowledgeBase>>('/kb-bases', data)
 
 /** 更新知识库 */

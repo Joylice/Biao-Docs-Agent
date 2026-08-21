@@ -6,15 +6,63 @@ import type {
   PaginationParams,
   DocumentItem,
   KbSearchResult,
+  MaterialSearchItem,
 } from '@/types'
 
+/** 资料列表查询参数（对齐后端 /kb/materials 查询项） */
+export type MaterialListParams = PaginationParams & {
+  category?: string
+  keyword?: string
+  tag?: string
+  kb_id?: string
+  scope?: string
+}
+
 /** 获取资料库文档列表（全局） */
-export const fetchMaterials = (params?: PaginationParams & { category?: string; keyword?: string }) =>
+export const fetchMaterials = (params?: MaterialListParams) =>
   api.get<ApiResponse<PaginatedResponse<DocumentItem>>>('/kb/materials', { params })
 
-/** 获取项目文档列表 */
-export const fetchProjectDocuments = (projectId: string, params?: PaginationParams) =>
-  api.get<ApiResponse<PaginatedResponse<DocumentItem>>>(`/projects/${projectId}/documents`, { params })
+/** 上传素材（不手动设 Content-Type：axios 自动带 boundary） */
+export const uploadMaterial = (formData: FormData) =>
+  api.post<ApiResponse<DocumentItem>>('/kb/materials', formData)
+
+/** 编辑素材元信息（title/category/tags，均可选） */
+export const updateMaterial = (
+  materialId: string,
+  data: { title?: string; category?: string | null; tags?: string[] },
+) => api.patch<ApiResponse<DocumentItem>>(`/kb/materials/${materialId}`, data)
+
+/** 删除素材 */
+export const deleteMaterial = (materialId: string) =>
+  api.delete<ApiResponse<void>>(`/kb/materials/${materialId}`)
+
+/** 下载素材（字节流） */
+export const downloadMaterial = (materialId: string) =>
+  api.get(`/kb/materials/${materialId}/download`, { responseType: 'blob' })
+
+/** 素材语义检索 */
+export const searchMaterials = (params: { q: string; top_k?: number }) =>
+  api.get<ApiResponse<{ items: MaterialSearchItem[] }>>('/kb/materials/search', { params })
+
+/** 获取项目文档列表（doc_type 可选过滤） */
+export const fetchProjectDocuments = (
+  projectId: string,
+  params?: PaginationParams & { doc_type?: string },
+) =>
+  api.get<ApiResponse<PaginatedResponse<DocumentItem>>>(`/projects/${projectId}/documents`, {
+    params,
+  })
+
+/** 上传招标文件（不手动设 Content-Type：axios 自动带 boundary） */
+export const uploadTenderDocument = (
+  projectId: string,
+  formData: FormData,
+  onUploadProgress?: (event: { loaded: number; total?: number }) => void,
+) =>
+  api.post<ApiResponse<DocumentItem>>(`/projects/${projectId}/documents`, formData, {
+    params: { doc_type: 'tender_file' },
+    onUploadProgress,
+  })
 
 /** 获取文档详情 */
 export const fetchDocument = (documentId: string) =>

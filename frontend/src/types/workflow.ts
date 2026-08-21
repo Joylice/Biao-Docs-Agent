@@ -34,6 +34,16 @@ export interface WorkflowStatus {
   chapters?: Record<string, string>
   progress: number
   current_chapter?: string
+  /** 审阅阶段动作（后端 workflow status 透出） */
+  review_action?: string
+  /** 章节审阅反馈意见（章节号 → 意见） */
+  review_feedback?: Record<string, string>
+  /** 导出状态：pending/running/done/failed */
+  export_status?: string
+  /** 导出产物存储标识 */
+  export_storage_key?: string
+  /** 工作流错误信息 */
+  error?: string
 }
 
 /** 确认大纲请求 */
@@ -41,6 +51,13 @@ export interface ConfirmOutlineRequest {
   outline: OutlineItem[]
   mounted_doc_ids?: string[] | null
   mounted_kb_ids?: string[] | null
+}
+
+/** 审阅确认请求（通过 / 章节反馈重写） */
+export interface ConfirmReviewRequest {
+  action: 'approved' | 'feedback'
+  /** action=feedback 时：章节号 → 修改意见 */
+  feedback?: Record<string, string>
 }
 
 /** 大纲草稿 */
@@ -105,7 +122,7 @@ export interface WsProgressMessage {
 export interface WsSectionTokenMessage {
   type: 'section_token'
   chapter_no: string
-  delta: string
+  delta?: string
 }
 
 /** WebSocket 章节完成消息 */
@@ -124,4 +141,6 @@ export interface AssignmentNode {
   assignee_name: string | null
   status: TaskStatus | string | null
   children?: AssignmentNode[]
+  /** 后端列表接口附带的提交人姓名（用于审阅页展示） */
+  submitted_by_name?: string
 }

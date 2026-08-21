@@ -7,7 +7,7 @@
       <a-button
         v-if="can('project:create')"
         type="primary"
-        @click="openCreateModal"
+        @click="createModalRef?.open()"
       >
         <template #icon>
           <PlusOutlined />
@@ -68,36 +68,10 @@
     </ErrorState>
     <!-- 新用户 5 步引导（无项目时显示，按项目状态自动勾选） -->
     <template v-else-if="projects.length === 0">
-      <a-card class="guide-card mb-4">
-        <template #title>
-          <RocketOutlined /> 快速上手：5 步完成第一份技术方案
-        </template>
-        <a-steps
-          :current="guideCurrent"
-          size="small"
-          responsive
-        >
-          <a-step
-            v-for="(s, i) in guideSteps"
-            :key="i"
-            :title="s.title"
-            :status="guideStepStatus(i)"
-          >
-            <template #description>
-              <div class="guide-step">
-                <span>{{ s.description }}</span>
-                <a-button
-                  v-if="i === guideCurrent"
-                  size="small"
-                  @click="s.action"
-                >
-                  去完成
-                </a-button>
-              </div>
-            </template>
-          </a-step>
-        </a-steps>
-      </a-card>
+      <NewUserGuide
+        :projects="projects"
+        @create="handleGuideCreate"
+      />
 
       <EmptyState
         illustration="folder"
@@ -107,7 +81,7 @@
           <a-button
             v-if="can('project:create')"
             type="primary"
-            @click="openCreateModal"
+            @click="createModalRef?.open()"
           >
             <template #icon>
               <PlusOutlined />
@@ -213,44 +187,18 @@
       </a-col>
     </a-row>
 
-    <a-modal
-      v-model:open="showCreateModal"
-      title="新建项目"
-      :confirm-loading="creating"
-      @ok="handleCreate"
-    >
-      <a-form :model="newProject">
-        <a-form-item label="项目名称">
-          <a-input v-model:value="newProject.name" />
-        </a-form-item>
-        <a-form-item label="招标编号">
-          <a-input v-model:value="newProject.tender_no" />
-        </a-form-item>
-        <a-form-item label="行业">
-          <a-input v-model:value="newProject.industry" />
-        </a-form-item>
-        <a-form-item label="项目成员">
-          <a-select
-            v-model:value="newProject.member_ids"
-            mode="multiple"
-            :options="memberOptions"
-            placeholder="选择项目成员（可多选，创建后可继续添加）"
-            show-search
-            allow-clear
-            option-filter-prop="label"
-          />
-        </a-form-item>
-      </a-form>
-    </a-modal>
+    <CreateProjectModal
+      ref="createModalRef"
+      @created="fetchProjects"
+    />
   </PageContainer>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
-import { FolderOutlined, PlusOutlined, RocketOutlined } from '@ant-design/icons-vue'
-import api from '@/api/client'
+import { FolderOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { fetchProjects as fetchProjectsApi } from '@/api'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -259,31 +207,22 @@ import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
 import { usePermission } from '@/composables/usePermission'
 import { useHotkeys } from '@/composables/useHotkeys'
 import { debounce } from '@/utils/debounce'
+import { type ProjectItem } from './constants'
+import CreateProjectModal from './components/CreateProjectModal.vue'
+import NewUserGuide from './components/NewUserGuide.vue'
 
 const { can } = usePermission()
-
-interface ProjectItem {
-  id: string
-  name: string
-  // 后端字段为 snake_case（ProjectOut.tender_no），与创建请求保持一致
-  tender_no?: string
-  industry?: string
-  status?: string
-  created_at?: string
-  owner_id?: string
-}
 
 const router = useRouter()
 const loading = ref(false)
 const loadError = ref('')
-const showCreateModal = ref(false)
-const creating = ref(false)
 const projects = ref<ProjectItem[]>([])
 const searchKeyword = ref('')
 /** 防抖后生效的搜索词：输入停顿 300ms 后参与过滤；回车 / 点击搜索即时生效 */
 const debouncedKeyword = ref('')
 const industryFilter = ref<string | undefined>(undefined)
 const sortBy = ref('created_desc')
+const createModalRef = ref<InstanceType<typeof CreateProjectModal> | null>(null)
 
 const sortOptions = [
   { label: '最新创建', value: 'created_desc' },
@@ -292,41 +231,9 @@ const sortOptions = [
   { label: '名称 Z-A', value: 'name_desc' },
 ]
 
-const newProject = reactive({
-  name: '',
-  tender_no: '',
-  industry: '',
-  member_ids: [] as string[],
-})
-
-/* 阶段7：建项目选成员 —— 下拉数据源（GET /users/options，排除自己） */
-interface UserOption {
-  id: string
-  email: string
-  display_name: string
-}
-const userOptions = ref<UserOption[]>([])
-
-const memberOptions = computed(() =>
-  userOptions.value
-    .filter((u) => u.id !== currentUserId.value)
-    .map((u) => ({ value: u.id, label: `${u.display_name}（${u.email}）` })),
-)
-
-const loadUserOptions = async () => {
-  try {
-    const { data } = await api.get('/users/options')
-    if (data.code === 0) {
-      userOptions.value = data.data.items
-    }
-  } catch {
-    // 下拉数据源加载失败不阻塞建项目（可不选成员）
-  }
-}
-
-const openCreateModal = () => {
-  showCreateModal.value = true
-  loadUserOptions()
+/** 引导第一步：仅打开弹窗（原实现不加载成员选项） */
+const handleGuideCreate = () => {
+  createModalRef.value?.open(false)
 }
 
 const statusText = (status: string): string => {
@@ -451,7 +358,7 @@ const fetchProjects = async () => {
   loading.value = true
   loadError.value = ''
   try {
-    const { data } = await api.get('/projects')
+    const { data } = await fetchProjectsApi()
     if (data.code === 0) {
       projects.value = data.data.items
     }
@@ -462,103 +369,9 @@ const fetchProjects = async () => {
   }
 }
 
-const handleCreate = async () => {
-  if (!newProject.name.trim()) {
-    message.warning('请输入项目名称')
-    return
-  }
-  creating.value = true
-  try {
-    const { data } = await api.post('/projects', newProject)
-    if (data.code === 0) {
-      showCreateModal.value = false
-      message.success('项目创建成功')
-      newProject.name = ''
-      newProject.tender_no = ''
-      newProject.industry = ''
-      newProject.member_ids = []
-      fetchProjects()
-    } else {
-      message.error(data.message || '项目创建失败')
-    }
-  } catch (err) {
-    message.error(getErrorMessage(err, '项目创建失败'))
-  } finally {
-    creating.value = false
-  }
-}
-
 const enterProject = (projectId: string) => {
   // 工作流第一步：招标解析（资料库已独立为全局页）
   router.push({ name: 'Parse', params: { projectId } })
-}
-
-/* ---------------- 新用户 5 步引导 ---------------- */
-interface GuideStep {
-  title: string
-  description: string
-  done: boolean
-  action: () => void
-}
-
-/** 按项目状态自动勾选：状态阶段覆盖该步即视为完成 */
-const guideSteps = computed<GuideStep[]>(() => {
-  const status = projects.value[0]?.status || ''
-  return [
-    {
-      title: '创建项目',
-      description: '录入招标项目名称与编号',
-      done: projects.value.length > 0,
-      action: () => {
-        showCreateModal.value = true
-      },
-    },
-    {
-      title: '上传招标文件',
-      description: '在「招标解析」上传招标文件，公司素材到「全局资料库」',
-      done: ['parsing', 'parsed', 'generating', 'generated', 'reviewed'].includes(status),
-      action: () => {
-        if (projects.value.length > 0) {
-          router.push({ name: 'Parse', params: { projectId: projects.value[0].id } })
-        }
-      },
-    },
-    {
-      title: '确认评分点',
-      description: '核对解析出的评分点与技术需求',
-      done: ['generating', 'generated', 'reviewed'].includes(status),
-      action: () => {},
-    },
-    {
-      title: '生成方案',
-      description: '按大纲流式生成各章节',
-      done: ['generated', 'reviewed'].includes(status),
-      action: () => {},
-    },
-    {
-      title: '审阅导出',
-      description: '审阅修改并导出 Word 文档',
-      done: status === 'reviewed',
-      action: () => {},
-    },
-  ]
-})
-
-const guideCurrent = computed(() => {
-  const idx = guideSteps.value.findIndex((s) => !s.done)
-  return idx === -1 ? guideSteps.value.length : idx
-})
-
-const guideStepStatus = (i: number): 'wait' | 'process' | 'finish' => {
-  if (i < guideCurrent.value) return 'finish'
-  if (i === guideCurrent.value) return 'process'
-  return 'wait'
-}
-
-/** 统一错误文案：优先展示后端 message */
-const getErrorMessage = (err: unknown, fallback: string): string => {
-  const body = (err as { response?: { data?: { message?: string } } })?.response?.data
-  return body?.message || fallback
 }
 
 onMounted(() => {
@@ -576,18 +389,6 @@ onUnmounted(() => {
 .toolbar-card {
   margin-bottom: var(--space-4);
   background: var(--bg-surface);
-}
-
-.guide-card {
-  background: var(--bg-surface);
-}
-
-.guide-step {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 
 .toolbar-count {

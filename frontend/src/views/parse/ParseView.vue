@@ -116,7 +116,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { InboxOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import type { UploadFile, UploadProps } from 'ant-design-vue'
-import api from '@/api/client'
+import {
+  fetchScorePoints,
+  fetchTechRequirements,
+  fetchProjectDocuments,
+  uploadTenderDocument,
+} from '@/api'
 import PageContainer from '@/components/PageContainer.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
@@ -178,8 +183,8 @@ const fetchData = async () => {
   loadError.value = ''
   try {
     const [spRes, trRes] = await Promise.all([
-      api.get(`/projects/${projectId}/score-points`),
-      api.get(`/projects/${projectId}/tech-requirements`),
+      fetchScorePoints(projectId),
+      fetchTechRequirements(projectId),
     ])
     scorePointCount.value = (spRes.data?.data as unknown[])?.length || 0
     techRequirementCount.value = (trRes.data?.data as unknown[])?.length || 0
@@ -194,10 +199,8 @@ const fetchData = async () => {
 
 const fetchTenderDocs = async () => {
   try {
-    const res = await api.get(`/projects/${projectId}/documents`, {
-      params: { doc_type: 'tender_file' },
-    })
-    tenderDocs.value = res.data?.data?.items || res.data?.data || []
+    const res = await fetchProjectDocuments(projectId, { doc_type: 'tender_file' })
+    tenderDocs.value = res.data?.data?.items || []
     // 解析中→ 5s 后自动复查，直到 parsed/failed 或评分点就绪
     schedulePolling()
   } catch {
@@ -249,18 +252,11 @@ const handleUpload: NonNullable<UploadProps['customRequest']> = async (options) 
 
   try {
     // 不手动设 Content-Type：axios 自动带 boundary
-    const res = await api.post(
-      `/projects/${projectId}/documents`,
-      formData,
-      {
-        params: { doc_type: 'tender_file' },
-        onUploadProgress: (e) => {
-          if (e.total) {
-            options.onProgress?.({ percent: Math.round((e.loaded / e.total) * 100) })
-          }
-        },
+    const res = await uploadTenderDocument(projectId, formData, (e) => {
+      if (e.total) {
+        options.onProgress?.({ percent: Math.round((e.loaded / e.total) * 100) })
       }
-    )
+    })
     options.onSuccess?.(res.data)
     message.success(`${file.name} 上传成功，正在后台解析评分点`)
     fetchTenderDocs()

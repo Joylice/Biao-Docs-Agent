@@ -1,77 +1,82 @@
-/** 审阅、标注、版本相关 API */
+/** 审阅、批注、版本相关 API */
 import api from './client'
 import type {
   ApiResponse,
   PaginatedResponse,
   VersionItem,
   AnnotationItem,
-  CreateAnnotationRequest,
-  UpdateAnnotationRequest,
-  ExportRequest,
-  ExportResponse,
-  SnapshotRequest,
+  DisqualificationRisk,
 } from '@/types'
+
+/* ---------------- 版本 ---------------- */
 
 /** 获取版本列表 */
 export const fetchVersions = (projectId: string) =>
-  api.get<ApiResponse<PaginatedResponse<VersionItem>>>(`/projects/${projectId}/versions`)
+  api.get<ApiResponse<{ items: VersionItem[] }>>(`/projects/${projectId}/versions`)
 
-/** 获取版本详情 */
-export const fetchVersion = (projectId: string, versionId: string) =>
-  api.get<ApiResponse<VersionItem & { chapters: Record<string, string> }>>(
-    `/projects/${projectId}/versions/${versionId}`,
-  )
-
-/** 创建快照 */
-export const createSnapshot = (projectId: string, data: SnapshotRequest) =>
-  api.post<ApiResponse<VersionItem>>(`/projects/${projectId}/versions`, data)
-
-/** 回滚到版本 */
-export const rollbackToVersion = (projectId: string, versionId: string) =>
-  api.post<ApiResponse<void>>(`/projects/${projectId}/versions/${versionId}/rollback`)
-
-/** 归档版本到知识库 */
-export const archiveVersionToKb = (projectId: string, versionId: string, kbBaseId: string) =>
-  api.post<ApiResponse<void>>(`/projects/${projectId}/versions/${versionId}/archive`, {
-    kb_base_id: kbBaseId,
+/** 创建快照（备注可选，空串归一为 null） */
+export const createSnapshot = (projectId: string, snapshotNote: string | null) =>
+  api.post<ApiResponse<{ id: string; version: number }>>(`/projects/${projectId}/versions`, {
+    snapshot_note: snapshotNote,
   })
 
-/** 获取章节标注列表 */
-export const fetchAnnotations = (projectId: string, chapterNo: string) =>
-  api.get<ApiResponse<PaginatedResponse<AnnotationItem>>>(
-    `/projects/${projectId}/annotations`,
-    { params: { chapter_no: chapterNo } },
+/** 下载版本（type: docx=Word / source=Markdown 源，返回预签名 URL） */
+export const downloadVersion = (projectId: string, versionId: string, type: 'docx' | 'source') =>
+  api.get<ApiResponse<{ url?: string; storage_key?: string }>>(
+    `/projects/${projectId}/versions/${versionId}/download`,
+    { params: { type } },
   )
 
-/** 创建标注 */
-export const createAnnotation = (projectId: string, data: CreateAnnotationRequest) =>
-  api.post<ApiResponse<AnnotationItem>>(`/projects/${projectId}/annotations`, data)
+/** 回滚到版本（仅 owner；返回恢复章节数） */
+export const rollbackToVersion = (projectId: string, versionId: string) =>
+  api.post<ApiResponse<{ id?: string; version?: number; chapters_restored?: number }>>(
+    `/projects/${projectId}/versions/${versionId}/rollback`,
+  )
 
-/** 更新标注 */
-export const updateAnnotation = (projectId: string, annotationId: string, data: UpdateAnnotationRequest) =>
-  api.put<ApiResponse<AnnotationItem>>(`/projects/${projectId}/annotations/${annotationId}`, data)
+/** 归档版本到公司知识库（body 对齐后端 ArchiveBody） */
+export const archiveVersionToKb = (projectId: string, versionId: string, kbId: string) =>
+  api.post<ApiResponse<{ title?: string }>>(
+    `/projects/${projectId}/versions/${versionId}/archive`,
+    { kb_id: kbId },
+  )
 
-/** 删除标注 */
-export const deleteAnnotation = (projectId: string, annotationId: string) =>
-  api.delete<ApiResponse<void>>(`/projects/${projectId}/annotations/${annotationId}`)
+/* ---------------- 章节批注 ---------------- */
 
-/** 提交审阅反馈 */
-export const submitReviewFeedback = (
+/** 获取章节批注列表 */
+export const fetchChapterAnnotations = (projectId: string, chapterNo: string) =>
+  api.get<ApiResponse<PaginatedResponse<AnnotationItem>>>(
+    `/projects/${projectId}/chapters/${chapterNo}/annotations`,
+  )
+
+/** 创建章节批注 */
+export const createChapterAnnotation = (projectId: string, chapterNo: string, content: string) =>
+  api.post<ApiResponse<AnnotationItem>>(
+    `/projects/${projectId}/chapters/${chapterNo}/annotations`,
+    { content },
+  )
+
+/** 更新章节批注 */
+export const updateChapterAnnotation = (
   projectId: string,
   chapterNo: string,
-  action: 'approve' | 'reject',
-  comment?: string,
+  annotationId: string,
+  content: string,
 ) =>
-  api.post<ApiResponse<void>>(`/projects/${projectId}/review/${chapterNo}`, { action, comment })
+  api.put<ApiResponse<AnnotationItem>>(
+    `/projects/${projectId}/chapters/${chapterNo}/annotations/${annotationId}`,
+    { content },
+  )
 
-/** 导出文档 */
-export const exportDocument = (projectId: string, data: ExportRequest) =>
-  api.post<ApiResponse<ExportResponse>>(`/projects/${projectId}/export`, data)
+/** 删除章节批注 */
+export const deleteChapterAnnotation = (projectId: string, chapterNo: string, annotationId: string) =>
+  api.delete<ApiResponse<void>>(
+    `/projects/${projectId}/chapters/${chapterNo}/annotations/${annotationId}`,
+  )
 
-/** 获取导出状态 */
-export const fetchExportStatus = (projectId: string, taskId: string) =>
-  api.get<ApiResponse<ExportResponse>>(`/projects/${projectId}/export/${taskId}`)
+/* ---------------- 废标风险 ---------------- */
 
-/** 下载导出文件 */
-export const downloadExport = (projectId: string, taskId: string) =>
-  api.get(`/projects/${projectId}/export/${taskId}/download`, { responseType: 'blob' })
+/** 获取废标风险（按章节分组） */
+export const fetchDisqualificationRisks = (projectId: string) =>
+  api.get<ApiResponse<{ risks: Record<string, DisqualificationRisk[]> }>>(
+    `/projects/${projectId}/disqualification-risks`,
+  )

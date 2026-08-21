@@ -71,13 +71,13 @@
               :is-owner="isOwner"
               :current-user-id="currentUserId"
               @approve="handleApprove"
-              @open-feedback="openFeedbackDrawer"
+              @open-feedback="feedbackRef?.open()"
               @save="handleSaveEditDraft"
               @reset="resetEditDraft"
               @update:edit-content="(val) => (editDrafts[activeChapter] = val)"
-              @add-annotation="handleAddAnnotation(activeChapter)"
+              @add-annotation="addAnnotation(activeChapter)"
               @edit-annotation="startEditAnnotation"
-              @delete-annotation="(id) => handleDeleteAnnotation(activeChapter, id)"
+              @delete-annotation="(id) => deleteAnnotation(activeChapter, id)"
               @load-annotations="loadAnnotations"
             />
           </div>
@@ -120,167 +120,59 @@
           </template>
         </a-result>
 
-        <!-- 版本库 -->
-        <ReviewVersionPanel
-          :versions="versions"
-          :is-owner="isOwner"
-          :snapshotting="snapshotting"
-          :rolling-back-id="rollingBackId"
-          @open-snapshot="openSnapshotModal"
-          @download="handleDownloadVersion"
-          @archive="openArchiveModal"
-          @rollback="confirmRollback"
+        <!-- 版本库（面板 + 快照/归档弹窗 + 下载/回滚编排） -->
+        <ReviewVersionSection
+          ref="versionSectionRef"
+          :project-id="projectId"
+          @rolled-back="handleRolledBack"
         />
       </template>
     </PageContainer>
 
-    <!-- 手动快照弹窗 -->
-    <a-modal
-      v-model:open="snapshotModalOpen"
-      title="手动创建版本快照"
-      ok-text="创建快照"
-      cancel-text="取消"
-      :confirm-loading="snapshotting"
-      @ok="handleCreateSnapshot"
-    >
-      <a-form layout="vertical">
-        <a-form-item label="备注（可选）">
-          <a-textarea
-            v-model:value="snapshotNote"
-            :rows="3"
-            placeholder="例如：评审定稿版"
-          />
-        </a-form-item>
-      </a-form>
-    </a-modal>
-
-    <!-- 归档弹窗 -->
-    <a-modal
-      v-model:open="archiveModalOpen"
-      title="归档到公司知识库"
-      ok-text="归档"
-      cancel-text="取消"
-      :confirm-loading="archiving"
-      :ok-button-props="{ disabled: !archiveKbId }"
-      @ok="handleArchive"
-    >
-      <a-form layout="vertical">
-        <a-form-item label="目标知识库">
-          <a-select
-            v-model:value="archiveKbId"
-            :options="companyBases"
-            placeholder="选择公司级知识库"
-          />
-        </a-form-item>
-        <div class="hint">
-          归档后版本文档将入公司库分块向量化，供全公司方案生成检索
-        </div>
-      </a-form>
-    </a-modal>
-
     <!-- 反馈重写抽屉 -->
-    <a-drawer
-      v-model:open="feedbackDrawerOpen"
-      title="反馈重写"
-      placement="right"
-      :width="440"
-    >
-      <a-form layout="vertical">
-        <a-form-item label="目标章节">
-          <a-tag color="blue">
-            章节 {{ activeChapter }}
-          </a-tag>
-        </a-form-item>
-        <a-form-item label="修改意见">
-          <a-textarea
-            v-model:value="feedbackComment"
-            :rows="8"
-            placeholder="描述需要修改的内容，例如：补充行业成功案例"
-          />
-          <div class="hint">
-            意见将回派给章节负责人；无分工的章节由 AI 重写
-          </div>
-        </a-form-item>
-      </a-form>
-      <div class="drawer-footer">
-        <a-button @click="feedbackDrawerOpen = false">
-          取消
-        </a-button>
-        <a-button
-          type="primary"
-          :loading="submittingFeedback"
-          @click="handleSubmitChapterFeedback"
-        >
-          提交重写
-        </a-button>
-      </div>
-    </a-drawer>
+    <FeedbackDrawer
+      ref="feedbackRef"
+      :project-id="projectId"
+      :active-chapter="activeChapter"
+      @rewrite="handleRewriteStarted"
+    />
 
     <!-- 批注编辑弹窗 -->
-    <a-modal
-      v-model:open="annotationEditModalOpen"
-      title="编辑批注"
-      ok-text="保存"
-      cancel-text="取消"
-      :confirm-loading="updatingAnnotation"
-      @ok="handleUpdateAnnotationConfirm"
-    >
-      <a-textarea
-        v-model:value="editingAnnotationContent"
-        :rows="4"
-        :maxlength="2000"
-      />
-    </a-modal>
+    <AnnotationEditModal
+      ref="annotationEditRef"
+      :project-id="projectId"
+      :active-chapter="activeChapter"
+      @updated="(id, patch) => mergeUpdatedAnnotation(activeChapter, id, patch)"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, h, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { message, Modal } from 'ant-design-vue'
-import { ExclamationCircleOutlined } from '@ant-design/icons-vue'
-import api from '@/api/client'
-import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
+import { message } from 'ant-design-vue'
+import {
+  saveWorkflowSection,
+  fetchWorkflowStatus,
+  fetchWorkflowExport,
+  confirmReview,
+  fetchChapterAssignments,
+  fetchDisqualificationRisks as fetchDisqualificationRisksApi,
+} from '@/api'
+import type { WorkflowStatus, AnnotationItem } from '@/types'
+import { currentUserId } from '@/stores/currentUser'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 import ReviewChapterList from './components/ReviewChapterList.vue'
 import ReviewContentPanel from './components/ReviewContentPanel.vue'
-import ReviewVersionPanel from './components/ReviewVersionPanel.vue'
+import ReviewVersionSection from './components/ReviewVersionSection.vue'
+import FeedbackDrawer from './components/FeedbackDrawer.vue'
+import AnnotationEditModal from './components/AnnotationEditModal.vue'
+import { useAnnotations } from './composables/useAnnotations'
 
-interface WorkflowInterrupt { type: string; message?: string }
 interface OutlineNode { chapter_no: string; title: string; sections?: string[] }
-interface WorkflowStatus {
-  phase?: string
-  progress?: number
-  chapters?: Record<string, string>
-  outline?: OutlineNode[]
-  review_action?: string
-  review_feedback?: Record<string, string>
-  export_status?: string
-  export_storage_key?: string
-  error?: string
-  interrupt?: WorkflowInterrupt | null
-}
-interface VersionItem {
-  id: string
-  version: number
-  snapshot_note: string | null
-  created_by: string | null
-  created_by_name: string | null
-  auto: boolean
-  created_at: string | null
-}
-interface AnnotationItem {
-  id: string
-  chapter_no: string
-  content: string
-  created_by: string
-  created_by_name: string
-  created_at: string
-  updated_at: string | null
-}
 interface RiskItem {
   clause_no: string
   title: string
@@ -288,7 +180,6 @@ interface RiskItem {
   risk_category: string
   recommendation: string
 }
-interface KbBaseOption { value: string; label: string }
 
 const route = useRoute()
 const router = useRouter()
@@ -304,7 +195,6 @@ const expandedKeys = ref<string[]>([])
 const activeChapter = ref('')
 const reviewFeedback = ref<Record<string, string>>({})
 const approving = ref(false)
-const submittingFeedback = ref(false)
 const exporting = ref(false)
 const exportStatus = ref('')
 const exportStorageKey = ref('')
@@ -313,35 +203,28 @@ const rewriting = ref(false)
 // UI 状态
 const mode = ref<'edit' | 'preview'>('preview')
 const editDrafts = ref<Record<string, string>>({})
-const feedbackDrawerOpen = ref(false)
-const feedbackComment = ref('')
 
-// 版本库
-const isOwner = ref(false)
-const versions = ref<VersionItem[]>([])
-const snapshotModalOpen = ref(false)
-const snapshotNote = ref('')
-const snapshotting = ref(false)
-const archiveModalOpen = ref(false)
-const archiving = ref(false)
-const archiveKbId = ref<string | undefined>(undefined)
-const archiveTarget = ref<VersionItem | null>(null)
-const companyBases = ref<KbBaseOption[]>([])
-const rollingBackId = ref('')
-
-// 批注
-const annotationMap = ref<Record<string, AnnotationItem[]>>({})
-const annotationLoaded = ref<Record<string, boolean>>({})
-const annotationsLoading = ref(false)
-const newAnnotation = ref('')
-const addingAnnotation = ref(false)
-const editingAnnotationId = ref('')
-const editingAnnotationContent = ref('')
-const updatingAnnotation = ref(false)
-const annotationEditModalOpen = ref(false)
+// 批注（懒加载/增删/合并下沉 useAnnotations）
+const {
+  annotationsLoading,
+  newAnnotation,
+  addingAnnotation,
+  annotationListOf,
+  annotationCountOf,
+  loadAnnotations,
+  addAnnotation,
+  deleteAnnotation,
+  mergeUpdatedAnnotation,
+} = useAnnotations(projectId)
 
 // 废标风险
 const disqualificationRisks = ref<Record<string, RiskItem[]>>({})
+
+const versionSectionRef = ref<InstanceType<typeof ReviewVersionSection> | null>(null)
+/** 项目负责人标识：由版本域子组件 expose 透传 */
+const isOwner = computed(() => versionSectionRef.value?.isOwner ?? false)
+const feedbackRef = ref<InstanceType<typeof FeedbackDrawer> | null>(null)
+const annotationEditRef = ref<InstanceType<typeof AnnotationEditModal> | null>(null)
 
 const chapterKeys = computed(() => Object.keys(chapters.value))
 const polling = computed(() => pollTimer !== null)
@@ -382,7 +265,7 @@ const handleSaveEditDraft = async () => {
   if (savingSection.value) return
   savingSection.value = true
   try {
-    await api.put(`/projects/${projectId}/workflow/sections/${no}`, { content })
+    await saveWorkflowSection(projectId, no, content)
     chapters.value[no] = content
     delete editDrafts.value[no]
     message.success(`章节 ${no} 已保存到正式方案`)
@@ -392,85 +275,17 @@ const handleSaveEditDraft = async () => {
   } finally { savingSection.value = false }
 }
 
-// 批注
-const annotationListOf = (chapterNo: string): AnnotationItem[] => annotationMap.value[chapterNo] || []
-const annotationCountOf = (chapterNo: string): number => annotationListOf(chapterNo).length
-
-const loadAnnotations = async (chapterNo: string) => {
-  if (annotationLoaded.value[chapterNo]) return
-  annotationsLoading.value = true
-  try {
-    const res = await api.get(`/projects/${projectId}/chapters/${chapterNo}/annotations`)
-    if (res.data?.code === 0) {
-      annotationMap.value[chapterNo] = res.data.data.items || []
-      annotationLoaded.value[chapterNo] = true
-    }
-  } catch { message.error('批注加载失败') }
-  finally { annotationsLoading.value = false }
-}
-
-const handleAddAnnotation = async (chapterNo: string) => {
-  const content = newAnnotation.value.trim()
-  if (!chapterNo || !content) return
-  addingAnnotation.value = true
-  try {
-    const res = await api.post(`/projects/${projectId}/chapters/${chapterNo}/annotations`, { content })
-    if (res.data?.code === 0) {
-      newAnnotation.value = ''
-      annotationLoaded.value[chapterNo] = false
-      await loadAnnotations(chapterNo)
-    }
-  } catch (err) {
-    const status = (err as { response?: { status?: number } })?.response?.status
-    message.error(status === 403 ? '无该章节批注权限' : '批注添加失败')
-  } finally { addingAnnotation.value = false }
-}
-
-const startEditAnnotation = (item: AnnotationItem) => {
-  editingAnnotationId.value = item.id
-  editingAnnotationContent.value = item.content
-  annotationEditModalOpen.value = true
-}
-
-const handleUpdateAnnotationConfirm = async () => {
-  const content = editingAnnotationContent.value.trim()
-  if (!content || !editingAnnotationId.value) return
-  updatingAnnotation.value = true
-  try {
-    const res = await api.put(
-      `/projects/${projectId}/chapters/${activeChapter.value}/annotations/${editingAnnotationId.value}`,
-      { content },
-    )
-    if (res.data?.code === 0) {
-      annotationEditModalOpen.value = false
-      const items = annotationMap.value[activeChapter.value] || []
-      const idx = items.findIndex((it) => it.id === editingAnnotationId.value)
-      if (idx >= 0) items[idx] = { ...items[idx], ...res.data.data }
-      message.success('批注已更新')
-    }
-  } catch { message.error('批注更新失败') }
-  finally { updatingAnnotation.value = false }
-}
-
-const handleDeleteAnnotation = async (chapterNo: string, annotationId: string) => {
-  try {
-    const res = await api.delete(`/projects/${projectId}/chapters/${chapterNo}/annotations/${annotationId}`)
-    if (res.data?.code === 0) {
-      annotationMap.value[chapterNo] = (annotationMap.value[chapterNo] || []).filter(
-        (it) => it.id !== annotationId,
-      )
-      message.success('批注已删除')
-    }
-  } catch { message.error('批注删除失败') }
-}
-
 // 轮询
+const startEditAnnotation = (item: AnnotationItem) => {
+  annotationEditRef.value?.open(item)
+}
+
 let pollTimer: number | null = null
 const stopPolling = () => { if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null } }
 
 const applyStatus = (data: WorkflowStatus) => {
   chapters.value = data.chapters || {}
-  outline.value = data.outline || []
+  outline.value = (data.outline || []) as OutlineNode[]
   reviewFeedback.value = data.review_feedback || {}
   exportStatus.value = data.export_status || ''
   exportStorageKey.value = data.export_storage_key || ''
@@ -489,13 +304,13 @@ const applyStatus = (data: WorkflowStatus) => {
 }
 
 const fetchStatus = async (): Promise<WorkflowStatus | undefined> => {
-  const res = await api.get(`/projects/${projectId}/workflow/status`)
-  return res.data?.data as WorkflowStatus | undefined
+  const res = await fetchWorkflowStatus(projectId)
+  return res.data?.data
 }
 
 const fetchSubmitters = async () => {
   try {
-    const res = await api.get(`/projects/${projectId}/chapter-assignments`)
+    const res = await fetchChapterAssignments(projectId)
     const items = (res.data?.data?.items || []) as { chapter_no: string; submitted_by_name?: string }[]
     const map: Record<string, string> = {}
     for (const it of items) { if (it.submitted_by_name) map[it.chapter_no] = it.submitted_by_name }
@@ -503,102 +318,18 @@ const fetchSubmitters = async () => {
   } catch { /* 降级 */ }
 }
 
-const fetchVersions = async () => {
-  try {
-    const res = await api.get(`/projects/${projectId}/versions`)
-    if (res.data?.code === 0) versions.value = res.data.data.items || []
-  } catch { /* 不阻塞 */ }
-}
-
-const fetchOwnerFlag = async () => {
-  try {
-    await fetchCurrentUserRole()
-    const res = await api.get(`/projects/${projectId}`)
-    if (res.data?.code === 0) isOwner.value = res.data.data.owner_id === currentUserId.value
-  } catch { isOwner.value = false }
-}
-
 const fetchDisqualificationRisks = async () => {
   try {
-    const res = await api.get(`/projects/${projectId}/disqualification-risks`)
+    const res = await fetchDisqualificationRisksApi(projectId)
     disqualificationRisks.value = res.data?.data?.risks || {}
   } catch { disqualificationRisks.value = {} }
 }
 
-// 版本操作
-const openSnapshotModal = () => { snapshotNote.value = ''; snapshotModalOpen.value = true }
-
-const handleCreateSnapshot = async () => {
-  snapshotting.value = true
-  try {
-    const res = await api.post(`/projects/${projectId}/versions`, { snapshot_note: snapshotNote.value.trim() || null })
-    if (res.data?.code === 0) {
-      message.success(`版本 v${res.data.data.version} 快照已创建`)
-      snapshotModalOpen.value = false
-      await fetchVersions()
-    }
-  } catch { message.error('快照创建失败') }
-  finally { snapshotting.value = false }
-}
-
-const handleDownloadVersion = async (item: VersionItem, type: 'docx' | 'source') => {
-  try {
-    const res = await api.get(`/projects/${projectId}/versions/${item.id}/download`, { params: { type } })
-    if (res.data?.code === 0 && res.data.data.url) window.open(res.data.data.url, '_blank')
-  } catch { message.error('下载链接生成失败') }
-}
-
-const openArchiveModal = async (item: VersionItem) => {
-  archiveTarget.value = item
-  archiveKbId.value = undefined
-  archiveModalOpen.value = true
-  if (companyBases.value.length > 0) return
-  try {
-    const res = await api.get('/kb-bases')
-    if (res.data?.code === 0) {
-      companyBases.value = (res.data.data.items || [])
-        .filter((b: { scope: string }) => b.scope === 'company')
-        .map((b: { id: string; name: string }) => ({ value: b.id, label: b.name }))
-    }
-  } catch { message.error('知识库列表加载失败') }
-}
-
-const handleArchive = async () => {
-  if (!archiveTarget.value || !archiveKbId.value) return
-  archiving.value = true
-  try {
-    const res = await api.post(`/projects/${projectId}/versions/${archiveTarget.value.id}/archive`, { kb_id: archiveKbId.value })
-    if (res.data?.code === 0) { message.success(`已归档：${res.data.data.title}`); archiveModalOpen.value = false }
-  } catch { message.error('归档失败') }
-  finally { archiving.value = false }
-}
-
-const confirmRollback = (item: VersionItem) => {
-  Modal.confirm({
-    title: '回滚版本',
-    content: `将用版本 v${item.version} 的快照覆盖当前全部章节内容。确认回滚？`,
-    okText: '确认回滚',
-    cancelText: '取消',
-    okButtonProps: { danger: true },
-    icon: () => h(ExclamationCircleOutlined),
-    onOk: () => handleRollback(item),
-  })
-}
-
-const handleRollback = async (item: VersionItem) => {
-  rollingBackId.value = item.id
-  try {
-    const res = await api.post(`/projects/${projectId}/versions/${item.id}/rollback`)
-    if (res.data?.code !== 0) { message.error(res.data?.message || '版本回滚失败'); return }
-    const restored = res.data.data?.chapters_restored ?? 0
-    await fetchVersions()
-    const data = await fetchStatus()
-    if (data) { applyStatus(data); editDrafts.value = {} }
-    message.success(`回滚成功，已恢复 ${restored} 个章节内容`)
-  } catch (err) {
-    const status = (err as { response?: { status?: number } })?.response?.status
-    message.error(status === 403 ? '仅项目负责人可回滚' : '版本回滚失败')
-  } finally { rollingBackId.value = '' }
+/** 版本回滚成功：按原时序刷新工作流状态并清空编辑草稿 */
+const handleRolledBack = async (restored: number) => {
+  const data = await fetchStatus()
+  if (data) { applyStatus(data); editDrafts.value = {} }
+  message.success(`回滚成功，已恢复 ${restored} 个章节内容`)
 }
 
 const pollUntil = (until: (data: WorkflowStatus) => boolean, onDone?: (data: WorkflowStatus) => void) => {
@@ -620,7 +351,7 @@ const pollUntil = (until: (data: WorkflowStatus) => boolean, onDone?: (data: Wor
 const handleApprove = async () => {
   approving.value = true
   try {
-    const res = await api.post(`/projects/${projectId}/workflow/confirm-review`, { action: 'approved' })
+    const res = await confirmReview(projectId, { action: 'approved' })
     if (res.data?.code !== 0) { message.error(res.data?.message || '审阅确认失败'); return }
     message.success('审阅通过，正在生成导出文档...')
     pollUntil((data) => data.export_status === 'done', () => message.success('导出完成，可下载文档'))
@@ -628,46 +359,26 @@ const handleApprove = async () => {
   finally { approving.value = false }
 }
 
-const openFeedbackDrawer = () => { feedbackComment.value = ''; feedbackDrawerOpen.value = true }
-
-const handleSubmitChapterFeedback = async () => {
-  const comment = feedbackComment.value.trim()
-  if (!comment) { message.warning('请填写修改意见'); return }
-  if (!activeChapter.value) { message.warning('请先选择章节'); return }
-  submittingFeedback.value = true
-  try {
-    const res = await api.post(`/projects/${projectId}/workflow/confirm-review`, {
-      action: 'feedback',
-      feedback: { [activeChapter.value]: comment },
-    })
-    if (res.data?.code !== 0) { message.error(res.data?.message || '提交修改意见失败'); return }
-    if (res.data?.data?.next_phase === 'redispatch') {
-      message.success('修改意见已回派给章节负责人，重编提交后复审')
-      feedbackDrawerOpen.value = false
-      return
-    }
-    message.success('修改意见已提交，已触发章节重写')
-    feedbackDrawerOpen.value = false
-    rewriting.value = true
-    let sawCleared = false
-    pollUntil(
-      (data) => { if (!data.interrupt) sawCleared = true; return sawCleared && data.interrupt?.type === 'review_request' },
-      () => {
-        rewriting.value = false
-        if (editDrafts.value[activeChapter.value] !== undefined) {
-          editDrafts.value[activeChapter.value] = chapters.value[activeChapter.value] || ''
-        }
-        message.success('章节重写完成，请重新审阅')
-      },
-    )
-  } catch { message.error('提交修改意见失败') }
-  finally { submittingFeedback.value = false }
+/** 反馈抽屉提交成功并触发 AI 重写：进入轮询等待重写完成 */
+const handleRewriteStarted = () => {
+  rewriting.value = true
+  let sawCleared = false
+  pollUntil(
+    (data) => { if (!data.interrupt) sawCleared = true; return sawCleared && data.interrupt?.type === 'review_request' },
+    () => {
+      rewriting.value = false
+      if (editDrafts.value[activeChapter.value] !== undefined) {
+        editDrafts.value[activeChapter.value] = chapters.value[activeChapter.value] || ''
+      }
+      message.success('章节重写完成，请重新审阅')
+    },
+  )
 }
 
 const handleExport = async () => {
   exporting.value = true
   try {
-    const res = await api.get(`/projects/${projectId}/workflow/export`)
+    const res = await fetchWorkflowExport(projectId)
     const data = res.data?.data
     exportStatus.value = data?.export_status || 'pending'
     exportStorageKey.value = data?.export_storage_key || ''
@@ -690,8 +401,7 @@ onMounted(async () => {
     const data = await fetchStatus()
     if (data) applyStatus(data)
     await fetchSubmitters()
-    await fetchOwnerFlag()
-    await fetchVersions()
+    await versionSectionRef.value?.load()
     await fetchDisqualificationRisks()
   } catch { loadError.value = '审阅状态加载失败' }
   finally { loading.value = false }
@@ -740,18 +450,5 @@ onUnmounted(() => stopPolling())
   gap: 12px;
   justify-content: flex-end;
   margin-top: 24px;
-}
-
-.hint {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-.drawer-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-top: 8px;
 }
 </style>

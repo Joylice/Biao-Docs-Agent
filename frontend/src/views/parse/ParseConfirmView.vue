@@ -148,7 +148,23 @@
 import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import api from '@/api/client'
+import {
+  fetchScorePoints,
+  updateScorePoint,
+  fetchRequirements,
+  generateRequirements,
+  downloadProjectDocument,
+  reparseDocument,
+  fetchDocFormatRequirements,
+  saveDocFormatRequirements,
+  fetchDocDisqualificationClauses,
+  saveDocDisqualificationClauses,
+  fetchProjectDocuments,
+  fetchWorkflowStatus,
+  startWorkflow,
+  confirmScorePoints,
+} from '@/api'
+import type { WorkflowStatus } from '@/types'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -197,7 +213,6 @@ interface DisqualificationClause {
   confirmed: boolean
 }
 
-interface WorkflowStatus { phase: string; error: string; interrupt: { type: string } | null }
 
 withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 
@@ -254,7 +269,7 @@ const handleSaveFormat = async () => {
     .filter((it) => it.requirement)
   formatSaving.value = true
   try {
-    const res = await api.put(`/projects/${projectId}/documents/${tenderDoc.value.id}/format-requirements`, { format_requirements: items })
+    const res = await saveDocFormatRequirements(projectId, tenderDoc.value.id, items)
     if (res.data?.code !== 0) { message.error(res.data?.message || '格式要求保存失败'); return }
     const saved = res.data?.data?.items || []
     formatRequirements.value = saved.map((it: { category: string; requirement: string }, i: number) => ({ key: `fmt-${i}`, ...it }))
@@ -269,7 +284,7 @@ const handleDownloadTender = async () => {
   if (!tenderDoc.value) return
   downloadTenderLoading.value = true
   try {
-    const resp = await api.get(`/projects/${projectId}/documents/${tenderDoc.value.id}/download`, { responseType: 'blob' })
+    const resp = await downloadProjectDocument(projectId, tenderDoc.value.id)
     const url = URL.createObjectURL(resp.data as Blob)
     const a = document.createElement('a')
     a.href = url
@@ -286,9 +301,11 @@ const handleDisqualificationConfirm = async (clause: DisqualificationClause, che
   clause.confirmed = checked
   disqualificationSaving.value = true
   try {
-    const res = await api.put(`/projects/${projectId}/documents/${tenderDoc.value.id}/disqualification-clauses`, {
-      items: disqualificationClauses.value.map((it) => ({ id: it.id, clause_no: it.clause_no, title: it.title, risk_category: it.risk_category, severity: it.severity, recommendation: it.recommendation, confirmed: it.confirmed })),
-    })
+    const res = await saveDocDisqualificationClauses(
+      projectId,
+      tenderDoc.value.id,
+      disqualificationClauses.value.map((it) => ({ id: it.id, clause_no: it.clause_no, title: it.title, risk_category: it.risk_category, severity: it.severity, recommendation: it.recommendation, confirmed: it.confirmed })),
+    )
     if (res.data?.code !== 0) { clause.confirmed = prev; message.error(res.data?.message || '废标条款确认状态保存失败'); return }
     message.success('已保存废标条款确认状态')
   } catch (err) {
@@ -303,21 +320,21 @@ const fetchData = async () => {
   loadError.value = ''
   try {
     const [spRes, trRes] = await Promise.all([
-      api.get(`/projects/${projectId}/score-points`),
+      fetchScorePoints(projectId),
       // 获取全部技术需求（含未关联评分点的），表格中显示关联状态
-      api.get(`/projects/${projectId}/requirements`),
+      fetchRequirements(projectId),
     ])
     scorePoints.value = spRes.data?.data || []
     techRequirements.value = trRes.data?.data || []
-    const docRes = await api.get(`/projects/${projectId}/documents`, { params: { doc_type: 'tender_file' } })
-    const docItems = docRes.data?.data?.items || docRes.data?.data || []
+    const docRes = await fetchProjectDocuments(projectId, { doc_type: 'tender_file' })
+    const docItems = docRes.data?.data?.items || []
     tenderDoc.value = docItems[0] || null
     if (tenderDoc.value) {
-      const fmtRes = await api.get(`/projects/${projectId}/documents/${tenderDoc.value.id}/format-requirements`)
+      const fmtRes = await fetchDocFormatRequirements(projectId, tenderDoc.value.id)
       const items = fmtRes.data?.data?.items || []
       formatRequirements.value = items.map((it: { category: string; requirement: string }, i: number) => ({ key: `fmt-${i}`, ...it }))
       try {
-        const dqRes = await api.get(`/projects/${projectId}/documents/${tenderDoc.value.id}/disqualification-clauses`)
+        const dqRes = await fetchDocDisqualificationClauses(projectId, tenderDoc.value.id)
         disqualificationClauses.value = dqRes.data?.data?.items || []
       } catch { disqualificationClauses.value = [] }
     }
@@ -338,13 +355,12 @@ const handleGenerateRequirements = async () => {
       generateLoading.value = false
       return
     }
-    const body = { score_point_ids: spIds }
-    const res = await api.post(`/projects/${projectId}/requirements/generate`, body)
+    const res = await generateRequirements(projectId, spIds)
     if (res.data?.code !== 0) { message.error(res.data?.message || '技术需求生成失败'); return }
-    const data = res.data?.data || {}
+    const data = res.data?.data || { total: 0, mapped: 0 }
     message.success(`已生成 ${data.total} 条需求，其中 ${data.mapped} 条关联到评分点`)
     // 获取全部技术需求（含未关联的），表格中显示关联状态
-    const trRes = await api.get(`/projects/${projectId}/requirements`)
+    const trRes = await fetchRequirements(projectId)
     techRequirements.value = trRes.data?.data || []
   } catch (err) {
     const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
@@ -356,7 +372,7 @@ const handleReparse = async () => {
   if (!tenderDoc.value) return
   reparseLoading.value = true
   try {
-    await api.post(`/projects/${projectId}/documents/${tenderDoc.value.id}/reparse`)
+    await reparseDocument(projectId, tenderDoc.value.id)
     message.success('已发起重新解析，页面即将刷新')
     window.location.reload()
   } catch (err) {
@@ -368,7 +384,7 @@ const handleReparse = async () => {
 const handleSaveRow = async (row: ScorePoint) => {
   savingId.value = row.id
   try {
-    const res = await api.put(`/projects/${projectId}/score-points/${row.id}`, { strategy: row.strategy, confirmed: row.confirmed })
+    const res = await updateScorePoint(projectId, row.id, { strategy: row.strategy, confirmed: row.confirmed })
     if (res.data?.code !== 0) { message.error(res.data?.message || '保存失败'); return }
     message.success('已保存')
   } catch { message.error('保存失败') }
@@ -388,7 +404,7 @@ const handleConfirmAll = async () => {
   let errMsg = '批量确认失败，请重试'
   const ok = await runBatchConfirm(async () => {
     for (const p of pending) {
-      const res = await api.put(`/projects/${projectId}/score-points/${p.id}`, { confirmed: true })
+      const res = await updateScorePoint(projectId, p.id, { confirmed: true })
       if (res.data?.code !== 0) {
         errMsg = res.data?.message || '确认失败'
         throw new Error(errMsg)
@@ -412,7 +428,7 @@ const handleApplyBatchStrategy = async () => {
   batchStrategyLoading.value = true
   try {
     for (const p of scorePoints.value) {
-      const res = await api.put(`/projects/${projectId}/score-points/${p.id}`, { strategy })
+      const res = await updateScorePoint(projectId, p.id, { strategy })
       if (res.data?.code !== 0) { message.error(res.data?.message || '应用失败'); return }
       p.strategy = strategy
     }
@@ -425,7 +441,7 @@ const handleApplyBatchStrategy = async () => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 const getWorkflowStatus = async (): Promise<WorkflowStatus | null> => {
-  const res = await api.get(`/projects/${projectId}/workflow/status`)
+  const res = await fetchWorkflowStatus(projectId)
   return res.data?.data || null
 }
 
@@ -434,7 +450,7 @@ const ensureScorePointInterrupt = async (): Promise<boolean> => {
   if (status?.interrupt?.type === 'confirm_score_points') return true
   if (status?.interrupt) { message.warning('工作流已进入后续阶段，请前往「方案大纲生成」页继续操作'); return false }
   const phase = status?.phase || 'init'
-  if (phase === 'init') { await api.post(`/projects/${projectId}/workflow/start`) }
+  if (phase === 'init') { await startWorkflow(projectId) }
   else if (phase !== 'confirm') { message.warning('工作流已进入后续阶段，请前往「方案大纲生成」页继续操作'); return false }
   for (let i = 0; i < 60; i += 1) {
     await sleep(1000)
@@ -454,7 +470,7 @@ const handleConfirm = async () => {
     const ready = await ensureScorePointInterrupt()
     if (!ready) return
     hideLoading()
-    await api.post(`/projects/${projectId}/workflow/confirm-score-points`)
+    await confirmScorePoints(projectId)
     message.success('已确认，开始生成大纲...')
     router.push({ name: 'Generate', params: { projectId } })
   } catch (err) {

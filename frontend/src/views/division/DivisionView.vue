@@ -165,8 +165,17 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons-vue'
-import api from '@/api/client'
 import { fetchWorkflowStatus } from '@/api/workflow'
+import {
+  fetchChapterAssignments,
+  upsertChapterAssignments,
+  acceptAssignment,
+  submitAssignment,
+  approveAssignment,
+  rejectAssignment,
+  fetchProject,
+  fetchProjectMembers,
+} from '@/api'
 import PageContainer from '@/components/PageContainer.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -368,7 +377,7 @@ const syncDraftBaseline = (nodes: AssignmentNode[]) => {
 
 const fetchAssignments = async () => {
   try {
-    const { data } = await api.get(`/projects/${projectId}/chapter-assignments`)
+    const { data } = await fetchChapterAssignments(projectId)
     if (data.code === 0) {
       const tree: AssignmentNode[] = data.data?.items || []
       assignTree.value = tree
@@ -405,7 +414,7 @@ const fetchOutline = async () => {
 
 const fetchProjectOwner = async () => {
   try {
-    const { data } = await api.get(`/projects/${projectId}`)
+    const { data } = await fetchProject(projectId)
     if (data.code === 0) {
       projectOwnerId.value = data.data?.owner_id || ''
     }
@@ -416,7 +425,7 @@ const fetchProjectOwner = async () => {
 
 const fetchMembers = async () => {
   try {
-    const { data } = await api.get(`/projects/${projectId}/members`)
+    const { data } = await fetchProjectMembers(projectId)
     if (data.code === 0) {
       members.value = data.data?.items || []
     }
@@ -453,7 +462,7 @@ const handleAssign = async () => {
   assigning.value = true
   try {
     // 后端幂等 upsert，响应同为树形结构
-    const { data } = await api.post(`/projects/${projectId}/chapter-assignments`, payload)
+    const { data } = await upsertChapterAssignments(projectId, payload)
     if (data.code === 0) {
       const tree: AssignmentNode[] = data.data?.items || []
       assignTree.value = tree
@@ -479,37 +488,27 @@ const handleSelectTask = (item: AssignmentItem) => {
 
 /** 拖拽移动动作描述：合法状态转换 → 对应后端接口；非法返回 null */
 interface MoveAction {
-  url: string
-  body?: Record<string, unknown>
+  kind: 'accept' | 'submit' | 'approve' | 'reject'
   successText: string
 }
 
 const resolveMoveAction = (item: AssignmentItem, targetStatus: TaskStatus): MoveAction | null => {
   // 后端真实路由（backend/app/api/division.py）：chapter-assignments；审核统一走 review
-  const base = `/projects/${projectId}/chapter-assignments/${item.id}`
   if (targetStatus === 'in_progress' && item.status === 'pending') {
     // 领取
-    return { url: `${base}/accept`, successText: `已领取：${item.title}` }
+    return { kind: 'accept', successText: `已领取：${item.title}` }
   }
   if (targetStatus === 'submitted' && item.status === 'in_progress') {
     // 提交
-    return { url: `${base}/submit`, successText: `已提交：${item.title}` }
+    return { kind: 'submit', successText: `已提交：${item.title}` }
   }
   if (targetStatus === 'approved' && item.status === 'submitted') {
-    // 审核通过（review 端点，body 对齐后端 ReviewBody：{ action, comment }）
-    return {
-      url: `${base}/review`,
-      body: { action: 'approved' },
-      successText: `已通过：${item.title}`,
-    }
+    // 审核通过（review 端点，body 对齐后端 ReviewBody：{ action }）
+    return { kind: 'approve', successText: `已通过：${item.title}` }
   }
   if (targetStatus === 'rejected' && item.status === 'submitted') {
     // 打回（默认原因；review 端点，body 对齐后端 ReviewBody：{ action, comment }）
-    return {
-      url: `${base}/review`,
-      body: { action: 'rejected', comment: '看板拖拽打回，请在编辑抽屉中查看详情' },
-      successText: `已打回：${item.title}`,
-    }
+    return { kind: 'reject', successText: `已打回：${item.title}` }
   }
   return null
 }
@@ -524,7 +523,15 @@ const handleMoveTask = async (item: AssignmentItem, targetStatus: TaskStatus) =>
   // 变更前推快照：Ctrl+Z 可撤销（仅恢复本地视图，不回滚后端状态）
   kanbanHistory.push(items.value)
   try {
-    await api.post(action.url, action.body)
+    if (action.kind === 'accept') {
+      await acceptAssignment(projectId, item.id)
+    } else if (action.kind === 'submit') {
+      await submitAssignment(projectId, item.id)
+    } else if (action.kind === 'approve') {
+      await approveAssignment(projectId, item.id)
+    } else {
+      await rejectAssignment(projectId, item.id, '看板拖拽打回，请在编辑抽屉中查看详情')
+    }
     message.success(action.successText)
     await fetchAssignments()
   } catch (err) {

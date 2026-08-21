@@ -4,6 +4,7 @@ import type {
   ApiResponse,
   WorkflowStatus,
   ConfirmOutlineRequest,
+  ConfirmReviewRequest,
   OutlineDraft,
   OutlineSuggestion,
   SectionSuggestion,
@@ -13,12 +14,16 @@ import type {
 export const fetchWorkflowStatus = (projectId: string) =>
   api.get<ApiResponse<WorkflowStatus>>(`/projects/${projectId}/workflow/status`)
 
-/** 确认评分点（启动工作流） */
+/** 启动工作流（init → 后台推进至首个 HITL interrupt） */
+export const startWorkflow = (projectId: string) =>
+  api.post<ApiResponse<void>>(`/projects/${projectId}/workflow/start`)
+
+/** 确认评分点（resume confirm_score_points interrupt） */
 export const confirmScorePoints = (projectId: string) =>
   api.post<ApiResponse<void>>(`/projects/${projectId}/workflow/confirm-score-points`)
 
-/** 确认大纲（启动章节生成） */
-export const confirmOutline = (projectId: string, data: ConfirmOutlineRequest) =>
+/** 确认大纲（启动章节生成；outline 仅 confirm_outline 挂起时携带） */
+export const confirmOutline = (projectId: string, data: Partial<ConfirmOutlineRequest>) =>
   api.post<ApiResponse<void>>(`/projects/${projectId}/workflow/confirm-outline`, data)
 
 /** 重新生成大纲 */
@@ -63,4 +68,21 @@ export const rewriteChapter = (projectId: string, chapterNo: string, comment: st
     `/projects/${projectId}/workflow/rewrite-chapter`,
     null,
     { params: { chapter_no: chapterNo, comment } },
+  )
+
+/** 审阅确认（通过 / 章节反馈重写） */
+export const confirmReview = (projectId: string, data: ConfirmReviewRequest) =>
+  api.post<ApiResponse<{ next_phase?: string }>>(
+    `/projects/${projectId}/workflow/confirm-review`,
+    data,
+  )
+
+/** 保存章节编辑（审阅页直接写入正式方案） */
+export const saveWorkflowSection = (projectId: string, chapterNo: string, content: string) =>
+  api.put<ApiResponse<void>>(`/projects/${projectId}/workflow/sections/${chapterNo}`, { content })
+
+/** 导出 Word 文档（返回导出状态与存储标识） */
+export const fetchWorkflowExport = (projectId: string) =>
+  api.get<ApiResponse<{ export_status?: string; export_storage_key?: string }>>(
+    `/projects/${projectId}/workflow/export`,
   )

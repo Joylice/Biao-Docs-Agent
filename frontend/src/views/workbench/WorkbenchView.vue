@@ -210,7 +210,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { PlusOutlined, FolderOpenOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
-import api from '@/api/client'
+import { fetchWorkbenchSummary } from '@/api'
 import { currentUserId } from '@/stores/currentUser'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -290,7 +290,7 @@ const fetchSummary = async (silent = false) => {
   }
   loadError.value = ''
   try {
-    const { data } = await api.get('/workbench/summary')
+    const { data } = await fetchWorkbenchSummary()
     if (data.code === 0) {
       // 展开兜底：缺省分桶补空数组，避免模板取 undefined
       summary.value = { ...emptySummary(), ...(data.data ?? {}) }

@@ -9,14 +9,16 @@ export interface CurrentUser {
   permissions?: string[]
 }
 
-/** 用户列表项 */
+/** 角色枚举（对齐后端 member/kb_admin/admin） */
+export type UserRole = 'member' | 'kb_admin' | 'admin'
+
+/** 用户列表项（对齐后端 UserListOut） */
 export interface UserItem {
   id: string
   email: string
   display_name: string
-  role?: string
-  created_at?: string
-  status?: string
+  role: UserRole
+  created_at: string
 }
 
 /** 用户下拉选项 */
@@ -29,6 +31,8 @@ export interface UserOption {
 /** 登录请求（支持用户名或邮箱登录） */
 export interface LoginRequest {
   username: string
+  /** 兼容旧后端：与 username 同值发送 */
+  email?: string
   password: string
 }
 
@@ -40,8 +44,12 @@ export interface LoginResponse {
   user: CurrentUser
 }
 
-/** 角色枚举 */
-export type UserRole = 'admin' | 'user'
+/** 权限点目录项（GET /rbac/permissions） */
+export interface PermissionCatalogItem {
+  code: string
+  name: string
+  category: string
+}
 
 /** 权限点 */
 export type Permission =

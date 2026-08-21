@@ -170,7 +170,14 @@ import {
   EditOutlined,
   TeamOutlined,
 } from '@ant-design/icons-vue'
-import api from '@/api/client'
+import {
+  fetchProject as fetchProjectApi,
+  fetchProjectMembers,
+  fetchUserOptions,
+  addProjectMember,
+  removeProjectMember,
+} from '@/api'
+import type { ProjectMember } from '@/types'
 import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
 import { useHotkeys } from '@/composables/useHotkeys'
 
@@ -179,14 +186,6 @@ interface ProjectDetail {
   name: string
   owner_id: string
   status?: string
-}
-
-interface MemberItem {
-  user_id: string
-  email: string
-  display_name: string
-  is_owner: boolean
-  joined_at: string
 }
 
 interface UserOption {
@@ -205,7 +204,7 @@ const projectPhase = ref('')
 
 // 成员管理
 const showMembersDrawer = ref(false)
-const members = ref<MemberItem[]>([])
+const members = ref<ProjectMember[]>([])
 const membersLoading = ref(false)
 const addUserId = ref<string | undefined>(undefined)
 const addingMember = ref(false)
@@ -285,7 +284,7 @@ useHotkeys([
 /* ---------------- 数据加载 ---------------- */
 const fetchProject = async () => {
   try {
-    const { data } = await api.get(`/projects/${projectId}`)
+    const { data } = await fetchProjectApi(projectId)
     if (data.code === 0) {
       const project = data.data as ProjectDetail
       projectName.value = project.name
@@ -300,7 +299,7 @@ const fetchProject = async () => {
 const fetchMembers = async () => {
   membersLoading.value = true
   try {
-    const { data } = await api.get(`/projects/${projectId}/members`)
+    const { data } = await fetchProjectMembers(projectId)
     if (data.code === 0) {
       members.value = data.data.items
     }
@@ -313,7 +312,7 @@ const fetchMembers = async () => {
 
 const loadUserOptions = async () => {
   try {
-    const { data } = await api.get('/users/options')
+    const { data } = await fetchUserOptions()
     if (data.code === 0) {
       userOptions.value = data.data.items
     }
@@ -342,7 +341,7 @@ const getErrorMessage = (err: unknown, fallback: string): string => {
 
 const handleRemoveMember = async (userId: string) => {
   try {
-    const { data } = await api.delete(`/projects/${projectId}/members/${userId}`)
+    const { data } = await removeProjectMember(projectId, userId)
     if (data.code === 0) {
       message.success('成员移除成功')
       fetchMembers()
@@ -360,9 +359,7 @@ const handleAddMember = async () => {
   }
   addingMember.value = true
   try {
-    const { data } = await api.post(`/projects/${projectId}/members`, {
-      email: selected.email,
-    })
+    const { data } = await addProjectMember(projectId, selected.email)
     if (data.code === 0) {
       message.success('成员添加成功')
       addUserId.value = undefined

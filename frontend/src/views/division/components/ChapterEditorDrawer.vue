@@ -160,7 +160,15 @@ import { message } from 'ant-design-vue'
 import { CheckOutlined } from '@ant-design/icons-vue'
 import type { AssignmentItem } from '@/types'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
-import api from '@/api/client'
+import {
+  fetchChapterContent,
+  saveChapterContent,
+  acceptAssignment,
+  submitAssignment,
+  approveAssignment,
+  rejectAssignment,
+  assistChapter,
+} from '@/api'
 import { currentUserId } from '@/stores/currentUser'
 import { useHotkeys } from '@/composables/useHotkeys'
 import { useSuccessButton } from '@/composables/useSuccessButton'
@@ -247,9 +255,7 @@ watch(
   async (visible) => {
     if (visible && props.task) {
       try {
-        const { data } = await api.get(
-          `/projects/${props.projectId}/chapters/${props.task.chapter_no}/content`,
-        )
+        const { data } = await fetchChapterContent(props.projectId, props.task.chapter_no)
         editorContent.value = data.data?.content || ''
       } catch {
         editorContent.value = ''
@@ -267,9 +273,7 @@ const handleSave = async () => {
   if (!task) return
   saving.value = true
   const ok = await runWithSuccess(async () => {
-    await api.put(`/projects/${props.projectId}/chapters/${task.chapter_no}/content`, {
-      content: editorContent.value,
-    })
+    await saveChapterContent(props.projectId, task.chapter_no, editorContent.value)
   })
   saving.value = false
   if (ok) {
@@ -296,7 +300,7 @@ const handleAccept = async () => {
   if (!props.task) return
   accepting.value = true
   try {
-    await api.post(`/projects/${props.projectId}/chapter-assignments/${props.task.id}/accept`)
+    await acceptAssignment(props.projectId, props.task.id)
     message.success('已领取任务')
     emit('updated')
   } catch {
@@ -311,7 +315,7 @@ const handleSubmit = async () => {
   await handleSave()
   submitting.value = true
   try {
-    await api.post(`/projects/${props.projectId}/chapter-assignments/${props.task.id}/submit`)
+    await submitAssignment(props.projectId, props.task.id)
     message.success('已提交审核')
     emit('updated')
   } catch {
@@ -325,9 +329,7 @@ const handleApprove = async () => {
   if (!props.task) return
   approving.value = true
   try {
-    await api.post(`/projects/${props.projectId}/chapter-assignments/${props.task.id}/review`, {
-      action: 'approved',
-    })
+    await approveAssignment(props.projectId, props.task.id)
     message.success('审核通过')
     emit('updated')
   } catch {
@@ -341,10 +343,7 @@ const handleReject = async () => {
   if (!props.task) return
   rejecting.value = true
   try {
-    await api.post(`/projects/${props.projectId}/chapter-assignments/${props.task.id}/review`, {
-      action: 'rejected',
-      comment: rejectComment.value,
-    })
+    await rejectAssignment(props.projectId, props.task.id, rejectComment.value)
     message.success('已打回')
     showRejectModal.value = false
     rejectComment.value = ''
@@ -360,7 +359,7 @@ const handleAssist = async () => {
   if (!props.task || !assistPrompt.value.trim()) return
   assisting.value = true
   try {
-    const { data } = await api.post(`/projects/${props.projectId}/chapters/assist`, {
+    const { data } = await assistChapter(props.projectId, {
       chapter_no: props.task.chapter_no,
       prompt: assistPrompt.value,
       mode: assistMode.value,

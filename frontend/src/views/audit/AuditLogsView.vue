@@ -94,7 +94,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import type { Dayjs } from 'dayjs'
-import api from '@/api/client'
+import { fetchAuditLogs } from '@/api'
 import PageContainer from '@/components/PageContainer.vue'
 
 interface AuditItem {
@@ -140,7 +140,14 @@ const pagination = reactive({
 const fetchLogs = async () => {
   loading.value = true
   try {
-    const params: Record<string, unknown> = {
+    const params: {
+      page: number
+      page_size: number
+      action?: string
+      target_type?: string
+      start?: string
+      end?: string
+    } = {
       page: pagination.current,
       page_size: pagination.pageSize,
     }
@@ -152,7 +159,7 @@ const fetchLogs = async () => {
       params.start = filters.range[0].toISOString()
       params.end = filters.range[1].toISOString()
     }
-    const { data } = await api.get('/audit-logs', { params })
+    const { data } = await fetchAuditLogs(params)
     if (data.code === 0) {
       logs.value = data.data.items
       pagination.total = data.data.total

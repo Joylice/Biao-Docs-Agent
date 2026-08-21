@@ -1,16 +1,18 @@
 /** 文档、资料库、知识库相关类型 */
 import type { KbScope } from './common'
 
-/** 文档/资料项 */
+/** 文档/资料项（对齐后端 /kb/materials 与项目文档列表输出） */
 export interface DocumentItem {
   id: string
   title: string
   doc_type: string
   status: string
   project_id?: string | null
-  category?: string
+  category?: string | null
   tags?: string[]
   file_size?: number
+  uploader_name?: string
+  uploader_id?: string | null
   created_at: string
   updated_at?: string
 }
@@ -22,14 +24,24 @@ export interface UploadDocumentRequest {
   tags?: string[]
 }
 
-/** 知识库 */
+/** 素材语义检索结果项（GET /kb/materials/search） */
+export interface MaterialSearchItem {
+  title: string
+  content: string
+  score?: number
+}
+
+/** 知识库（对齐后端 kb-bases 列表输出） */
 export interface KnowledgeBase {
   id: string
   name: string
   scope: KbScope
-  description?: string
+  description?: string | null
   material_count: number
-  project_id?: string
+  project_id?: string | null
+  /** 项目库附带的项目名 */
+  project_name?: string | null
+  owner_id?: string | null
   created_at?: string
 }
 

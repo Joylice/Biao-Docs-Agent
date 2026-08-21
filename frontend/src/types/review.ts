@@ -1,4 +1,4 @@
-/** 审阅、标注、版本相关类型 */
+/** 审阅、批注、版本相关类型 */
 
 /** 审阅章节树节点 */
 export interface ReviewChapterNode {
@@ -8,50 +8,45 @@ export interface ReviewChapterNode {
   children?: ReviewChapterNode[]
 }
 
-/** 版本项 */
+/** 版本项（对齐后端 versions 列表输出） */
 export interface VersionItem {
   id: string
-  project_id: string
-  version_no: number
-  note: string
-  created_by: string
-  created_by_name: string
-  created_at: string
-  chapter_count: number
-  word_count: number
+  version: number
+  snapshot_note: string | null
+  created_by: string | null
+  created_by_name: string | null
+  auto: boolean
+  created_at: string | null
 }
 
-/** 标注项 */
+/** 批注项（对齐后端章节批注输出） */
 export interface AnnotationItem {
   id: string
-  project_id: string
   chapter_no: string
   content: string
   created_by: string
   created_by_name: string
   created_at: string
-  resolved: boolean
-  resolved_at?: string
-  resolved_by?: string
+  updated_at: string | null
 }
 
-/** 创建标注请求 */
+/** 创建批注请求（章节号在路径中） */
 export interface CreateAnnotationRequest {
-  chapter_no: string
   content: string
 }
 
-/** 更新标注请求 */
+/** 更新批注请求 */
 export interface UpdateAnnotationRequest {
   content?: string
-  resolved?: boolean
 }
 
-/** 审阅反馈请求 */
-export interface ReviewFeedbackRequest {
-  chapter_no: string
-  comment: string
-  action: 'approve' | 'reject'
+/** 废标风险项（审阅页按章节展示，对齐 /disqualification-risks 条目） */
+export interface DisqualificationRisk {
+  clause_no: string
+  title: string
+  severity: string
+  risk_category: string
+  recommendation: string
 }
 
 /** 章节审阅状态 */
@@ -68,30 +63,12 @@ export const CHAPTER_REVIEW_STATUS_META: Record<string, { text: string; color: s
 /** 导出状态 */
 export type ExportStatus = 'idle' | 'generating' | 'done' | 'failed'
 
-/** 导出请求 */
-export interface ExportRequest {
-  format: 'docx' | 'pdf'
-  template_id?: string
-  include_annotations?: boolean
-}
-
-/** 导出响应 */
-export interface ExportResponse {
-  task_id: string
-  status: ExportStatus
-  download_url?: string
-  file_name?: string
-  file_size?: number
-  created_at?: string
-}
-
-/** 快照请求 */
+/** 创建快照请求（对齐后端 SnapshotBody） */
 export interface SnapshotRequest {
-  note: string
+  snapshot_note: string | null
 }
 
-/** 归档到知识库请求 */
+/** 归档到知识库请求（对齐后端 ArchiveBody） */
 export interface ArchiveToKbRequest {
-  version_id: string
-  kb_base_id: string
+  kb_id: string
 }
