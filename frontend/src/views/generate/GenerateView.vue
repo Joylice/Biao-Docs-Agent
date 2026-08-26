@@ -72,7 +72,9 @@
             :project-id="projectId"
             :generating="false"
             :can-edit-outline-now="canEditOutlineNow"
+            :regenerating="regeneratingOutline"
             @confirm="handleConfirmOutline"
+            @regenerate="handleRegenerateOutline"
           />
 
           <!-- 左右分栏：大纲树 + 章节预览/评分对标 -->
@@ -117,22 +119,6 @@
                 @go-division="goToDivision"
               />
             </div>
-          </div>
-
-          <!-- 操作按钮 -->
-          <div class="generate-view__actions">
-            <a-popconfirm
-              v-if="awaitingOutlineConfirm && canEditOutlineNow"
-              title="重新生成将覆盖当前大纲，确认继续？"
-              ok-text="重新生成"
-              cancel-text="取消"
-              :confirm-loading="regeneratingOutline"
-              @confirm="handleRegenerateOutline"
-            >
-              <a-button :loading="regeneratingOutline">
-                重新生成大纲
-              </a-button>
-            </a-popconfirm>
           </div>
         </template>
 

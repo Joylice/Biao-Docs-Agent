@@ -71,6 +71,7 @@ declare module 'vue' {
     ATree: typeof import('ant-design-vue/es')['Tree']
     ATypographyParagraph: typeof import('ant-design-vue/es')['TypographyParagraph']
     AUploadDragger: typeof import('ant-design-vue/es')['UploadDragger']
+    ChapterNavigator: typeof import('./../components/editor/ChapterNavigator.vue')['default']
     EmptyState: typeof import('./../components/EmptyState.vue')['default']
     ErrorBoundary: typeof import('./../components/common/ErrorBoundary.vue')['default']
     ErrorState: typeof import('./../components/ErrorState.vue')['default']

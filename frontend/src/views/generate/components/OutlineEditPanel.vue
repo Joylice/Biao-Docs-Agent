@@ -15,6 +15,25 @@
         >
           {{ draftStatusText }}
         </a-tag>
+        <a-tooltip title="基于最新评分点重新生成大纲，将覆盖当前编辑内容">
+          <a-popconfirm
+            title="重新生成将覆盖当前大纲编辑内容，确认继续？"
+            ok-text="重新生成"
+            cancel-text="取消"
+            :confirm-loading="regenerating"
+            @confirm="emit('regenerate')"
+          >
+            <a-button
+              size="small"
+              :loading="regenerating"
+            >
+              <template #icon>
+                <ReloadOutlined />
+              </template>
+              重新生成
+            </a-button>
+          </a-popconfirm>
+        </a-tooltip>
         <a-button
           size="small"
           :loading="draftState === 'saving'"
@@ -81,7 +100,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { PlusOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { saveOutlineDraft, deleteOutlineDraft, fetchOutlineDraft } from '@/api'
 import { useHotkeys } from '@/composables/useHotkeys'
 import OutlineTreeEditor from '@/components/outline/OutlineTreeEditor.vue'
@@ -94,11 +113,14 @@ const props = defineProps<{
   projectId: string
   generating: boolean
   canEditOutlineNow: boolean
+  regenerating?: boolean
 }>()
 
 const emit = defineEmits<{
   /** 点击「确认大纲」，由父组件校验并启动生成 */
   (e: 'confirm'): void
+  /** 点击「重新生成」，由父组件调用 regenerateOutline API */
+  (e: 'regenerate'): void
 }>()
 
 const {
