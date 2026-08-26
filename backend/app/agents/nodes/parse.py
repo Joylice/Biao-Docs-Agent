@@ -90,6 +90,12 @@ async def parse_tender_node(state: dict) -> dict:
                 tech_requirements,
                 glossary,
             ) = await _pkg._load_tender_context(db, project_id)
+            # 补读 industry（正常启动路径与 regenerate 路径上下文一致）
+            proj_result = await db.execute(
+                select(Project).where(Project.id == uuid.UUID(project_id))
+            )
+            project = proj_result.scalar_one_or_none()
+            industry = (project.industry or "") if project else ""
             if not score_points:
                 return {
                     "error": "项目尚未完成招标解析（无评分点），请先解析招标文件",
@@ -105,6 +111,7 @@ async def parse_tender_node(state: dict) -> dict:
             "glossary": glossary,
             "project_name": project_name,
             "tender_no": tender_no,
+            "industry": industry,
             "current_phase": "confirm",
             "progress": 0.15,
         }

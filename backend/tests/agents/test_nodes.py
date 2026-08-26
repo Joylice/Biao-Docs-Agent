@@ -875,7 +875,12 @@ class TestOutlineProjectContextAndIsolation:
 
     @pytest.mark.asyncio
     async def test_outline_prompt_injects_project_context(self, monkeypatch) -> None:
-        """大纲提示词应含项目名称/标书号/行业，且系统提示词要求结合项目具体化."""
+        """大纲提示词应含项目名称/标书号/行业，且系统提示词要求结合项目具体化.
+
+        2026-08-26 单一数据源重构：generate_outline 改纯 state 读，项目上下文
+        （project_name/tender_no/industry）由 parse/refresh_context 节点写入 state，
+        本测试直接在 state 中传这些字段，FakeDB 仅作 skeleton 落库。
+        """
         from app.models.project import Project
         from app.services.llm import llm_service
 
@@ -893,14 +898,19 @@ class TestOutlineProjectContextAndIsolation:
         async def fake_publish(_project_id: str, _event: dict) -> None:
             pass
 
+        # FakeDB 仅作 skeleton 落库，不再提供项目上下文（纯 state 读）
         monkeypatch.setattr(
             nodes, "async_session_factory", lambda: FakeDB({Project: [self._project(PROJECT_ID)]})
         )
         monkeypatch.setattr(nodes, "publish_event", fake_publish)
         monkeypatch.setattr(llm_service, "call_llm_with_schema", fake_llm)
 
+        # state 直接传项目上下文（parse/refresh_context 已写入）
         state = {
             "project_id": str(PROJECT_ID),
+            "project_name": "智慧水务一体化平台项目",
+            "tender_no": "ZB-2026-001",
+            "industry": "智慧水务",
             "score_points": [{"clause_no": "1", "item": "技术方案"}],
             "tech_requirements": [{"seq": 1, "description": "巡检管理", "category": "软件"}],
         }

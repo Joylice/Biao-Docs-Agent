@@ -1,8 +1,18 @@
 """LangGraph 状态定义 — 对齐 SDD §6."""
 
-import operator
 from dataclasses import dataclass, field
 from typing import Annotated, Any, TypedDict
+
+
+def merge_reset_on_empty(current: dict | None, incoming: dict | None) -> dict:
+    """章节合并 reducer；空 dict/None 表示重置（作废已生成章节）.
+
+    非空 incoming 语义与 operator.or_ 完全一致：返回合并后的新 dict。
+    空 dict 或 None 表示主动清空，用于 regenerate 作废旧章节。
+    """
+    if not incoming:
+        return {}
+    return {**(current or {}), **incoming}
 
 
 class BidState(TypedDict, total=False):
@@ -17,8 +27,13 @@ class BidState(TypedDict, total=False):
     tech_requirements: list[dict]
     project_name: str
     tender_no: str
+    industry: str  # 项目行业（parse/refresh 节点从 DB 读取）
     # 阶段 E2 术语表：[{term, canonical, desc}]，parse 节点从招标文件 meta 载入
     glossary: list[dict]
+
+    # ── 上下文版本（血缘校验）──
+    context_version: str  # refresh 节点写入的源数据指纹
+    outline_context_version: str  # 大纲生成时记录的 context_version
 
     # ── 大纲 ──
     outline: list[dict]  # [{chapter_no, title, sections: [...]}]
@@ -29,7 +44,7 @@ class BidState(TypedDict, total=False):
     mounted_kb_ids: list[str] | None
 
     # ── 章节生成（逐章合并）──
-    chapters: Annotated[dict[str, str], operator.or_]
+    chapters: Annotated[dict[str, str], merge_reset_on_empty]
     current_chapter: str
     retrieved_context: str  # 当前章节 RAG 检索素材
     # 阶段 E3 引用溯源：当前章节检索命中 [{chunk_id, doc_title, page_no}]，随章节落库
@@ -37,7 +52,7 @@ class BidState(TypedDict, total=False):
     validate_retries: int  # 校验失败重试计数（≤2）
     validation_ok: bool
     # 章节间上下文：{chapter_no: {title, summary}}，每章生成后提取 ≤200 字摘要
-    chapter_summaries: Annotated[dict[str, dict], operator.or_]
+    chapter_summaries: Annotated[dict[str, dict], merge_reset_on_empty]
 
     # ── 全文一致性检查（integrate 前）──
     consistency_issues: list[dict]  # [{chapter_no, type, description, fixable}]

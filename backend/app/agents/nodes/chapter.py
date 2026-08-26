@@ -110,6 +110,18 @@ async def write_node(state: dict) -> dict:
         if c["chapter_no"] in summaries and c["chapter_no"] != chapter_no
     ]
 
+    # 血缘校验（MVP 非阻塞）：大纲生成时的 context_version 与当前 state.context_version
+    # 不一致时告警，提示用户大纲基于旧数据建议重新生成；ocv 为 None（正常路径/旧 checkpoint）时跳过
+    ocv, cv = state.get("outline_context_version"), state.get("context_version")
+    if ocv and cv and ocv != cv:
+        await _pkg.publish_event(
+            project_id,
+            {
+                "type": "warning",
+                "message": "上下文已刷新，当前大纲基于旧数据，建议重新生成",
+            },
+        )
+
     # 评分点覆盖矩阵：未覆盖的 confirmed 评分点注入本章提示词补写，覆盖率随 progress 推送
     coverage = compute_coverage(state.get("score_points", []), outline)
 

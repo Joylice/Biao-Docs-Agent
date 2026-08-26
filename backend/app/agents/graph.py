@@ -21,6 +21,7 @@ from app.agents.nodes import (
     generate_outline_node,
     integrate_node,
     parse_tender_node,
+    refresh_context_node,
     retrieve_node,
     review_node,
     review_route,
@@ -47,12 +48,12 @@ def get_async_postgres_saver():
 
 def outline_route(state: dict) -> str:
     """confirm_outline 出口：
-    - regenerate 标记 → 回 generate_outline 重新生成
+    - regenerate 标记 → 经 refresh_context 刷新源数据后回 generate_outline 重新生成
     - start_generation=False（分工驱动）→ 停靠 wait_division 待分工
     - 默认 → 进入章节生成循环（retrieve）
     """
     if state.get("regenerate_requested"):
-        return "generate_outline"
+        return "refresh_context"
     if state.get("current_phase") == "division":
         return "wait_division"
     return "retrieve"
@@ -65,6 +66,7 @@ def build_workflow() -> StateGraph:
     # 添加节点
     workflow.add_node("parse", parse_tender_node)
     workflow.add_node("confirm_score_points", confirm_score_points_node)
+    workflow.add_node("refresh_context", refresh_context_node)
     workflow.add_node("generate_outline", generate_outline_node)
     workflow.add_node("confirm_outline", confirm_outline_node)
     workflow.add_node("wait_division", wait_division_node)
@@ -85,13 +87,17 @@ def build_workflow() -> StateGraph:
     workflow.add_edge("confirm_score_points", "generate_outline")
     workflow.add_edge("generate_outline", "confirm_outline")
 
-    # confirm_outline → [regenerate: generate_outline → confirm_outline 回边] /
+    # regenerate 路径：confirm_outline → refresh_context → generate_outline
+    # → confirm_outline（循环，每次重新生成前刷新源数据）
+    workflow.add_edge("refresh_context", "generate_outline")
+
+    # confirm_outline → [regenerate: refresh_context → generate_outline 回边] /
     #                    [wait_division: 分工驱动停靠] / 章节循环
     workflow.add_conditional_edges(
         "confirm_outline",
         outline_route,
         {
-            "generate_outline": "generate_outline",
+            "refresh_context": "refresh_context",
             "wait_division": "wait_division",
             "retrieve": "retrieve",
         },
