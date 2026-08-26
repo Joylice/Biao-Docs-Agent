@@ -244,7 +244,7 @@
                 placeholder="默认"
                 :options="borderStyleOptions"
                 allow-clear
-                @change="(v: string | undefined) => setCellAttr('borderStyle', v)"
+                @change="(v: any) => setCellAttr('borderStyle', v)"
               />
             </div>
             <div class="word-table-toolbar__prop-row">

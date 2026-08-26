@@ -86,14 +86,14 @@ class TestRunExtraction:
 
         async def _fake_parse(text, include_tech_requirements=True):
             calls.append((text, include_tech_requirements))
-            from app.services.parse_service import ParsedTender
+            from app.services.document.parse_service import ParsedTender
 
             return ParsedTender(
                 score_points=[{"clause_no": "3.2.1", "item": "技术方案完整性"}],
                 tech_requirements=[],
             )
 
-        import app.services.parse_service as parse_service_mod
+        import app.services.document.parse_service as parse_service_mod
 
         monkeypatch.setattr(parse_service_mod, "parse_tender_with_llm", _fake_parse)
         result = await tasks.run_extraction([_extraction_dataset()])

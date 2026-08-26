@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from app.services import task_service
+from app.services.project import task_service
 
 PROJECT_ID = uuid.uuid4()
 DOC_ID = uuid.uuid4()

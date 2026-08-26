@@ -83,6 +83,7 @@ def make_fake_db() -> FakeDB:
                     score=10,
                     criteria="方案完整",
                     is_star=True,
+                    confirmed=True,  # 严格模式：仅已确认评分点进入大纲
                 )
             ],
             TechRequirement: [
@@ -135,12 +136,12 @@ def mock_deps(monkeypatch):
 
     monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
     monkeypatch.setattr(nodes, "publish_event", fake_publish_event)
-    monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", fake_call_llm_with_schema)
-    monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate_chapter)
-    monkeypatch.setattr("app.services.review_service.rewrite_chapter", fake_rewrite_chapter)
-    monkeypatch.setattr("app.services.rag_service.get_embedding", fake_get_embedding)
-    monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve_similar)
-    monkeypatch.setattr("app.services.export_service.export_to_word", fake_export_to_word)
+    monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", fake_call_llm_with_schema)
+    monkeypatch.setattr("app.services.proposal.chapter_service.generate_chapter", fake_generate_chapter)
+    monkeypatch.setattr("app.services.proposal.review_service.rewrite_chapter", fake_rewrite_chapter)
+    monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_get_embedding)
+    monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve_similar)
+    monkeypatch.setattr("app.services.document.export_service.export_to_word", fake_export_to_word)
 
 
 @pytest.fixture

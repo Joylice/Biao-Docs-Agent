@@ -112,7 +112,7 @@ async def _persist_chapter_content(
     子节真源（子节分工/编辑粒度）；string[] 大纲仅写章级行（向后兼容）。
     citations（阶段 E3）：检索命中溯源元数据，写章级行供导出标注。
     """
-    from app.services.chapter_service import split_chapter_to_sections
+    from app.services.proposal.chapter_service import split_chapter_to_sections
 
     await _pkg._upsert_section(
         db, project_id, chapter_no, title, content, status=status, citations=citations

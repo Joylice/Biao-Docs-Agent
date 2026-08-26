@@ -105,7 +105,7 @@ class TestChunkingIntegration:
 
     def test_large_document_chunking(self) -> None:
         """大文档分块测试."""
-        from app.services.rag_service import chunk_text
+        from app.services.llm.rag_service import chunk_text
 
         # 模拟 10000 字符的文档
         text = "这是一段测试文本。" * 556  # ~10000 字符
@@ -119,7 +119,7 @@ class TestChunkingIntegration:
 
     def test_empty_document_chunking(self) -> None:
         """空文档分块返回空."""
-        from app.services.rag_service import chunk_text
+        from app.services.llm.rag_service import chunk_text
 
         assert chunk_text("") == []
         assert chunk_text("   \n\n  ") == []
@@ -130,7 +130,7 @@ class TestPromptIntegration:
 
     def test_all_templates_loadable(self) -> None:
         """所有提示词模板可正常加载."""
-        from app.services.prompt_loader import (
+        from app.services.infra.prompt_loader import (
             load_chapter_prompt,
             load_outline_prompt,
             load_parse_prompt,

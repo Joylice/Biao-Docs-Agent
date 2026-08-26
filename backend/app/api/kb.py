@@ -33,13 +33,12 @@ from app.schemas.document import (
     validate_category,
     validate_tags,
 )
-from app.services import (
-    kb_base_service,
-    kb_material_service,
-    rag_service,
-    storage_service,
-    task_service,
-)
+
+# 分组导入（R1 重构）：infra/kb_base_service、llm/rag_service 等
+from app.services.document import storage_service
+from app.services.infra import kb_base_service, kb_material_service
+from app.services.llm import rag_service
+from app.services.project import task_service
 
 router = APIRouter()
 

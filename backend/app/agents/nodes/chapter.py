@@ -7,13 +7,13 @@ from sqlalchemy import select
 
 import app.agents.nodes as _pkg  # 运行时经包查找可 patch 名（保持拆分前 monkeypatch 语义）
 from app.agents.nodes._shared import logger
-from app.services import benchmark_service, kb_base_service, settings_service
+from app.services.infra import benchmark_service, kb_base_service, settings_service
 
 
 async def retrieve_node(state: dict) -> dict:
     """节点：RAG 检索当前章节素材（召回+rerank 精排；检索失败降级为空素材）."""
-    from app.services.chapter_service import flatten_sections
-    from app.services.rag_service import get_embedding, retrieve_with_rerank
+    from app.services.llm.rag_service import get_embedding, retrieve_with_rerank
+    from app.services.proposal.chapter_service import flatten_sections
 
     project_id = state.get("project_id", "")
     outline = state.get("outline", [])
@@ -83,8 +83,8 @@ async def write_node(state: dict) -> dict:
     章节间上下文：按大纲顺序汇总已完成章节摘要（state.chapter_summaries）
     注入提示词防重复保衔接；生成后提取本章 ≤200 字摘要回存。
     """
-    from app.services.chapter_service import extract_chapter_summary, generate_chapter
-    from app.services.coverage_service import compute_coverage
+    from app.services.proposal.chapter_service import extract_chapter_summary, generate_chapter
+    from app.services.proposal.coverage_service import compute_coverage
 
     project_id = state.get("project_id", "")
     chapter_no = state.get("current_chapter", "")
@@ -229,7 +229,7 @@ async def write_node(state: dict) -> dict:
 
 async def validate_node(state: dict) -> dict:
     """节点：校验章节 — 字数下限 + 评分点关键词覆盖 + E1 参数比对（失败可重试 ≤2 次）."""
-    from app.services.param_check_service import check_chapter_params
+    from app.services.proposal.param_check_service import check_chapter_params
 
     chapter_no = state.get("current_chapter", "")
     content = state.get("chapters", {}).get(chapter_no, "")
@@ -253,7 +253,7 @@ async def validate_node(state: dict) -> dict:
     disqualification_risk = False
     project_id = state.get("project_id", "")
     if project_id:
-        from app.services.disqualification_service import check_chapter_content
+        from app.services.proposal.disqualification_service import check_chapter_content
 
         try:
             dq_hits = await check_chapter_content(project_id, content)

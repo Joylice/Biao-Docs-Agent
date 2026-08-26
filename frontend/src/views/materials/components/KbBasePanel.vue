@@ -7,7 +7,7 @@
         :value="selectedKbId"
         style="width: 260px"
         :loading="basesLoading"
-        @change="(val: string) => emit('change', val)"
+        @change="(val) => emit('change', val as string)"
       >
         <a-select-option value="">
           全部资料（含未归档）

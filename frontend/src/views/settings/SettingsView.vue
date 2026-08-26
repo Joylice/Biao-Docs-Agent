@@ -11,6 +11,7 @@
         :model="form"
         layout="vertical"
       >
+        <a-divider orientation="left" plain>LLM 大模型</a-divider>
         <a-form-item label="DeepSeek API Key">
           <a-input-password
             v-model:value="form.deepseekApiKey"
@@ -27,12 +28,36 @@
             @input="dashscopeTouched = true"
           />
         </a-form-item>
+
+        <a-divider orientation="left" plain>Embedding 向量模型</a-divider>
+        <a-form-item label="Embedding 模型名称">
+          <a-input
+            v-model:value="form.embeddingModel"
+            placeholder="dashscope/text-embedding-v3"
+          />
+          <template #help>
+            LiteLLM provider 前缀格式，如 <code>dashscope/text-embedding-v3</code> 或 <code>openai_like/bge-m3</code>
+          </template>
+        </a-form-item>
         <a-form-item label="Embedding 服务地址">
           <a-input
             v-model:value="form.embeddingApiBase"
             placeholder="http://localhost:11434/v1"
           />
         </a-form-item>
+        <a-form-item label="Embedding API Key">
+          <a-input-password
+            v-model:value="form.embeddingApiKey"
+            :placeholder="embeddingPlaceholder"
+            autocomplete="new-password"
+            @input="embeddingTouched = true"
+          />
+          <template #help>
+            独立密钥，优先于 LLM 密钥匹配；留空则按模型前缀回退 DeepSeek/DashScope 密钥
+          </template>
+        </a-form-item>
+
+        <a-divider orientation="left" plain>运行模式</a-divider>
         <a-form-item label="Mock 模式（开启后不调用真实模型）">
           <a-switch v-model:checked="form.llmMock" />
         </a-form-item>
@@ -102,17 +127,22 @@ const testingEmbedding = ref(false)
 
 const deepseekMasked = ref('')
 const dashscopeMasked = ref('')
+const embeddingMasked = ref('')
 const deepseekConfigured = ref(false)
 const dashscopeConfigured = ref(false)
+const embeddingConfigured = ref(false)
 
 // 密钥输入框 touched 跟踪：用户键入过（含清空）才算修改，提交时决定字段是否进入 payload
 const deepseekTouched = ref(false)
 const dashscopeTouched = ref(false)
+const embeddingTouched = ref(false)
 
 const form = reactive({
   deepseekApiKey: '',
   dashscopeApiKey: '',
+  embeddingModel: '',
   embeddingApiBase: '',
+  embeddingApiKey: '',
   llmMock: false,
 })
 
@@ -123,6 +153,9 @@ const deepseekPlaceholder = computed(() =>
 )
 const dashscopePlaceholder = computed(() =>
   dashscopeConfigured.value ? dashscopeMasked.value : '未配置',
+)
+const embeddingPlaceholder = computed(() =>
+  embeddingConfigured.value ? embeddingMasked.value : '留空则按模型前缀回退 LLM 密钥',
 )
 
 const getErrorMessage = (error: unknown, fallback: string): string => {
@@ -141,15 +174,20 @@ const fetchSettings = async () => {
     const settings = await getLlmSettings()
     deepseekMasked.value = settings.deepseek_api_key
     dashscopeMasked.value = settings.dashscope_api_key
+    embeddingMasked.value = settings.embedding_api_key
     deepseekConfigured.value = settings.deepseek_configured
     dashscopeConfigured.value = settings.dashscope_configured
+    embeddingConfigured.value = settings.embedding_configured
     // 密钥框始终留空，placeholder 展示脱敏串，避免脱敏串被当原值回传
     form.deepseekApiKey = ''
     form.dashscopeApiKey = ''
+    form.embeddingApiKey = ''
+    form.embeddingModel = settings.embedding_model
     form.embeddingApiBase = settings.embedding_api_base
     form.llmMock = settings.llm_mock
     deepseekTouched.value = false
     dashscopeTouched.value = false
+    embeddingTouched.value = false
   } catch (error) {
     message.error(getErrorMessage(error, '获取模型配置失败'))
   } finally {
@@ -162,6 +200,7 @@ const handleSave = async () => {
   try {
     const payload: LlmSettingsPayload = {
       embedding_api_base: form.embeddingApiBase,
+      embedding_model: form.embeddingModel,
       llm_mock: form.llmMock,
     }
     // 三态语义：未修改的密钥字段省略（保持原值）；已修改则传输入值（空串=清除）
@@ -171,10 +210,14 @@ const handleSave = async () => {
     if (dashscopeTouched.value) {
       payload.dashscope_api_key = form.dashscopeApiKey
     }
+    if (embeddingTouched.value) {
+      payload.embedding_api_key = form.embeddingApiKey
+    }
     await updateLlmSettings(payload)
     message.success('模型配置已保存')
     deepseekTouched.value = false
     dashscopeTouched.value = false
+    embeddingTouched.value = false
     await fetchSettings()
   } catch (error) {
     message.error(getErrorMessage(error, '保存模型配置失败'))

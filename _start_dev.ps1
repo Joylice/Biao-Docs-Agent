@@ -1,6 +1,8 @@
 # 一键启动开发服务：uvicorn(8000) + arq worker（独立进程 + 日志文件）
 $ErrorActionPreference = "Stop"
-$backend = "d:\AI\WorkBuddy\2026-08-15-17-35-34\backend"
+# 相对路径化：基于脚本所在目录解析，兼容任意安装位置
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$backend = Join-Path $scriptDir "backend"
 $venvPy = Join-Path $backend ".venv\Scripts\python.exe"
 $logs = Join-Path $backend "_logs"
 New-Item -ItemType Directory -Force -Path $logs | Out-Null

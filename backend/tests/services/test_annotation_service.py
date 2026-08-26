@@ -8,7 +8,7 @@ import pytest
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.models.project import Project
 from app.models.proposal import ChapterAnnotation
-from app.services import annotation_service
+from app.services.project import annotation_service
 
 PROJECT_ID = uuid.uuid4()
 OWNER_ID = uuid.uuid4()

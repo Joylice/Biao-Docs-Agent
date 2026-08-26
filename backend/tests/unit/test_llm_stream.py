@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.services.llm_service import _MOCK_TEXT, call_llm_stream
+from app.services.llm.llm_service import _MOCK_TEXT, call_llm_stream
 
 
 def _chunk(content: str | None) -> SimpleNamespace:
@@ -52,12 +52,12 @@ class TestStreamRealMode:
         mock_litellm = MagicMock()
         mock_litellm.acompletion = fake_acompletion
         monkeypatch.setitem(sys.modules, "litellm", mock_litellm)
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _false)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _false)
 
         async def no_key_kwargs(_model: str) -> dict:
             return {}
 
-        monkeypatch.setattr("app.services.llm_service._api_key_kwargs", no_key_kwargs)
+        monkeypatch.setattr("app.services.llm.llm_service._api_key_kwargs", no_key_kwargs)
 
         chunks = [c async for c in call_llm_stream("s", "u", mock=False)]
         assert chunks == ["你好", "，世界"]

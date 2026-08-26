@@ -15,8 +15,8 @@ from app.core import audit
 from app.core.database import get_db
 from app.core.deps import get_current_owner_id, get_current_user_id
 from app.core.response import success
-from app.services import benchmark_service
-from app.services.project_service import _check_project_member
+from app.services.infra import benchmark_service
+from app.services.project.project_service import _check_project_member
 
 router = APIRouter()
 

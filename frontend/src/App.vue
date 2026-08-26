@@ -85,7 +85,7 @@ const themeConfig = computed(() => ({
     Drawer: {
       contentBg: 'var(--bg-elevated)',
       headerBg: 'var(--bg-elevated)',
-    },
+    } as any,
     Dropdown: {
       contentBg: 'var(--bg-elevated)',
     },
@@ -93,7 +93,7 @@ const themeConfig = computed(() => ({
       optionSelectedBg: 'var(--color-primary-light)',
     },
   },
-}))
+})) as any
 
 /** 监听主题变化，确保 html 属性同步 */
 watch(

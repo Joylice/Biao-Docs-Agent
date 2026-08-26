@@ -102,7 +102,7 @@
         placeholder="边框"
         :options="borderStyleOptions"
         allow-clear
-        @change="(v: string | undefined) => setImgAttr('borderStyle', v)"
+        @change="(v: any) => setImgAttr('borderStyle', v)"
       />
       <input
         type="color"

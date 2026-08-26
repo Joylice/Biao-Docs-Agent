@@ -33,8 +33,12 @@
             v-for="item in getColumnItems(column.key)"
             :key="item.id"
             class="kanban__card"
-            :class="{ 'kanban__card--dragging': draggingItem?.id === item.id }"
-            draggable="true"
+            :class="{
+              'kanban__card--dragging': draggingItem?.id === item.id,
+              'kanban__card--mine': isMyCard(item),
+              'kanban__card--readonly': !isDraggable(item),
+            }"
+            :draggable="isDraggable(item)"
             @dragstart="handleDragStart(item)"
             @dragend="handleDragEnd"
             @click="$emit('select', item)"
@@ -83,6 +87,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { currentUserId } from '@/stores/currentUser'
 import type { AssignmentItem, TaskStatus } from '@/types'
 
 interface KanbanColumn {
@@ -93,6 +98,8 @@ interface KanbanColumn {
 
 const props = defineProps<{
   items: AssignmentItem[]
+  /** 当前用户是否为项目 owner（影响拖拽审核权限） */
+  isOwner?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -115,7 +122,24 @@ const getColumnItems = (status: TaskStatus) =>
   props.items.filter((item) => item.status === status)
 
 const handleDragStart = (item: AssignmentItem) => {
+  if (!isDraggable(item)) return
   draggingItem.value = item
+}
+
+/** 判断卡片是否属于当前用户 */
+const isMyCard = (item: AssignmentItem): boolean =>
+  !!item.assignee_id && item.assignee_id === currentUserId.value
+
+/**
+ * 卡片是否可拖拽：
+ * - 本人卡片且状态为 pending/in_progress/rejected → 可拖拽（领取/提交）
+ * - owner 且卡片状态为 submitted → 可拖拽（审核/打回）
+ * - 其他 → 不可拖拽
+ */
+const isDraggable = (item: AssignmentItem): boolean => {
+  if (isMyCard(item) && ['pending', 'in_progress', 'rejected'].includes(item.status)) return true
+  if (props.isOwner && item.status === 'submitted') return true
+  return false
 }
 
 /** 目标泳道占位条：悬停中且卡片状态与目标不一致（将发生移动）时显示 */
@@ -285,6 +309,16 @@ const formatTime = (time: string): string => {
   border-color: var(--color-primary);
   box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
+}
+
+/* 本人卡片高亮：左侧加粗主色边框 */
+.kanban__card--mine {
+  border-left: 3px solid var(--color-primary);
+}
+
+/* 非本人卡片：不可拖拽时降低交互暗示 */
+.kanban__card--readonly {
+  cursor: pointer;
 }
 
 .kanban__card--dragging {

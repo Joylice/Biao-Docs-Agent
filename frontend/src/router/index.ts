@@ -87,6 +87,13 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/components/editor/WordEditorPage.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    // 404 兜底
+    path: '/:pathMatch(.*)*',
+    name: 'NotFound',
+    component: () => import('@/views/NotFoundView.vue'),
+    meta: { public: true },
+  },
 ]
 
 const router = createRouter({

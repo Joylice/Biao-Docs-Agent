@@ -20,8 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.exceptions import BizError
 from app.core.security import decode_token
-from app.services import event_service, workflow_runtime
-from app.services.project_service import _check_project_member
+from app.services.infra import event_service, workflow_runtime
+from app.services.project.project_service import _check_project_member
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.services.consistency_service import check_consistency
+from app.services.proposal.consistency_service import check_consistency
 
 CHAPTERS = {"1": "# 概述\n\n内容A", "2": "# 架构\n\n内容B"}
 OUTLINE = [
@@ -26,15 +26,15 @@ async def test_mock_mode_returns_empty_issues(monkeypatch) -> None:
     async def fake_llm(**kwargs):
         raise AssertionError("mock 模式不应调用 LLM")
 
-    monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _mock_enabled)
-    monkeypatch.setattr("app.services.consistency_service.call_llm_with_schema", fake_llm)
+    monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _mock_enabled)
+    monkeypatch.setattr("app.services.proposal.consistency_service.call_llm_with_schema", fake_llm)
     assert await check_consistency(CHAPTERS, OUTLINE) == []
 
 
 @pytest.mark.asyncio
 async def test_empty_chapters_returns_empty(monkeypatch) -> None:
     """无章节内容时不检查."""
-    monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _not_mock)
+    monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _not_mock)
     assert await check_consistency({}, OUTLINE) == []
 
 
@@ -53,8 +53,8 @@ async def test_parses_issues_from_llm(monkeypatch) -> None:
     async def fake_llm(**kwargs):
         return {"issues": issues}
 
-    monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _not_mock)
-    monkeypatch.setattr("app.services.consistency_service.call_llm_with_schema", fake_llm)
+    monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _not_mock)
+    monkeypatch.setattr("app.services.proposal.consistency_service.call_llm_with_schema", fake_llm)
     result = await check_consistency(CHAPTERS, OUTLINE)
     assert result == issues
 
@@ -66,14 +66,14 @@ async def test_invalid_response_degrades_to_empty(monkeypatch) -> None:
     async def fake_llm_bad(**kwargs):
         return {"issues": "不是列表"}
 
-    monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _not_mock)
-    monkeypatch.setattr("app.services.consistency_service.call_llm_with_schema", fake_llm_bad)
+    monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _not_mock)
+    monkeypatch.setattr("app.services.proposal.consistency_service.call_llm_with_schema", fake_llm_bad)
     assert await check_consistency(CHAPTERS, OUTLINE) == []
 
     async def fake_llm_mixed(**kwargs):
         return {"issues": [{"chapter_no": "1", "description": "重复段落"}, "脏数据"]}
 
-    monkeypatch.setattr("app.services.consistency_service.call_llm_with_schema", fake_llm_mixed)
+    monkeypatch.setattr("app.services.proposal.consistency_service.call_llm_with_schema", fake_llm_mixed)
     result = await check_consistency(CHAPTERS, OUTLINE)
     assert result == [{"chapter_no": "1", "description": "重复段落"}]
 
@@ -87,8 +87,8 @@ async def test_full_text_sent_in_outline_order(monkeypatch) -> None:
         captured.update(kwargs)
         return {"issues": []}
 
-    monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _not_mock)
-    monkeypatch.setattr("app.services.consistency_service.call_llm_with_schema", fake_llm)
+    monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _not_mock)
+    monkeypatch.setattr("app.services.proposal.consistency_service.call_llm_with_schema", fake_llm)
     await check_consistency(CHAPTERS, OUTLINE)
     prompt = captured["user_prompt"]
     assert prompt.index("第1章") < prompt.index("第2章")

@@ -115,11 +115,11 @@ const chapterStateColor = (chapterNo: string): string => {
   return 'default'
 }
 
-const onTreeSelect = (keys: string[]) => {
+const onTreeSelect = (keys: any) => {
   if (keys.length > 0) emit('select', keys[0])
 }
 
-const onTreeExpand = (keys: string[]) => {
+const onTreeExpand = (keys: any) => {
   emit('expand', keys)
 }
 </script>

@@ -7,10 +7,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.core.config import settings
-from app.services import llm_service, rag_service, settings_service
-from app.services.llm_service import call_llm_text, call_llm_with_schema
-from app.services.rag_service import get_embedding
-from app.services.settings_service import RuntimeLlmConfig
+from app.services.llm import llm_service, rag_service
+from app.services.infra import settings_service
+from app.services.llm.llm_service import call_llm_text, call_llm_with_schema
+from app.services.llm.rag_service import get_embedding
+from app.services.infra.settings_service import RuntimeLlmConfig
 
 
 @pytest.fixture

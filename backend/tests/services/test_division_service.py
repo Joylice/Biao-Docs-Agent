@@ -12,7 +12,7 @@ from app.core.exceptions import BizError
 from app.models.project import Project, ProjectMember
 from app.models.proposal import ChapterAssignment, ProposalSkeleton
 from app.models.user import User
-from app.services import division_service
+from app.services.project import division_service
 
 PROJECT_ID = uuid.uuid4()
 OWNER_ID = uuid.uuid4()

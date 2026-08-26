@@ -5,16 +5,21 @@ export interface LlmSettings {
   deepseek_api_key: string
   dashscope_api_key: string
   embedding_api_base: string
+  embedding_model: string
+  embedding_api_key: string
   llm_mock: boolean
   deepseek_configured: boolean
   dashscope_configured: boolean
+  embedding_configured: boolean
 }
 
-/** PUT /settings/llm 请求体（密钥三态：字段省略=保持原值，空字符串=清除，非空=更新；embedding_api_base 与 llm_mock 必填全量） */
+/** PUT /settings/llm 请求体（密钥三态：字段省略=保持原值，空字符串=清除，非空=更新；embedding_api_base/embedding_model 与 llm_mock 必填全量） */
 export interface LlmSettingsPayload {
   deepseek_api_key?: string
   dashscope_api_key?: string
   embedding_api_base: string
+  embedding_model: string
+  embedding_api_key?: string
   llm_mock: boolean
 }
 

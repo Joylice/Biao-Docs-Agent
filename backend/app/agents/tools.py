@@ -20,7 +20,7 @@ from sqlalchemy import select
 from app.core.database import async_session_factory
 from app.models.document import ScorePoint
 from app.models.proposal import ProposalSection
-from app.services import settings_service
+from app.services.infra import settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ async def kb_search(project_id: str, query: str, doc_ids: list[str] | None = Non
                 "score": 1.0,
             }
         ]
-    from app.services.rag_service import get_embedding, retrieve_with_rerank
+    from app.services.llm.rag_service import get_embedding, retrieve_with_rerank
 
     query_embedding = await get_embedding(query)
     uuid_doc_ids = [uuid.UUID(d) for d in doc_ids] if doc_ids else None
@@ -133,7 +133,7 @@ async def get_score_points(project_id: str) -> list[dict]:
 
 async def list_sections(project_id: str) -> list[dict]:
     """读取已生成章节（section_id/title/≤200 字摘要）."""
-    from app.services.chapter_service import extract_chapter_summary
+    from app.services.proposal.chapter_service import extract_chapter_summary
 
     async with async_session_factory() as db:  # 只读块，无需 commit
         result = await db.execute(
@@ -188,7 +188,7 @@ async def write_tool_preflight(
     绑定 kb_search/get_score_points；kb_search 命中素材追加到 base_context
     后返回（无调用/无命中时原样返回），原 retrieve 注入素材保持基础上下文。
     """
-    from app.services.llm_service import chat_with_tools
+    from app.services.llm.llm_service import chat_with_tools
 
     async def executor(name: str, arguments: dict[str, Any]) -> str:
         result = await execute_tool(name, arguments, project_id)
@@ -234,7 +234,7 @@ async def validate_tool_recheck(
     绑定 list_sections/get_score_points 取证；LLM 输出 {"keep": [...]}，
     仅保留仍成立的 issues；响应无法解析时保守保留全部（不放过真问题）。
     """
-    from app.services.llm_service import chat_with_tools
+    from app.services.llm.llm_service import chat_with_tools
 
     async def executor(name: str, arguments: dict[str, Any]) -> str:
         result = await execute_tool(name, arguments, project_id)

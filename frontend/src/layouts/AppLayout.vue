@@ -188,7 +188,8 @@ const selectedNavKeys = computed(() => {
   return key ? [key] : []
 })
 
-const handleNavClick = ({ key }: { key: string }) => {
+const handleNavClick = (info: any) => {
+  const key = String(info.key)
   const name = NAV_ROUTES[key]
   if (name) router.push({ name })
 }
@@ -211,7 +212,8 @@ const fetchCurrentUser = async () => {
   }
 }
 
-const handleUserMenu = ({ key }: { key: string }) => {
+const handleUserMenu = (info: any) => {
+  const key = String(info.key)
   if (key === 'kb') {
     router.push({ name: 'Materials' })
   } else if (key === 'settings') {

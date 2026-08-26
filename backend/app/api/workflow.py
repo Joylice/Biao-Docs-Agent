@@ -16,9 +16,10 @@ from app.core.database import get_db
 from app.core.deps import get_current_owner_id, get_current_user_id
 from app.core.exceptions import BizError, ForbiddenError
 from app.core.response import success
-from app.services import division_service, workflow_runtime
-from app.services.event_service import publish_event, publish_user_event
-from app.services.project_service import _check_project_member
+from app.services.infra import workflow_runtime
+from app.services.infra.event_service import publish_event, publish_user_event
+from app.services.project import division_service
+from app.services.project.project_service import _check_project_member
 
 router = APIRouter()
 
@@ -29,11 +30,15 @@ class ConfirmOutlineBody(BaseModel):
     mounted_doc_ids 为资料库挂载配置（可选）：非 None（含空列表）时写入工作流
     state，缺省 None 保持项目全量检索；mounted_kb_ids 为知识库级挂载（2026-08-18，
     与文档级并集生效）。
+    start_generation（2026-08-25）：默认 False（由分工驱动编制）。True 时确认后
+    自动批量生成全部章节（旧行为）；False 时工作流停在「待分工」interrupt，
+    章节内容由分工页编制、审核通过后回写正式方案。
     """
 
     outline: list[dict] | None = None
     mounted_doc_ids: list[uuid.UUID] | None = None
     mounted_kb_ids: list[uuid.UUID] | None = None
+    start_generation: bool = False
 
 
 class OutlineDraftBody(BaseModel):
@@ -133,6 +138,11 @@ async def confirm_outline(
     await workflow_runtime.ensure_pending_interrupt(project_id, "confirm_outline")
 
     decision: dict = {"confirmed": True}
+    # 2026-08-25：由分工驱动编制时确认后不自动批量生成，停靠「待分工」
+    # body 缺省（无 body）时默认 start_generation=False（API 语义），
+    # 节点层缺省 True 仅兼容旧测试直接 resume True 的调用路径。
+    start_generation = body.start_generation if body is not None else False
+    decision["start_generation"] = start_generation
     if body is not None:
         if body.outline is not None:
             decision["outline"] = body.outline
@@ -146,7 +156,8 @@ async def confirm_outline(
     targets = {str(uid) for uid in member_ids} | {str(user_id)}
     for uid in targets:
         await publish_user_event(uid, {"type": "workbench_refresh", "project_id": str(project_id)})
-    return success(data={"status": "confirmed", "next_phase": "generate"})
+    next_phase = "generate" if start_generation else "division"
+    return success(data={"status": "confirmed", "next_phase": next_phase})
 
 
 @router.post("/{project_id}/workflow/regenerate-outline")
@@ -271,6 +282,24 @@ async def confirm_review(
     )
 
 
+@router.post("/{project_id}/workflow/confirm-division")
+async def confirm_division(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """分工编制完成确认（resume wait_division interrupt → 进入整合审阅）.
+
+    2026-08-25 分工驱动模式：大纲确认后工作流停在 wait_division，章节内容由
+    分工审核通过时回写正式方案；本项目全部编制完成后调用本端点推进至审阅。
+    """
+    await _check_project_member(db, project_id, user_id)
+    await workflow_runtime.ensure_pending_interrupt(project_id, "wait_division")
+
+    workflow_runtime.resume_workflow_in_background(project_id, {"confirmed": True})
+    return success(data={"status": "confirmed", "next_phase": "review"})
+
+
 @router.post("/{project_id}/workflow/rewrite-chapter")
 async def rewrite_chapter(
     project_id: uuid.UUID,
@@ -330,7 +359,7 @@ async def outline_suggest(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """生成大纲优化建议（仅 confirm_outline 挂起时可用；建议为瞬态数据不落库）."""
-    from app.services.outline_suggest_service import build_outline_suggestions
+    from app.services.proposal.outline_suggest_service import build_outline_suggestions
 
     await _check_project_member(db, project_id, user_id)
     await workflow_runtime.ensure_pending_interrupt(project_id, "confirm_outline")
@@ -357,7 +386,7 @@ async def outline_suggest_apply(
 
     最终执行仍由 confirm-outline 人工确认完成（确认后才生成章节）。
     """
-    from app.services.outline_suggest_service import apply_outline_suggestions
+    from app.services.proposal.outline_suggest_service import apply_outline_suggestions
 
     await _check_project_member(db, project_id, user_id)
     await workflow_runtime.ensure_pending_interrupt(project_id, "confirm_outline")
@@ -381,7 +410,7 @@ async def section_suggest(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """生成内容改进建议（建议为瞬态数据不落库；采纳执行复用 rewrite-chapter）."""
-    from app.services.section_suggest_service import build_section_suggestions
+    from app.services.proposal.section_suggest_service import build_section_suggestions
 
     await _check_project_member(db, project_id, user_id)
 
@@ -410,7 +439,7 @@ async def export_document(
     await _check_project_member(db, project_id, user_id)
 
     # 阶段 H 导出门禁：存在未人工确认的高风险废标条款时阻塞导出
-    from app.services.disqualification_service import count_unconfirmed_high
+    from app.services.proposal.disqualification_service import count_unconfirmed_high
 
     dq_pending = await count_unconfirmed_high(db, project_id)
     if dq_pending > 0:

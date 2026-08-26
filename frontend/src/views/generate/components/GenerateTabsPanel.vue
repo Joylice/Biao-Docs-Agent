@@ -9,18 +9,12 @@
     >
       <ChapterPreview
         :selected-chapter="selectedChapter"
-        :current-chapter="currentChapter"
-        :display-chapters="displayChapters"
-        :progress="progress"
-        :generating="generating"
-        :generated="generated"
         :project-id="projectId"
-        :can-go-division="canGoDivision"
-        @close="emit('close')"
         @go-division="emit('go-division')"
       />
     </a-tab-pane>
     <a-tab-pane
+      v-if="benchmarkVisible"
       key="benchmark"
       tab="评分对标"
     >
@@ -43,18 +37,11 @@ import type { BenchmarkItem } from '@/types'
 
 const props = defineProps<{
   selectedChapter: string
-  currentChapter: string
-  displayChapters: Record<string, string>
-  progress: number
-  generating: boolean
-  generated: boolean
   projectId: string
   phase: string
-  canGoDivision: boolean
 }>()
 
 const emit = defineEmits<{
-  (e: 'close'): void
   (e: 'go-division'): void
 }>()
 
@@ -68,9 +55,7 @@ const benchmarkError = ref('')
 
 const benchmarkVisible = computed(
   () =>
-    ['generate', 'review', 'export', 'done'].includes(props.phase) ||
-    props.generating ||
-    props.generated,
+    ['generate', 'review', 'export', 'done'].includes(props.phase),
 )
 
 const loadBenchmark = async () => {

@@ -2,7 +2,7 @@
   <div class="generate-view">
     <PageContainer
       title="方案大纲生成"
-      :subtitle="`进度: ${Math.round(progress * 100)}%`"
+      :subtitle="outlineConfirmed ? '大纲已确认，可在分工页编制章节内容' : undefined"
     >
       <!-- 高风险废标条款预警 -->
       <a-alert
@@ -13,15 +13,6 @@
         class="generate-view__alert"
         :message="`本项目存在 ${highRiskClauseCount} 条高风险废标条款，请重点关注`"
         description="前往招标解析确认页逐条人工确认"
-      />
-
-      <!-- 断线重连提示 -->
-      <a-alert
-        v-if="wsError"
-        type="warning"
-        show-icon
-        class="generate-view__alert"
-        :message="wsError"
       />
 
       <!-- 加载失败 -->
@@ -72,16 +63,16 @@
         </a-card>
 
         <!-- 主内容区：左右分栏 -->
-        <template v-else-if="outline.length > 0 || generating || generated">
+        <template v-else-if="outline.length > 0">
           <!-- 大纲待确认编辑区 -->
           <OutlineEditPanel
             v-if="awaitingOutlineConfirm"
             ref="outlineEditRef"
             :outline="outline"
             :project-id="projectId"
-            :generating="generating"
+            :generating="false"
             :can-edit-outline-now="canEditOutlineNow"
-            @confirm="handleStartGenerate"
+            @confirm="handleConfirmOutline"
           />
 
           <!-- 左右分栏：大纲树 + 章节预览/评分对标 -->
@@ -99,17 +90,30 @@
               />
             </div>
             <div class="generate-view__main">
+              <!-- 大纲确认后引导跳转分工页 -->
+              <a-alert
+                v-if="outlineConfirmed"
+                type="success"
+                show-icon
+                banner
+                class="generate-view__guide"
+                message="大纲已确认，请前往分工页进行章节编制"
+                description="章节内容编制在「方案生成与分工」页面完成，本页仅做预览"
+              >
+                <template #action>
+                  <a-button
+                    type="primary"
+                    size="small"
+                    @click="goToDivision"
+                  >
+                    前往分工编制
+                  </a-button>
+                </template>
+              </a-alert>
               <GenerateTabsPanel
                 :selected-chapter="selectedChapter"
-                :current-chapter="currentChapter"
-                :display-chapters="displayChapters"
-                :progress="progress"
-                :generating="generating"
-                :generated="generated"
                 :project-id="projectId"
                 :phase="phase"
-                :can-go-division="canCompileSelectedChapter"
-                @close="selectedChapter = ''"
                 @go-division="goToDivision"
               />
             </div>
@@ -118,7 +122,7 @@
           <!-- 操作按钮 -->
           <div class="generate-view__actions">
             <a-popconfirm
-              v-if="awaitingOutlineConfirm && !generating && !generated && canEditOutlineNow"
+              v-if="awaitingOutlineConfirm && canEditOutlineNow"
               title="重新生成将覆盖当前大纲，确认继续？"
               ok-text="重新生成"
               cancel-text="取消"
@@ -129,37 +133,22 @@
                 重新生成大纲
               </a-button>
             </a-popconfirm>
-            <a-button
-              v-if="!awaitingOutlineConfirm && !generating && !generated && canEditOutlineNow"
-              type="primary"
-              :loading="generating"
-              @click="handleStartGenerate"
-            >
-              开始生成
-            </a-button>
-            <a-button
-              v-if="generated"
-              type="primary"
-              @click="goToReview"
-            >
-              进入审阅
-            </a-button>
           </div>
         </template>
 
         <!-- 空状态 -->
         <EmptyState
           v-else
-          description="尚未开始生成，点击下方按钮开始生成技术方案"
+          description="尚未开始生成，点击下方按钮开始生成技术方案大纲"
         >
           <template #action>
             <a-button
               v-if="canEditOutlineNow"
               type="primary"
-              :loading="generating"
-              @click="handleStartGenerate"
+              :loading="regeneratingOutline"
+              @click="handleStartWorkflow"
             >
-              开始生成
+              开始生成大纲
             </a-button>
           </template>
         </EmptyState>
@@ -169,13 +158,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
   fetchDisqualificationClauses,
   fetchWorkflowStatus,
   fetchProject,
+  startWorkflow,
   regenerateOutline,
   confirmOutline,
 } from '@/api'
@@ -188,7 +178,6 @@ import OutlinePanel from './components/OutlinePanel.vue'
 import OutlineEditPanel from './components/OutlineEditPanel.vue'
 import GenerateTabsPanel from './components/GenerateTabsPanel.vue'
 import { useWorkflowPolling } from './composables/useWorkflowPolling'
-import { useGenerateWebSocket } from './composables/useGenerateWebSocket'
 import { useAssignments } from './composables/useAssignments'
 import { treeToOutline } from './utils/outlineTree'
 import type {
@@ -201,20 +190,15 @@ const route = useRoute()
 const router = useRouter()
 const projectId = route.params.projectId as string
 
-const { isProjectOwner, canEditOutline, canEditChapter } = usePermission()
+const { isProjectOwner, canEditOutline } = usePermission()
 const projectOwnerId = ref('')
 const canEditOutlineNow = computed(() => canEditOutline(isProjectOwner(projectOwnerId.value)))
 
 // 状态
-const progress = ref(0)
-const generating = ref(false)
-const generated = ref(false)
 const regeneratingOutline = ref(false)
+const confirming = ref(false)
 const outline = ref<OutlineItem[]>([])
-const chapters = ref<Record<string, string>>({})
-const currentChapter = ref('')
 const selectedChapter = ref('')
-const wsError = ref('')
 const loadError = ref('')
 const outlineEditRef = ref<InstanceType<typeof OutlineEditPanel> | null>(null)
 
@@ -251,52 +235,21 @@ const {
 const needConfirmScorePoints = computed(
   () =>
     outline.value.length === 0 &&
-    !generating.value &&
-    !generated.value &&
     !outlinePolling.value &&
     (phase.value === 'init' || interruptType.value === 'confirm_score_points'),
 )
 
 const awaitingOutlineConfirm = computed(
-  () => interruptType.value === 'confirm_outline' && !generating.value && !generated.value,
+  () => interruptType.value === 'confirm_outline',
 )
 
-const displayChapters = computed(() => chapters.value)
-
-
-/* ---------------- 方案生成状态轮询（3s / 100 次，WebSocket 兜底） ---------------- */
-const {
-  start: startGenPolling,
-  stop: stopGenPolling,
-  resetCount: resetGenPollCount,
-} = useWorkflowPolling({
-  intervalMs: 3000,
-  maxCount: 100,
-  onTick: async () => {
-    try {
-      const res = await fetchWorkflowStatus(projectId)
-      const data = res.data?.data
-      if (data?.progress >= 0.75 || data?.phase === 'review' || data?.phase === 'done') {
-        if (data?.chapters) chapters.value = data.chapters
-        markGenerated()
-        return false
-      }
-    } catch { /* 忽略 */ }
-    return true
-  },
-  onTimeout: () => {
-    generating.value = false
-    wsError.value = '生成状态同步超时'
-  },
-})
-
-const markGenerated = () => {
-  generated.value = true
-  generating.value = false
-  progress.value = 1
-  wsError.value = ''
-  stopGenPolling()
-}
+/** 大纲已确认（phase 已过 outline 阶段，或 interrupt 已清除） */
+const outlineConfirmed = computed(
+  () =>
+    outline.value.length > 0 &&
+    !awaitingOutlineConfirm.value &&
+    interruptType.value !== 'confirm_score_points',
+)
 
 /* ---------------- 废标条款 ---------------- */
 const loadDisqualificationClauses = async () => {
@@ -305,36 +258,6 @@ const loadDisqualificationClauses = async () => {
     disqualificationClauses.value = res.data?.data?.items || []
   } catch { disqualificationClauses.value = [] }
 }
-
-
-const canCompileSelectedChapter = computed(() => {
-  const no = selectedChapter.value
-  if (!no) return false
-  const own = assignmentMap.value.get(no)
-  const ids: Array<string | null> = [own?.assignee_id ?? null]
-  for (const child of own?.children ?? []) ids.push(child.assignee_id)
-  return canEditChapter(ids, isProjectOwner(projectOwnerId.value))
-})
-
-/* ---------------- WebSocket（连接/消息路由/重连下沉 useGenerateWebSocket） ---------------- */
-const {
-  connect: connectWebSocket,
-  resetReconnectAttempts: resetWsReconnect,
-  dispose: disposeWebSocket,
-} = useGenerateWebSocket(projectId, {
-  progress,
-  chapters,
-  currentChapter,
-  generating,
-  selectedChapter,
-  wsError,
-  onDone: markGenerated,
-  onTaskEvent: fetchAssignments,
-  onForbidden: () => {
-    generating.value = false
-    message.error('无权限访问该项目')
-  },
-})
 
 /* ---------------- 操作 ---------------- */
 const fetchProjectOwner = async () => {
@@ -357,34 +280,46 @@ const handleRegenerateOutline = async () => {
   } finally { regeneratingOutline.value = false }
 }
 
-const handleStartGenerate = async () => {
-  const editedTree = outlineEditRef.value?.getTree() ?? []
-  if (awaitingOutlineConfirm.value) {
-    if (editedTree.length === 0) { message.warning('大纲不能为空'); return }
-    for (const c of editedTree) {
-      if (!c.title.trim()) { message.warning('章节存在空标题'); return }
-    }
-  }
-  generating.value = true
+/** 启动工作流（空状态页"开始生成大纲"按钮） */
+const handleStartWorkflow = async () => {
+  regeneratingOutline.value = true
   try {
-    const body: Partial<ConfirmOutlineRequest> = { mounted_doc_ids: null, mounted_kb_ids: null }
-    if (awaitingOutlineConfirm.value) body.outline = treeToOutline(editedTree)
-    await confirmOutline(projectId, body)
-    outlineEditRef.value?.clearDraft()
-    resetWsReconnect()
-    resetGenPollCount()
-    startGenPolling()
-    connectWebSocket()
-    message.info('开始生成方案...')
+    await startWorkflow(projectId)
+    message.success('工作流已启动，正在生成大纲...')
+    startOutlinePolling()
   } catch (err) {
     const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
-    message.error(msg || '启动生成失败')
-    generating.value = false
+    message.error(msg || '启动大纲生成失败')
+  } finally { regeneratingOutline.value = false }
+}
+
+/** 确认大纲 → 不再在本页启动章节生成，仅确认后引导去分工页 */
+const handleConfirmOutline = async () => {
+  const editedTree = outlineEditRef.value?.getTree() ?? []
+  if (editedTree.length === 0) { message.warning('大纲不能为空'); return }
+  for (const c of editedTree) {
+    if (!c.title.trim()) { message.warning('章节存在空标题'); return }
   }
+  confirming.value = true
+  try {
+    const body: Partial<ConfirmOutlineRequest> = {
+      outline: treeToOutline(editedTree),
+      mounted_doc_ids: null,
+      mounted_kb_ids: null,
+      // 2026-08-25：由分工驱动编制，确认后不自动批量生成章节
+      start_generation: false,
+    }
+    await confirmOutline(projectId, body)
+    outlineEditRef.value?.clearDraft()
+    message.success('大纲已确认，请前往分工页进行章节编制')
+    await loadInitial()
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '确认大纲失败')
+  } finally { confirming.value = false }
 }
 
 const goToDivision = () => router.push({ name: 'Division', params: { projectId } })
-const goToReview = () => router.push({ name: 'Review', params: { projectId } })
 
 const loadInitial = async () => {
   loadError.value = ''
@@ -395,15 +330,11 @@ const loadInitial = async () => {
     interruptType.value = data?.interrupt?.type || ''
     if (data?.outline?.length) {
       outline.value = data.outline
-      chapters.value = data.chapters || {}
-      progress.value = data.progress || 0
-      generated.value = progress.value >= 0.75
       stopOutlinePolling()
       if (!selectedChapter.value && outline.value.length > 0) {
         selectedChapter.value = outline.value[0].chapter_no
       }
     } else if (
-      !generated.value &&
       phase.value !== 'init' &&
       interruptType.value !== 'confirm_score_points'
     ) {
@@ -411,10 +342,6 @@ const loadInitial = async () => {
     }
   } catch { loadError.value = '方案状态加载失败' }
 }
-
-watch(currentChapter, (no) => {
-  if (no && generating.value && !selectedChapter.value) selectedChapter.value = no
-})
 
 onMounted(() => {
   loadInitial()
@@ -424,9 +351,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  disposeWebSocket()
   stopOutlinePolling()
-  stopGenPolling()
 })
 </script>
 
@@ -440,6 +365,10 @@ onUnmounted(() => {
 }
 
 .generate-view__polling {
+  margin-bottom: 16px;
+}
+
+.generate-view__guide {
   margin-bottom: 16px;
 }
 

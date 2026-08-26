@@ -49,13 +49,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { OutlineItem, OutlineSection, AssignmentNode } from '@/types'
 import EmptyState from '@/components/EmptyState.vue'
 
 interface TreeDataItem {
   key: string
   title: string
+  chapterNo?: string
+  sectionNo?: string
   children?: TreeDataItem[]
   assigneeName?: string
   assignStatus?: string | null
@@ -71,6 +73,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'select', chapterNo: string): void
 }>()
+
+// 当前选中的子章节 key（用于高亮子节点）
+const selectedSectionKey = ref('')
 
 const statusMeta: Record<string, { text: string; color: string }> = {
   pending: { text: '待领取', color: 'default' },
@@ -91,11 +96,13 @@ const toSectionTreeData = (sections: OutlineSection[], prefix: string): TreeData
   return sections.map((s, i) => {
     const no = `${prefix}.${i + 1}`
     if (typeof s === 'string') {
-      return { key: `sub-${no}`, title: `${no} ${s}`, ...assignInfoOf(no) }
+      return { key: `sub-${no}`, title: `${no} ${s}`, chapterNo: prefix, sectionNo: no, ...assignInfoOf(no) }
     }
     return {
       key: `sub-${no}`,
       title: `${no} ${s.title}`,
+      chapterNo: prefix,
+      sectionNo: no,
       ...assignInfoOf(no),
       children: s.children?.length ? toSectionTreeData(s.children, no) : undefined,
     }
@@ -106,20 +113,38 @@ const treeData = computed<TreeDataItem[]>(() =>
   props.outline.map((c) => ({
     key: `ch-${c.chapter_no}`,
     title: `${c.chapter_no} ${c.title}`,
+    chapterNo: c.chapter_no,
     ...assignInfoOf(c.chapter_no),
     children: toSectionTreeData(c.sections ?? [], c.chapter_no),
   })),
 )
 
-const selectedKeys = computed(() =>
-  props.selectedChapter ? [`ch-${props.selectedChapter}`] : [],
-)
+// 选中的 keys：父章节 + 当前选中的子章节
+const selectedKeys = computed(() => {
+  const keys: string[] = []
+  if (props.selectedChapter) keys.push(`ch-${props.selectedChapter}`)
+  if (selectedSectionKey.value) keys.push(selectedSectionKey.value)
+  return keys
+})
 
-const handleSelect = (keys: string[]) => {
+// 当父章节变化时，清空子章节选中
+watch(() => props.selectedChapter, () => {
+  selectedSectionKey.value = ''
+})
+
+const handleSelect = (keys: any) => {
   const key = keys[0]
   if (!key) return
-  if (key.startsWith('ch-')) emit('select', key.slice(3))
-  else if (key.startsWith('sub-')) emit('select', key.slice(4).split('.')[0])
+  if (key.startsWith('ch-')) {
+    selectedSectionKey.value = ''
+    emit('select', key.slice(3))
+  } else if (key.startsWith('sub-')) {
+    selectedSectionKey.value = key
+    // 子章节 emit 父章节号，用于获取章节内容
+    const sectionNo = key.slice(4)
+    const chapterNo = sectionNo.split('.')[0]
+    emit('select', chapterNo)
+  }
 }
 </script>
 

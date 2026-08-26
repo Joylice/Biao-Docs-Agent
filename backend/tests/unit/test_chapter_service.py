@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from app.services.chapter_service import (
+from app.services.proposal.chapter_service import (
     SUMMARY_MAX_LEN,
     extract_chapter_summary,
     flatten_sections,
@@ -19,7 +19,7 @@ def _patch_llm(monkeypatch) -> None:
     async def fake_llm(**kwargs):
         return "章节内容"
 
-    monkeypatch.setattr("app.services.chapter_service.call_llm_text", fake_llm)
+    monkeypatch.setattr("app.services.proposal.chapter_service.call_llm_text", fake_llm)
 
 
 @pytest.mark.asyncio
@@ -35,8 +35,8 @@ async def test_fallback_retrieve_receives_caller_db(monkeypatch) -> None:
         return [0.1, 0.2]
 
     _patch_llm(monkeypatch)
-    monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
-    monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
+    monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve)
+    monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_embedding)
 
     sentinel_db = object()
     await generate_chapter(
@@ -110,11 +110,11 @@ async def test_generate_chapter_accepts_nested_sections(monkeypatch) -> None:
         captured.update(kwargs)
         return "系统提示词", "用户提示词"
 
-    monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
-    monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
-    monkeypatch.setattr("app.services.chapter_service.call_llm_text", fake_llm)
+    monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve)
+    monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_embedding)
+    monkeypatch.setattr("app.services.proposal.chapter_service.call_llm_text", fake_llm)
     monkeypatch.setattr(
-        "app.services.chapter_service.load_chapter_prompt", fake_load_chapter_prompt
+        "app.services.proposal.chapter_service.load_chapter_prompt", fake_load_chapter_prompt
     )
 
     chapter = {
@@ -153,8 +153,8 @@ async def test_fallback_opens_real_session_when_db_absent(monkeypatch) -> None:
         return [0.1, 0.2]
 
     _patch_llm(monkeypatch)
-    monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
-    monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
+    monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve)
+    monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_embedding)
     monkeypatch.setattr("app.core.database.async_session_factory", lambda: FakeSession())
 
     await generate_chapter(
@@ -180,8 +180,8 @@ async def test_no_internal_retrieval_when_context_provided(monkeypatch) -> None:
         raise AssertionError("context 非空时不应调用 embedding")
 
     _patch_llm(monkeypatch)
-    monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
-    monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
+    monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve)
+    monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_embedding)
 
     content = await generate_chapter(
         chapter=CHAPTER,
@@ -202,7 +202,7 @@ async def test_on_delta_streams_deltas_and_returns_full_text(monkeypatch) -> Non
         for d in deltas:
             yield d
 
-    monkeypatch.setattr("app.services.chapter_service.call_llm_stream", fake_stream)
+    monkeypatch.setattr("app.services.proposal.chapter_service.call_llm_stream", fake_stream)
 
     received: list[str] = []
 
@@ -231,7 +231,7 @@ async def test_no_on_delta_keeps_non_stream_path(monkeypatch) -> None:
         yield "x"
 
     _patch_llm(monkeypatch)
-    monkeypatch.setattr("app.services.chapter_service.call_llm_stream", fake_stream)
+    monkeypatch.setattr("app.services.proposal.chapter_service.call_llm_stream", fake_stream)
 
     content = await generate_chapter(
         chapter=CHAPTER,
@@ -282,9 +282,9 @@ class TestPriorSummariesInjection:
             return "系统提示词", "用户提示词"
 
         _patch_llm(monkeypatch)
-        monkeypatch.setattr("app.services.chapter_service.call_llm_text", fake_llm)
+        monkeypatch.setattr("app.services.proposal.chapter_service.call_llm_text", fake_llm)
         monkeypatch.setattr(
-            "app.services.chapter_service.load_chapter_prompt", fake_load_chapter_prompt
+            "app.services.proposal.chapter_service.load_chapter_prompt", fake_load_chapter_prompt
         )
 
         await generate_chapter(
@@ -315,7 +315,7 @@ class TestPriorSummariesInjection:
 
         _patch_llm(monkeypatch)
         monkeypatch.setattr(
-            "app.services.chapter_service.load_chapter_prompt", fake_load_chapter_prompt
+            "app.services.proposal.chapter_service.load_chapter_prompt", fake_load_chapter_prompt
         )
 
         await generate_chapter(
@@ -336,7 +336,7 @@ class TestPriorSummariesInjection:
             captured.update(kwargs)
             return "章节内容"
 
-        monkeypatch.setattr("app.services.chapter_service.call_llm_text", fake_llm)
+        monkeypatch.setattr("app.services.proposal.chapter_service.call_llm_text", fake_llm)
 
         await generate_chapter(
             chapter=CHAPTER,
@@ -365,7 +365,7 @@ class TestSupplementPointsInjection:
 
         _patch_llm(monkeypatch)
         monkeypatch.setattr(
-            "app.services.chapter_service.load_chapter_prompt", fake_load_chapter_prompt
+            "app.services.proposal.chapter_service.load_chapter_prompt", fake_load_chapter_prompt
         )
 
         await generate_chapter(
@@ -389,7 +389,7 @@ class TestSupplementPointsInjection:
 
         _patch_llm(monkeypatch)
         monkeypatch.setattr(
-            "app.services.chapter_service.load_chapter_prompt", fake_load_chapter_prompt
+            "app.services.proposal.chapter_service.load_chapter_prompt", fake_load_chapter_prompt
         )
 
         await generate_chapter(

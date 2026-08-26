@@ -13,7 +13,7 @@ from sqlalchemy import select, update
 
 from app.core.database import async_session_factory
 from app.models.kb_chunk import KbChunk
-from app.services.rag_service import get_embeddings_batch
+from app.services.llm.rag_service import get_embeddings_batch
 
 BATCH = 10  # DashScope embedding 批量上限 10
 

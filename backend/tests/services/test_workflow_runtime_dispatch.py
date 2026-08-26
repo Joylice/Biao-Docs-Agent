@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.models.proposal import ChapterAssignment
-from app.services import workflow_runtime
+from app.services.infra import workflow_runtime
 
 PROJECT_ID = uuid.uuid4()
 ASSIGNEE_ID = uuid.uuid4()

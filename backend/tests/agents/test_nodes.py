@@ -59,7 +59,7 @@ class FakeDB:
 # 阶段 E1 后 validate_node 为 async；参数比对隔离为无 issue
 # （其自身单测在 test_param_check_service.py）
 _NO_PARAM_ISSUE = patch(
-    "app.services.param_check_service.check_chapter_params",
+    "app.services.proposal.param_check_service.check_chapter_params",
     AsyncMock(return_value=[]),
 )
 
@@ -68,7 +68,7 @@ _NO_PARAM_ISSUE = patch(
 def _mock_llm_on(monkeypatch):
     """节点测试默认 mock 语义：阶段 F 工具分支仅真实模式触发，测试内可覆写为 False."""
     monkeypatch.setattr(
-        "app.services.settings_service.is_mock_enabled", AsyncMock(return_value=True)
+        "app.services.infra.settings_service.is_mock_enabled", AsyncMock(return_value=True)
     )
 
 
@@ -114,7 +114,7 @@ class TestValidateNode:
     async def test_param_mismatch_fails(self) -> None:
         """阶段 E1：参数比对 issue 走同一重试链路."""
         with patch(
-            "app.services.param_check_service.check_chapter_params",
+            "app.services.proposal.param_check_service.check_chapter_params",
             AsyncMock(return_value=["参数不符评分点 2：要求不低于500路"]),
         ):
             content = "# 章节\n\n" + "内容" * 200
@@ -132,7 +132,7 @@ class TestValidateNode:
         """阶段 H：命中已确认 high 废标条款 → 追加废标风险 issue + disqualification_risk 标记."""
         hits = [{"clause_no": "2.1", "title": "资质要求", "severity": "high"}]
         with patch(
-            "app.services.disqualification_service.check_chapter_content",
+            "app.services.proposal.disqualification_service.check_chapter_content",
             AsyncMock(return_value=hits),
         ):
             content = "# 章节\n\n" + "内容" * 200
@@ -150,7 +150,7 @@ class TestValidateNode:
     async def test_disqualification_no_hit_passes(self) -> None:
         """阶段 H：无废标命中 → 不追加 issue、不标记风险."""
         with patch(
-            "app.services.disqualification_service.check_chapter_content",
+            "app.services.proposal.disqualification_service.check_chapter_content",
             AsyncMock(return_value=[]),
         ):
             content = "# 章节\n\n" + "内容" * 200
@@ -168,7 +168,7 @@ class TestValidateNode:
     async def test_disqualification_check_error_degrades(self) -> None:
         """阶段 H：废标比对异常降级放行（不阻塞主链路）."""
         with patch(
-            "app.services.disqualification_service.check_chapter_content",
+            "app.services.proposal.disqualification_service.check_chapter_content",
             AsyncMock(side_effect=RuntimeError("db down")),
         ):
             content = "# 章节\n\n" + "内容" * 200
@@ -223,7 +223,7 @@ class TestRetrieveNode:
 
         async def fake_retrieve(**kwargs):
             # 接入 rerank 后召回池放宽到 RERANK_RECALL_K（精排后截断到 top_k=8）
-            from app.services import rag_service
+            from app.services.llm import rag_service
 
             assert kwargs["top_k"] == rag_service.RERANK_RECALL_K
             return [
@@ -235,8 +235,8 @@ class TestRetrieveNode:
             return FakeDB()
 
         monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
-        monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
-        monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
+        monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_embedding)
+        monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -262,8 +262,8 @@ class TestRetrieveNode:
             return []
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
-        monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
-        monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
+        monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_embedding)
+        monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -288,8 +288,8 @@ class TestRetrieveNode:
             return []
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
-        monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
-        monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
+        monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_embedding)
+        monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -315,8 +315,8 @@ class TestRetrieveNode:
             return []
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB({Document: [(doc_a,)]}))
-        monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
-        monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
+        monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_embedding)
+        monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -342,8 +342,8 @@ class TestRetrieveNode:
             return []
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB({Document: [(doc_kb,)]}))
-        monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
-        monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
+        monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_embedding)
+        monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -368,8 +368,8 @@ class TestRetrieveNode:
             return []
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
-        monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
-        monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve)
+        monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_embedding)
+        monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -388,7 +388,7 @@ class TestRetrieveNode:
             return FakeDB()
 
         monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
-        monkeypatch.setattr("app.services.rag_service.get_embedding", fake_embedding)
+        monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_embedding)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -423,7 +423,7 @@ class TestWriteNode:
         events: list[dict] = []
         monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
         monkeypatch.setattr(nodes, "publish_event", fake_publish)
-        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+        monkeypatch.setattr("app.services.proposal.chapter_service.generate_chapter", fake_generate)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -462,7 +462,7 @@ class TestWriteNode:
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
         monkeypatch.setattr(nodes, "publish_event", fake_publish)
-        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+        monkeypatch.setattr("app.services.proposal.chapter_service.generate_chapter", fake_generate)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -504,7 +504,7 @@ class TestWriteNodeChapterSummaries:
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
         monkeypatch.setattr(nodes, "publish_event", self._noop_publish())
-        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+        monkeypatch.setattr("app.services.proposal.chapter_service.generate_chapter", fake_generate)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -533,7 +533,7 @@ class TestWriteNodeChapterSummaries:
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
         monkeypatch.setattr(nodes, "publish_event", self._noop_publish())
-        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+        monkeypatch.setattr("app.services.proposal.chapter_service.generate_chapter", fake_generate)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -583,7 +583,7 @@ class TestWriteNodeCoverageMatrix:
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
         monkeypatch.setattr(nodes, "publish_event", fake_publish)
-        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+        monkeypatch.setattr("app.services.proposal.chapter_service.generate_chapter", fake_generate)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -621,7 +621,7 @@ class TestWriteNodeCoverageMatrix:
             "publish_event",
             TestWriteNodeChapterSummaries._noop_publish(),
         )
-        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+        monkeypatch.setattr("app.services.proposal.chapter_service.generate_chapter", fake_generate)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -646,7 +646,7 @@ class TestConsistencyCheckNode:
         async def fake_check(chapters, outline):
             return []
 
-        monkeypatch.setattr("app.services.consistency_service.check_consistency", fake_check)
+        monkeypatch.setattr("app.services.proposal.consistency_service.check_consistency", fake_check)
         state = {"project_id": str(PROJECT_ID), "chapters": {"1": "x"}, "outline": []}
         result = await nodes.consistency_check_node(state)
         assert result["consistency_issues"] == []
@@ -677,8 +677,8 @@ class TestConsistencyCheckNode:
             rewritten.append(kwargs["chapter_no"])
             return "修复后的内容" + "字" * 200
 
-        monkeypatch.setattr("app.services.consistency_service.check_consistency", fake_check)
-        monkeypatch.setattr("app.services.review_service.rewrite_chapter", fake_rewrite)
+        monkeypatch.setattr("app.services.proposal.consistency_service.check_consistency", fake_check)
+        monkeypatch.setattr("app.services.proposal.review_service.rewrite_chapter", fake_rewrite)
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
         monkeypatch.setattr(nodes, "publish_event", TestWriteNodeChapterSummaries._noop_publish())
 
@@ -706,8 +706,8 @@ class TestConsistencyCheckNode:
         async def fake_publish(_project_id: str, event: dict) -> None:
             events.append(event)
 
-        monkeypatch.setattr("app.services.consistency_service.check_consistency", fake_check)
-        monkeypatch.setattr("app.services.review_service.rewrite_chapter", fake_rewrite)
+        monkeypatch.setattr("app.services.proposal.consistency_service.check_consistency", fake_check)
+        monkeypatch.setattr("app.services.proposal.review_service.rewrite_chapter", fake_rewrite)
         monkeypatch.setattr(nodes, "publish_event", fake_publish)
 
         state = {
@@ -727,7 +727,7 @@ class TestConsistencyCheckNode:
         async def fake_check(chapters, outline):
             raise RuntimeError("LLM 不可用")
 
-        monkeypatch.setattr("app.services.consistency_service.check_consistency", fake_check)
+        monkeypatch.setattr("app.services.proposal.consistency_service.check_consistency", fake_check)
         state = {"project_id": str(PROJECT_ID), "chapters": {"1": "x"}, "outline": []}
         result = await nodes.consistency_check_node(state)
         assert result["consistency_issues"] == []
@@ -755,7 +755,7 @@ class TestNodeCommits:
 
         monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
         monkeypatch.setattr(nodes, "publish_event", fake_publish)
-        monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", fake_llm)
+        monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", fake_llm)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -785,7 +785,7 @@ class TestOutlineNodeCoveredClauses:
     @pytest.mark.asyncio
     async def test_schema_requires_covered_clauses(self, monkeypatch) -> None:
         """大纲 schema 应要求 covered_clauses 字段，确保评分点可追溯."""
-        from app.services import llm_service
+        from app.services.llm import llm_service
 
         captured: dict = {}
 
@@ -845,7 +845,7 @@ class TestOutlineNodeCoveredClauses:
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: db)
         monkeypatch.setattr(nodes, "publish_event", fake_publish)
-        monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", fake_llm)
+        monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", fake_llm)
 
         state = {
             "project_id": str(PROJECT_ID),
@@ -877,7 +877,7 @@ class TestOutlineProjectContextAndIsolation:
     async def test_outline_prompt_injects_project_context(self, monkeypatch) -> None:
         """大纲提示词应含项目名称/标书号/行业，且系统提示词要求结合项目具体化."""
         from app.models.project import Project
-        from app.services import llm_service
+        from app.services.llm import llm_service
 
         captured: dict = {}
 
@@ -928,7 +928,7 @@ class TestOutlineProjectContextAndIsolation:
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
         monkeypatch.setattr(nodes, "publish_event", fake_publish)
-        monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", fake_llm)
+        monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", fake_llm)
 
         state = {"project_id": str(PROJECT_ID), "score_points": [], "tech_requirements": []}
         result = await nodes.generate_outline_node(state)
@@ -960,7 +960,7 @@ class TestOutlineProjectContextAndIsolation:
 
         monkeypatch.setattr(nodes, "async_session_factory", factory)
         monkeypatch.setattr(nodes, "publish_event", fake_publish)
-        monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", fake_llm)
+        monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", fake_llm)
 
         for pid in (pid_a, pid_b):
             result = await nodes.generate_outline_node(
@@ -995,7 +995,7 @@ class TestWriteNodeToolPreflight:
 
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
         monkeypatch.setattr(nodes, "publish_event", AsyncMock())
-        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+        monkeypatch.setattr("app.services.proposal.chapter_service.generate_chapter", fake_generate)
 
     @pytest.mark.asyncio
     async def test_mock_mode_skips_preflight(self, monkeypatch) -> None:
@@ -1014,7 +1014,7 @@ class TestWriteNodeToolPreflight:
         captured: dict = {}
         self._patch_common(monkeypatch, captured)
         monkeypatch.setattr(
-            "app.services.settings_service.is_mock_enabled", AsyncMock(return_value=False)
+            "app.services.infra.settings_service.is_mock_enabled", AsyncMock(return_value=False)
         )
         monkeypatch.setattr(
             "app.agents.tools.write_tool_preflight",
@@ -1029,7 +1029,7 @@ class TestWriteNodeToolPreflight:
         captured: dict = {}
         self._patch_common(monkeypatch, captured)
         monkeypatch.setattr(
-            "app.services.settings_service.is_mock_enabled", AsyncMock(return_value=False)
+            "app.services.infra.settings_service.is_mock_enabled", AsyncMock(return_value=False)
         )
         monkeypatch.setattr(
             "app.agents.tools.write_tool_preflight", AsyncMock(side_effect=RuntimeError("boom"))
@@ -1047,7 +1047,7 @@ class TestValidateNodeToolRecheck:
     async def test_recheck_filters_false_positive(self, monkeypatch) -> None:
         """真实模式：复核后 issues 清空 → 校验通过."""
         monkeypatch.setattr(
-            "app.services.settings_service.is_mock_enabled", AsyncMock(return_value=False)
+            "app.services.infra.settings_service.is_mock_enabled", AsyncMock(return_value=False)
         )
         monkeypatch.setattr("app.agents.tools.validate_tool_recheck", AsyncMock(return_value=[]))
         state = {
@@ -1080,7 +1080,7 @@ class TestValidateNodeToolRecheck:
     async def test_recheck_failure_keeps_issues(self, monkeypatch) -> None:
         """复核异常降级：保留原 issues，校验仍失败."""
         monkeypatch.setattr(
-            "app.services.settings_service.is_mock_enabled", AsyncMock(return_value=False)
+            "app.services.infra.settings_service.is_mock_enabled", AsyncMock(return_value=False)
         )
         monkeypatch.setattr(
             "app.agents.tools.validate_tool_recheck", AsyncMock(side_effect=RuntimeError("boom"))

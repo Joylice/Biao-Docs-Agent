@@ -45,7 +45,7 @@
       :row-class-name="scoreRowClassName"
       :row-selection="{ selectedRowKeys, onChange: onSelectionChange }"
       :virtual="useVirtual"
-      :scroll="useVirtual ? { y: 480, x: 1100 } : { x: 1100 }"
+      :scroll="useVirtual ? { y: 480, x: 1030 } : { x: 1030 }"
       row-key="id"
       size="middle"
     >
@@ -69,25 +69,18 @@
           </a-tag>
         </template>
         <template v-if="column.key === 'confirmed'">
-          <a-checkbox v-model:checked="record.confirmed" />
-        </template>
-        <template v-if="column.key === 'strategy'">
-          <a-input
-            v-model:value="record.strategy"
-            placeholder="填写应对策略..."
-            type="textarea"
-            :rows="2"
+          <a-checkbox
+            v-model:checked="record.confirmed"
+            @change="() => emit('auto-save', record as ScorePoint)"
           />
         </template>
-        <template v-if="column.key === 'action'">
-          <a-button
-            size="small"
-            type="link"
-            :loading="savingId === record.id"
-            @click="$emit('save-row', record)"
-          >
-            保存
-          </a-button>
+        <template v-if="column.key === 'strategy'">
+          <a-textarea
+            v-model:value="record.strategy"
+            placeholder="填写应对策略..."
+            :rows="2"
+            @change="() => emit('auto-save', record as ScorePoint)"
+          />
         </template>
       </template>
     </a-table>
@@ -118,7 +111,6 @@ interface TenderDocItem {
 const props = defineProps<{
   scorePoints: ScorePoint[]
   selectedRowKeys: string[]
-  savingId: string
   reparseLoading: boolean
   downloadTenderLoading: boolean
   tenderDoc: TenderDocItem | null
@@ -127,7 +119,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:selectedRowKeys', keys: string[]): void
-  (e: 'save-row', record: ScorePoint): void
+  (e: 'auto-save', record: ScorePoint): void
   (e: 'open-batch-strategy'): void
   (e: 'reparse'): void
   (e: 'download-tender'): void
@@ -139,7 +131,7 @@ const useVirtual = computed(() => props.scorePoints.length > 100)
 const isHighScore = (score: number | null): boolean => (score ?? 0) >= 20
 const scoreRowClassName = (record: ScorePoint): string => (isHighScore(record.score) ? 'parse-row--high' : '')
 
-// 列宽合计 1100（scroll.x）：窄屏横向滚动 + 评分项列固定左侧
+// 列宽合计 1030（scroll.x）：窄屏横向滚动 + 评分项列固定左侧
 const scoreColumns = [
   { title: '条款号', dataIndex: 'clause_no', key: 'clause_no', width: 100 },
   { title: '评分项', dataIndex: 'item', key: 'item', width: 160, fixed: 'left' as const },
@@ -149,7 +141,6 @@ const scoreColumns = [
   { title: '风险', key: 'risk_level', width: 80 },
   { title: '确认', key: 'confirmed', width: 60 },
   { title: '应对策略', key: 'strategy', width: 200 },
-  { title: '操作', key: 'action', width: 70, fixed: 'right' as const },
 ]
 
 const riskColor = (level: string | null) => {
@@ -157,8 +148,8 @@ const riskColor = (level: string | null) => {
   return colors[level || ''] || 'default'
 }
 
-const onSelectionChange = (keys: string[] | number[]) => {
-  emit('update:selectedRowKeys', keys.map(String))
+const onSelectionChange = (keys: string[] | number[] | readonly (string | number)[]) => {
+  emit('update:selectedRowKeys', Array.from(keys, String))
 }
 </script>
 

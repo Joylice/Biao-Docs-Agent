@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import AsyncClient
@@ -174,3 +174,136 @@ class TestCreateProjectWithMembers:
             assert memberships[0].user_id == owner_id
         finally:
             app.dependency_overrides.pop(get_db, None)
+
+
+class TestDeleteProject:
+    """删除项目（2026-08-25 新增端点）：owner/admin 可删，级联清理关联数据."""
+
+    def _session(self, project: Project, docs: list | None = None, user: User | None = None):
+        """构造删除项目会话：execute 按 SQL 目标模型分发（与调用序无关）.
+
+        调用序（delete_project）：
+          - select(Project) → project（存在性 + owner 判定）
+          - 非 owner 时 select(User) → user（RBAC 判定）
+          - select(Document) → docs（MinIO storage_key 收集）
+        """
+        session = AsyncMock()
+        project_result = MagicMock()
+        project_result.scalar_one_or_none.return_value = project
+        doc_result = MagicMock()
+        doc_result.scalars.return_value.all.return_value = docs or []
+        user_result = MagicMock()
+        user_result.scalar_one_or_none.return_value = user
+
+        async def fake_execute(stmt, *args, **kwargs):
+            s = str(stmt)
+            if "documents" in s:
+                return doc_result
+            if "users" in s:
+                return user_result
+            return project_result
+
+        session.execute = fake_execute
+        return session
+
+    @pytest.mark.asyncio
+    async def test_delete_by_owner_success(self, client: AsyncClient, monkeypatch) -> None:
+        """owner 删除项目：200 + 项目被删除 + 审计 + MinIO 对象清理."""
+        from app.services.project import project_service
+
+        owner_id = uuid.uuid4()
+        project = Project(id=uuid.uuid4(), name="待删项目", owner_id=owner_id)
+        doc = MagicMock()
+        doc.storage_key = "tender/abc.docx"
+
+        session = self._session(project, docs=[doc])
+        app.dependency_overrides[get_db] = lambda: session
+
+        deleted_keys: list = []
+        monkeypatch.setattr(project_service, "_delete_workflow_checkpoints", AsyncMock())
+        monkeypatch.setattr(
+            "app.services.document.storage_service.delete_file",
+            lambda key: deleted_keys.append(key),
+        )
+        try:
+            response = await client.delete(
+                f"/api/v1/projects/{project.id}",
+                headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+            )
+            assert response.status_code == 200
+            session.delete.assert_awaited_once()
+            assert deleted_keys == ["tender/abc.docx"], "项目关联文档 storage_key 应清理"
+            session.commit.assert_awaited_once()
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_delete_forbidden_for_non_owner(self, client: AsyncClient, monkeypatch) -> None:
+        """非 owner 且非 admin 删除 → 403."""
+        from app.services.project import project_service
+
+        owner_id = uuid.uuid4()
+        other_id = uuid.uuid4()
+        project = Project(id=uuid.uuid4(), name="项目", owner_id=owner_id)
+        other_user = User(id=other_id, email="other@x.com", password_hash="x", role="member")
+
+        session = self._session(project, docs=[], user=other_user)
+        app.dependency_overrides[get_db] = lambda: session
+        monkeypatch.setattr("app.core.rbac.has_permission", AsyncMock(return_value=False))
+        monkeypatch.setattr(project_service, "_delete_workflow_checkpoints", AsyncMock())
+        try:
+            response = await client.delete(
+                f"/api/v1/projects/{project.id}",
+                headers={"Authorization": f"Bearer {create_access_token(str(other_id))}"},
+            )
+            assert response.status_code == 403
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_delete_by_admin_success(self, client: AsyncClient, monkeypatch) -> None:
+        """系统管理员（system:manage）删除任意项目 → 200."""
+        from app.services.project import project_service
+
+        owner_id = uuid.uuid4()
+        admin_id = uuid.uuid4()
+        project = Project(id=uuid.uuid4(), name="项目", owner_id=owner_id)
+        admin_user = User(id=admin_id, email="admin@x.com", password_hash="x", role="admin")
+
+        session = self._session(project, docs=[], user=admin_user)
+        app.dependency_overrides[get_db] = lambda: session
+        monkeypatch.setattr("app.core.rbac.has_permission", AsyncMock(return_value=True))
+        monkeypatch.setattr(project_service, "_delete_workflow_checkpoints", AsyncMock())
+        try:
+            response = await client.delete(
+                f"/api/v1/projects/{project.id}",
+                headers={"Authorization": f"Bearer {create_access_token(str(admin_id))}"},
+            )
+            assert response.status_code == 200
+            session.delete.assert_awaited_once()
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_delete_not_found(self, client: AsyncClient) -> None:
+        """项目不存在 → 404."""
+        owner_id = uuid.uuid4()
+        session = AsyncMock()
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=result)
+        app.dependency_overrides[get_db] = lambda: session
+        try:
+            response = await client.delete(
+                f"/api/v1/projects/{uuid.uuid4()}",
+                headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+            )
+            assert response.status_code == 404
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    @pytest.mark.asyncio
+    async def test_delete_without_auth(self, client: AsyncClient) -> None:
+        """未认证删除项目 → 401/403."""
+        response = await client.delete(f"/api/v1/projects/{uuid.uuid4()}")
+        assert response.status_code in (401, 403)

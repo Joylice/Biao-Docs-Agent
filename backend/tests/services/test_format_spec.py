@@ -4,7 +4,7 @@
 默认回退（正文 12pt、行距 1.5、无边距）。
 """
 
-from app.services.format_spec import build_format_spec
+from app.services.document.format_spec import build_format_spec
 
 
 class TestDefaults:

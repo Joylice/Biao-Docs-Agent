@@ -1,9 +1,22 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
+import Components from 'unplugin-vue-components/vite'
+import { AntDesignVueResolver } from 'unplugin-vue-components/resolvers'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    // antd 按需引入：模板中 <a-button> 等自动解析为 ant-design-vue 组件
+    Components({
+      resolvers: [
+        AntDesignVueResolver({
+          importStyle: false, // 样式由 App.vue 中的 reset.css 全量导入（避免 cssinjs 混用问题）
+        }),
+      ],
+      dts: 'src/types/components.d.ts',
+    }),
+  ],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),

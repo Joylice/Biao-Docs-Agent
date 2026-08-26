@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services import param_check_service as pcs
+from app.services.proposal import param_check_service as pcs
 
 
 class TestExtractAssertions:

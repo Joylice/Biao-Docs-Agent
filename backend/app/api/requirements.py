@@ -10,8 +10,8 @@ from app.core.database import get_db
 from app.core.deps import get_current_user_id
 from app.core.response import success
 from app.schemas.document import RequirementsGenerateIn
-from app.services import requirements_service
-from app.services.project_service import _check_project_member
+from app.services.project.project_service import _check_project_member
+from app.services.proposal import requirements_service
 
 router = APIRouter()
 

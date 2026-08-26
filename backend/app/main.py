@@ -28,7 +28,7 @@ from app.api import (
 from app.api import settings as settings_api
 from app.core.config import settings
 from app.core.exceptions import BizError
-from app.services import workflow_runtime
+from app.services.infra import workflow_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
             "JWT 签名与 LLM 密钥加密均不安全！生产环境请立即设置 BID_JWT_SECRET "
             "与 BID_LLM_CRYPTO_SECRET"
         )
-    # TODO: 初始化 MinIO 客户端、Redis 连接池等
+    # MinIO 客户端单例 + bucket 初始化
+    from app.services.document.storage_service import init_minio
+
+    init_minio()
     # 工作流 checkpointer：AsyncPostgresSaver + 独立连接池（thread_id=project_id）
     await workflow_runtime.init_checkpointer()
     yield
@@ -61,7 +64,7 @@ app = FastAPI(
 # ── CORS ──
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

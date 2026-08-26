@@ -50,13 +50,12 @@
             <ParseScoreTable
               :score-points="scorePoints"
               :selected-row-keys="selectedRowKeys"
-              :saving-id="savingId"
               :reparse-loading="reparseLoading"
               :download-tender-loading="downloadTenderLoading"
               :tender-doc="tenderDoc"
               :can-reparse="canReparse"
               @update:selected-row-keys="selectedRowKeys = $event"
-              @save-row="handleSaveRow"
+              @auto-save="handleAutoSave"
               @open-batch-strategy="batchStrategyOpen = true"
               @reparse="handleReparse"
               @download-tender="handleDownloadTender"
@@ -70,7 +69,7 @@
             <ParseTechTable
               :tech-requirements="techRequirements"
               :generate-loading="generateLoading"
-              :selected-count="selectedRowKeys.length"
+              :confirmed-count="confirmedCount"
               @generate="handleGenerateRequirements"
             />
           </a-tab-pane>
@@ -102,15 +101,77 @@
           </a-tab-pane>
         </a-tabs>
 
-        <!-- 操作按钮 -->
-        <div class="parse-confirm__actions">
-          <a-button
-            type="primary"
-            :loading="confirming"
-            @click="handleConfirm"
-          >
-            确认并生成大纲
-          </a-button>
+        <!-- 固定底部操作栏 -->
+        <div class="parse-confirm__footer">
+          <div class="parse-confirm__footer-left">
+            <!-- 确认进度 -->
+            <div class="parse-confirm__progress">
+              <span class="parse-confirm__progress-label">确认进度</span>
+              <a-progress
+                :percent="confirmedPercent"
+                :show-info="false"
+                size="small"
+                class="parse-confirm__progress-bar"
+              />
+              <span class="parse-confirm__progress-text">
+                {{ confirmedCount }} / {{ scorePoints.length }} 条
+              </span>
+            </div>
+
+            <!-- 风险提示 -->
+            <a-alert
+              v-if="!techRequirementsGenerated"
+              type="info"
+              :show-icon="true"
+              class="parse-confirm__risk-alert"
+              message="请先在「评分点」Tab 中确认评分点，切换到「技术需求」Tab 点击生成，生成完成后再保存确认"
+            />
+            <a-alert
+              v-else-if="unconfirmedHighRiskCount > 0"
+              type="warning"
+              :show-icon="true"
+              class="parse-confirm__risk-alert"
+              :message="`还有 ${unconfirmedHighRiskCount} 条高分值（≥20分）评分点未确认`"
+            />
+            <a-alert
+              v-else-if="confirmedCount === scorePoints.length && scorePoints.length > 0"
+              type="success"
+              :show-icon="true"
+              class="parse-confirm__risk-alert"
+              message="所有评分点已确认，可以生成大纲了"
+            />
+          </div>
+
+          <div class="parse-confirm__footer-right">
+            <!-- 第一步：保存确认（技术需求生成后才能点击） -->
+            <a-tooltip :title="canSaveConfirm ? '保存当前所有评分点的确认状态和应对策略' : '请先生成技术需求，再保存确认'">
+              <a-button
+                :loading="savingAll"
+                :disabled="!canSaveConfirm"
+                @click="handleSaveAll"
+              >
+                <template #icon>
+                  <SaveOutlined />
+                </template>
+                保存确认
+              </a-button>
+            </a-tooltip>
+
+            <!-- 第二步：生成大纲 -->
+            <a-tooltip :title="canGenerate ? '确认评分点并跳转到大纲生成页面' : '请先确认至少一条评分点'">
+              <a-button
+                type="primary"
+                :loading="confirming"
+                :disabled="!canGenerate"
+                @click="handleConfirm"
+              >
+                <template #icon>
+                  <ThunderboltOutlined />
+                </template>
+                生成大纲
+              </a-button>
+            </a-tooltip>
+          </div>
         </div>
       </template>
     </PageContainer>
@@ -148,6 +209,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
+import { SaveOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
 import {
   fetchScorePoints,
   updateScorePoint,
@@ -224,7 +286,9 @@ const activeTab = ref('score')
 const loading = ref(false)
 const loadError = ref('')
 const confirming = ref(false)
-const savingId = ref('')
+const savingAll = ref(false)
+/** 行内防抖自动保存队列：id → 定时器（2026-08-25 B+C 优化：评分点 Tab 编辑即存） */
+const autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const confirmAllLoading = ref(false)
 const batchStrategyOpen = ref(false)
 const batchStrategyLoading = ref(false)
@@ -235,6 +299,7 @@ const tenderDoc = ref<TenderDocItem | null>(null)
 const reparseLoading = ref(false)
 const selectedRowKeys = ref<string[]>([])
 const generateLoading = ref(false)
+const techRequirementsGenerated = ref(false)
 const formatRequirements = ref<FormatRequirementItem[]>([])
 const formatSaving = ref(false)
 const disqualificationClauses = ref<DisqualificationClause[]>([])
@@ -251,6 +316,9 @@ const confirmedPercent = computed(() =>
 )
 const totalScore = computed(() => scorePoints.value.reduce((sum, p) => sum + (p.score ?? 0), 0))
 const highRiskCount = computed(() => scorePoints.value.filter((p) => (p.score ?? 0) >= 20).length)
+const unconfirmedHighRiskCount = computed(() => scorePoints.value.filter((p) => !p.confirmed && (p.score ?? 0) >= 20).length)
+const canGenerate = computed(() => confirmedCount.value > 0)
+const canSaveConfirm = computed(() => techRequirementsGenerated.value)
 const canReparse = computed(() => !!tenderDoc.value && ['parsed', 'failed'].includes(tenderDoc.value.status))
 
 const handleAddFormatItem = () => {
@@ -321,11 +389,15 @@ const fetchData = async () => {
   try {
     const [spRes, trRes] = await Promise.all([
       fetchScorePoints(projectId),
-      // 获取全部技术需求（含未关联评分点的），表格中显示关联状态
+      // 获取技术需求，只显示关联到评分点的
       fetchRequirements(projectId),
     ])
     scorePoints.value = spRes.data?.data || []
-    techRequirements.value = trRes.data?.data || []
+    const allRequirements = trRes.data?.data || []
+    // 只保留关联到评分点的需求
+    techRequirements.value = allRequirements.filter((r: TechRequirement) => r.related_sp != null)
+    // 如果有关联的需求，说明已经生成过技术需求
+    techRequirementsGenerated.value = techRequirements.value.length > 0
     const docRes = await fetchProjectDocuments(projectId, { doc_type: 'tender_file' })
     const docItems = docRes.data?.data?.items || []
     tenderDoc.value = docItems[0] || null
@@ -345,23 +417,24 @@ const fetchData = async () => {
 const handleGenerateRequirements = async () => {
   generateLoading.value = true
   try {
-    // 确定用于生成的评分点ID：优先用选中的，未选中时用全部已确认的
-    let spIds = selectedRowKeys.value
-    if (spIds.length === 0) {
-      spIds = scorePoints.value.filter((p) => p.confirmed).map((p) => p.id)
-    }
-    if (spIds.length === 0) {
-      message.warning('请先确认至少一条评分点，或选中评分点后再生成技术需求')
+    // 必须根据已确认的评分点生成技术需求（持久化状态，而非临时行选择）
+    const confirmedSpIds = scorePoints.value
+      .filter((p) => p.confirmed)
+      .map((p) => p.id)
+    if (confirmedSpIds.length === 0) {
+      message.warning('请先在评分点列表中确认需要生成技术需求的评分点')
       generateLoading.value = false
       return
     }
-    const res = await generateRequirements(projectId, spIds)
+    const res = await generateRequirements(projectId, confirmedSpIds)
     if (res.data?.code !== 0) { message.error(res.data?.message || '技术需求生成失败'); return }
     const data = res.data?.data || { total: 0, mapped: 0 }
-    message.success(`已生成 ${data.total} 条需求，其中 ${data.mapped} 条关联到评分点`)
-    // 获取全部技术需求（含未关联的），表格中显示关联状态
+    message.success(`已生成 ${data.mapped} 条关联到评分点的技术需求`)
+    // 获取技术需求，只显示关联到评分点的
     const trRes = await fetchRequirements(projectId)
-    techRequirements.value = trRes.data?.data || []
+    const allRequirements = trRes.data?.data || []
+    techRequirements.value = allRequirements.filter((r: TechRequirement) => r.related_sp != null)
+    techRequirementsGenerated.value = true
   } catch (err) {
     const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
     message.error(msg || '技术需求生成失败')
@@ -381,14 +454,44 @@ const handleReparse = async () => {
   } finally { reparseLoading.value = false }
 }
 
-const handleSaveRow = async (row: ScorePoint) => {
-  savingId.value = row.id
-  try {
-    const res = await updateScorePoint(projectId, row.id, { strategy: row.strategy, confirmed: row.confirmed })
-    if (res.data?.code !== 0) { message.error(res.data?.message || '保存失败'); return }
-    message.success('已保存')
-  } catch { message.error('保存失败') }
-  finally { savingId.value = '' }
+/** 行内防抖自动保存（2026-08-25 B+C 优化）：1s 内合并同一行连续修改，静默落库 */
+const handleAutoSave = (row: ScorePoint) => {
+  const prev = autoSaveTimers.get(row.id)
+  if (prev) clearTimeout(prev)
+  autoSaveTimers.set(
+    row.id,
+    setTimeout(async () => {
+      autoSaveTimers.delete(row.id)
+      try {
+        const res = await updateScorePoint(projectId, row.id, {
+          strategy: row.strategy,
+          confirmed: row.confirmed,
+        })
+        if (res.data?.code !== 0) {
+          message.error(res.data?.message || '自动保存失败')
+        }
+      } catch {
+        message.error('自动保存失败')
+      }
+    }, 1000),
+  )
+}
+
+/** 强制 flush 防抖队列中尚未落库的行（闸门/离开页面前调用，防丢数据） */
+const flushPendingSaves = async (): Promise<void> => {
+  const pending = Array.from(autoSaveTimers.entries())
+  if (pending.length === 0) return
+  for (const [id, timer] of pending) {
+    clearTimeout(timer)
+    autoSaveTimers.delete(id)
+    const row = scorePoints.value.find((p) => p.id === id)
+    if (!row) continue
+    try {
+      await updateScorePoint(projectId, id, { strategy: row.strategy, confirmed: row.confirmed })
+    } catch {
+      message.error(`评分点自动保存失败（${row.item || id}）`)
+    }
+  }
 }
 
 /** 批量确认：作用于浮动栏勾选的评分点（仅处理其中未确认项） */
@@ -463,10 +566,42 @@ const ensureScorePointInterrupt = async (): Promise<boolean> => {
   return false
 }
 
+/** 保存确认 = 流程闸门（2026-08-25 B+C 优化：不再循环写库，评分点 Tab 已自动保存）.
+ *
+ * 校验顺序：先 flush 防抖队列强制落库（兜底）→ 全部评分点已确认 → 技术需求已生成。
+ * 通过后由「确认并生成大纲」推进工作流，本按钮仅做就绪校验与引导。
+ */
+const handleSaveAll = async () => {
+  if (scorePoints.value.length === 0) {
+    message.info('暂无评分点需要保存')
+    return
+  }
+  savingAll.value = true
+  try {
+    // 1. 强制落库防抖队列中尚未提交的修改（防用户 1s 内点击导致丢数据）
+    await flushPendingSaves()
+    // 2. 全部评分点已确认
+    if (confirmedCount.value !== scorePoints.value.length) {
+      message.warning(`还有 ${scorePoints.value.length - confirmedCount.value} 条评分点未确认`)
+      return
+    }
+    // 3. 技术需求已生成（LLM 产物落库）
+    if (!techRequirementsGenerated.value) {
+      message.warning('请先切换到「技术需求」Tab 点击生成，再保存确认')
+      return
+    }
+    message.success('评分点已全部确认，可以生成大纲')
+  } finally {
+    savingAll.value = false
+  }
+}
+
 const handleConfirm = async () => {
   confirming.value = true
   const hideLoading = message.loading('正在启动解析工作流...', 0)
   try {
+    // 推进工作流前强制落库防抖队列（评分点编辑即存，工作流从 DB 读最新状态）
+    await flushPendingSaves()
     const ready = await ensureScorePointInterrupt()
     if (!ready) return
     hideLoading()
@@ -498,6 +633,74 @@ onMounted(fetchData)
   gap: 12px;
   justify-content: flex-end;
   margin-top: 24px;
+}
+
+/* 固定底部操作栏 */
+.parse-confirm__footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 24px;
+  margin-top: 24px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.parse-confirm__footer-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
+}
+
+.parse-confirm__footer-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+/* 确认进度 */
+.parse-confirm__progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.parse-confirm__progress-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.parse-confirm__progress-bar {
+  width: 120px;
+  flex-shrink: 0;
+}
+
+.parse-confirm__progress-text {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* 风险提示 */
+.parse-confirm__risk-alert {
+  flex: 1;
+  min-width: 0;
+}
+
+.parse-confirm__risk-alert :deep(.ant-alert-message) {
+  font-size: var(--font-size-sm);
 }
 
 /* 批量操作浮动栏进入/退出过渡：淡入 + 上移（transform 需保留 translateX(-50%) 居中） */

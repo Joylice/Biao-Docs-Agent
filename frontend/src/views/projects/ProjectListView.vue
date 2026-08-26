@@ -177,7 +177,20 @@
 
           <div class="project-card__footer">
             <a-button
+              v-if="canDeleteProject(item.owner_id === currentUserId)"
               size="small"
+              danger
+              :loading="deletingId === item.id"
+              @click.stop="confirmDeleteProject(item)"
+            >
+              <template #icon>
+                <DeleteOutlined />
+              </template>
+              移除
+            </a-button>
+            <a-button
+              size="small"
+              type="primary"
               @click.stop="enterProject(item.id)"
             >
               进入工作台
@@ -197,8 +210,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { FolderOutlined, PlusOutlined } from '@ant-design/icons-vue'
-import { fetchProjects as fetchProjectsApi } from '@/api'
+import { message, Modal } from 'ant-design-vue'
+import { FolderOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons-vue'
+import { fetchProjects as fetchProjectsApi, deleteProject as deleteProjectApi } from '@/api'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -211,7 +225,7 @@ import { type ProjectItem } from './constants'
 import CreateProjectModal from './components/CreateProjectModal.vue'
 import NewUserGuide from './components/NewUserGuide.vue'
 
-const { can } = usePermission()
+const { can, canDeleteProject } = usePermission()
 
 const router = useRouter()
 const loading = ref(false)
@@ -223,6 +237,7 @@ const debouncedKeyword = ref('')
 const industryFilter = ref<string | undefined>(undefined)
 const sortBy = ref('created_desc')
 const createModalRef = ref<InstanceType<typeof CreateProjectModal> | null>(null)
+const deletingId = ref<string | null>(null)
 
 const sortOptions = [
   { label: '最新创建', value: 'created_desc' },
@@ -374,6 +389,38 @@ const enterProject = (projectId: string) => {
   router.push({ name: 'Parse', params: { projectId } })
 }
 
+/** 删除项目：仅限系统管理员（project:delete 权限）或项目负责人 */
+const confirmDeleteProject = (item: ProjectItem) => {
+  Modal.confirm({
+    title: `确定要删除项目「${item.name}」吗？`,
+    content: '删除后不可恢复，项目关联的所有数据（文档、评分点、方案大纲、章节内容等）将被一并清除。',
+    okText: '确认删除',
+    cancelText: '取消',
+    okButtonProps: { danger: true },
+    onOk: () => handleDeleteProject(item),
+  })
+}
+
+const handleDeleteProject = async (item: ProjectItem) => {
+  deletingId.value = item.id
+  try {
+    const { data } = await deleteProjectApi(item.id)
+    if (data.code === 0) {
+      message.success(`项目「${item.name}」已删除`)
+      // 从列表中移除
+      projects.value = projects.value.filter((p) => p.id !== item.id)
+    } else {
+      message.error(data.message || '删除失败')
+    }
+  } catch (err: any) {
+    console.error('删除项目失败:', err)
+    const msg = err?.response?.data?.message || err?.message || '删除失败，请稍后重试'
+    message.error(msg)
+  } finally {
+    deletingId.value = null
+  }
+}
+
 onMounted(() => {
   fetchProjects()
   // 同步当前用户 ID（「我创建」标记比对 owner_id）
@@ -455,6 +502,8 @@ onUnmounted(() => {
 
 .project-card__footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
 }
 </style>

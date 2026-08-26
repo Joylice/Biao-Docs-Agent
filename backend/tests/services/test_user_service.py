@@ -13,7 +13,7 @@ import pytest
 from app.core.exceptions import BizError
 from app.core.security import verify_password
 from app.models.user import User
-from app.services import user_service
+from app.services.infra import user_service
 
 ADMIN_ID = uuid.uuid4()
 MEMBER_ID = uuid.uuid4()

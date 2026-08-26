@@ -10,8 +10,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services import glossary_service, parse_service
-from app.services.parse_service import ParsedTender
+from app.services.proposal import glossary_service
+from app.services.document import parse_service
+from app.services.document.parse_service import ParsedTender
 
 
 class TestParseSchemaGlossary:
@@ -27,7 +28,7 @@ class TestParseSchemaGlossary:
                 "glossary": [{"term": "AI", "canonical": "人工智能", "desc": "统一用全称"}],
             }
 
-        from app.services import llm_service
+        from app.services.llm import llm_service
 
         monkeypatch.setattr(llm_service, "call_llm_with_schema", fake_call)
         parsed = await parse_service.parse_tender_with_llm("招标正文")

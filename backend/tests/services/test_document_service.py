@@ -13,7 +13,7 @@ import pytest
 
 from app.core.exceptions import BizError
 from app.models.document import DisqualificationClause, Document
-from app.services import document_service
+from app.services.document import document_service
 
 PROJECT_ID = uuid.uuid4()
 DOC_ID = uuid.uuid4()

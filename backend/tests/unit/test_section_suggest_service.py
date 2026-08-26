@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.config import settings
-from app.services import section_suggest_service, settings_service
+from app.services.proposal import section_suggest_service
+from app.services.infra import settings_service
 
 SCORE_POINTS = [
     {
@@ -111,7 +112,7 @@ class TestLLMSuggestions:
         async def fake_llm(**kwargs) -> dict:
             return llm_result
 
-        monkeypatch.setattr("app.services.section_suggest_service.call_llm_with_schema", fake_llm)
+        monkeypatch.setattr("app.services.proposal.section_suggest_service.call_llm_with_schema", fake_llm)
         suggestions = await section_suggest_service.build_section_suggestions(
             CHAPTERS, SCORE_POINTS
         )
@@ -125,7 +126,7 @@ class TestLLMSuggestions:
         async def boom(**kwargs) -> dict:
             raise RuntimeError("模拟 LLM 故障")
 
-        monkeypatch.setattr("app.services.section_suggest_service.call_llm_with_schema", boom)
+        monkeypatch.setattr("app.services.proposal.section_suggest_service.call_llm_with_schema", boom)
         assert await section_suggest_service.build_section_suggestions(CHAPTERS, SCORE_POINTS) == []
 
     @pytest.mark.asyncio
@@ -138,7 +139,7 @@ class TestLLMSuggestions:
             captured["user_prompt"] = kwargs["user_prompt"]
             return {"suggestions": []}
 
-        monkeypatch.setattr("app.services.section_suggest_service.call_llm_with_schema", fake_llm)
+        monkeypatch.setattr("app.services.proposal.section_suggest_service.call_llm_with_schema", fake_llm)
         chapters = {"1": "联系人 13812345678，邮箱 test@x.com"}
         await section_suggest_service.build_section_suggestions(chapters, SCORE_POINTS)
         assert "13812345678" not in captured["user_prompt"]

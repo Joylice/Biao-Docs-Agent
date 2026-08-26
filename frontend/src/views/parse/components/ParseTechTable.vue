@@ -1,19 +1,33 @@
 <template>
   <a-card title="技术需求">
     <template #extra>
-      <a-popconfirm
-        title="将基于评分点重新梳理衍生需求，确认继续？"
-        ok-text="生成"
-        cancel-text="取消"
-        @confirm="$emit('generate')"
-      >
-        <a-button
-          size="small"
-          :loading="generateLoading"
+      <div class="parse-tech-table__header">
+        <span v-if="confirmedCount === 0" class="parse-tech-table__hint-text">
+          请先在「评分点」Tab 中确认评分点
+        </span>
+        <a-popconfirm
+          v-else
+          :title="`将基于已确认的 ${confirmedCount} 条评分点生成技术需求，确认继续？`"
+          ok-text="生成"
+          cancel-text="取消"
+          @confirm="$emit('generate')"
         >
-          {{ selectedCount > 0 ? `生成技术需求（已选 ${selectedCount} 项）` : '生成技术需求（全部已确认）' }}
+          <a-button
+            size="small"
+            type="primary"
+            :loading="generateLoading"
+          >
+            生成技术需求
+          </a-button>
+        </a-popconfirm>
+        <a-button
+          v-if="confirmedCount === 0"
+          size="small"
+          disabled
+        >
+          生成技术需求
         </a-button>
-      </a-popconfirm>
+      </div>
     </template>
 
     <a-table
@@ -64,7 +78,7 @@ interface TechRequirement {
 defineProps<{
   techRequirements: TechRequirement[]
   generateLoading: boolean
-  selectedCount: number
+  confirmedCount: number
 }>()
 
 defineEmits<{
@@ -80,3 +94,16 @@ const techColumns = [
   { title: '对应评分点', key: 'related_sp', width: 240 },
 ]
 </script>
+
+<style scoped>
+.parse-tech-table__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.parse-tech-table__hint-text {
+  font-size: var(--font-size-sm);
+  color: var(--color-warning);
+}
+</style>

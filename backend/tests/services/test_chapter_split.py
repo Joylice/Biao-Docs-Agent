@@ -1,11 +1,11 @@
 """章节子节切分（chapter_service）与编号自然序（export_service）单元测试."""
 
-from app.services.chapter_service import (
+from app.services.proposal.chapter_service import (
     is_nested_sections,
     numbered_sections,
     split_chapter_to_sections,
 )
-from app.services.export_service import natural_sort_key
+from app.services.document.export_service import natural_sort_key
 
 TREE = [{"title": "项目背景"}, {"title": "建设目标"}]
 

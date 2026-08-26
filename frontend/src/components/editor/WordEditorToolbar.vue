@@ -535,8 +535,8 @@
           </a-button>
         </a-tooltip>
 
-        <!-- 页眉页脚（P3） -->
-        <a-tooltip title="P3 实现">
+        <!-- 页眉页脚（导出 Word/打印时自动生成，编辑态暂不开放） -->
+        <a-tooltip title="导出 Word / 打印时自动生成页眉页脚">
           <a-button
             size="small"
             type="text"
@@ -550,13 +550,13 @@
           </a-button>
         </a-tooltip>
 
-        <!-- 批注（P3） -->
-        <a-tooltip title="P3 实现">
+        <!-- 批注（P3 已集成：打开右侧批注面板） -->
+        <a-tooltip title="批注">
           <a-button
             size="small"
             type="text"
-            disabled
             aria-label="批注"
+            @click="emit('openComments')"
           >
             <template #icon>
               <CommentOutlined />
@@ -822,6 +822,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:outlineVisible', value: boolean): void
   (e: 'update:zoom', value: number): void
+  (e: 'openComments'): void
 }>()
 
 /* 事务版本号：editor 状态变化时递增，使 computed/渲染依赖重新求值 */
@@ -888,7 +889,7 @@ const paragraphValue = computed(() => {
   return 'paragraph'
 })
 
-const handleParagraphChange = (value: string) => {
+const handleParagraphChange = (value: any) => {
   if (value === 'paragraph') {
     run((chain) => chain.setParagraph())
   } else {
@@ -921,15 +922,15 @@ const currentLineHeight = computed(() => {
   return (attrs.lineHeight as string | undefined) ?? undefined
 })
 
-const handleFontFamilyChange = (value: string) => {
+const handleFontFamilyChange = (value: any) => {
   run((chain) => chain.setFontFamily(value))
 }
 
-const handleFontSizeChange = (value: string) => {
+const handleFontSizeChange = (value: any) => {
   run((chain) => chain.setFontSize(value))
 }
 
-const handleLineHeightChange = (value: string) => {
+const handleLineHeightChange = (value: any) => {
   run((chain) => chain.setLineHeight(value))
 }
 

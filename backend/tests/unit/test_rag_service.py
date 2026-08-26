@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from app.services import rag_service
-from app.services.rag_service import ChunkResult, chunk_text
+from app.services.llm import rag_service
+from app.services.llm.rag_service import ChunkResult, chunk_text
 
 # 模拟 KbChunk 检索结果行（含 .distance 属性，与 sqlalchemy Row 对齐）
 _ChunkRow = namedtuple("_ChunkRow", "id doc_id content page_no distance")
@@ -174,7 +174,7 @@ class TestRetrieveWithRerank:
             return list(reversed(candidates))[:top_n] if top_n else list(reversed(candidates))
 
         monkeypatch.setattr(rag_service, "retrieve_similar", fake_retrieve)
-        monkeypatch.setattr("app.services.rerank_service.rerank", fake_rerank)
+        monkeypatch.setattr("app.services.llm.rerank_service.rerank", fake_rerank)
 
         results = await rag_service.retrieve_with_rerank(
             db=MagicMock(),
@@ -248,7 +248,7 @@ class TestSearchMaterials:
 
         monkeypatch.setattr(rag_service, "get_embedding", fake_embedding)
         monkeypatch.setattr(rag_service, "retrieve_similar", fake_retrieve)
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
 
         items = await rag_service.search_materials(FakeDB(), expected_project_id, "高可用", top_k=5)
         assert len(items) == 1
@@ -281,7 +281,7 @@ class TestSearchMaterials:
 
         monkeypatch.setattr(rag_service, "get_embedding", fake_embedding)
         monkeypatch.setattr(rag_service, "retrieve_similar", fake_retrieve)
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
 
         items = await rag_service.search_materials(FakeDB(), uuid.uuid4(), "不存在的主题")
         assert items == []
@@ -309,7 +309,7 @@ class TestSearchMaterials:
 
         monkeypatch.setattr(rag_service, "get_embedding", fake_embedding)
         monkeypatch.setattr(rag_service, "retrieve_similar", fake_retrieve)
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", fake_is_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", fake_is_mock)
 
         await rag_service.search_materials(FakeDB(), uuid.uuid4(), "任意查询")
         assert captured["threshold"] == -1.0
@@ -334,7 +334,7 @@ class TestSearchMaterials:
 
         monkeypatch.setattr(rag_service, "get_embedding", fake_embedding)
         monkeypatch.setattr(rag_service, "retrieve_similar", fake_retrieve)
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
 
         await rag_service.search_materials(FakeDB(), uuid.uuid4(), "任意查询")
         assert captured["threshold"] == 0.0

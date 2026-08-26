@@ -248,7 +248,7 @@ const formatTime = (iso: string): string => {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('zh-CN', { hour12: false })
 }
 
-const onAnnotationPanelChange = (keys: string | string[]) => {
+const onAnnotationPanelChange = (keys: any) => {
   const active = Array.isArray(keys) ? keys : [keys]
   annotationPanelKeys.value = active
   for (const no of active) {

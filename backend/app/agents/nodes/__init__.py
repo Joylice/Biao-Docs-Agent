@@ -51,9 +51,10 @@ from app.agents.nodes.review import (
     route_after_confirm,
     route_after_outline_confirmed,
 )
+from app.agents.nodes.wait_division import wait_division_node
 from app.core.database import async_session_factory
-from app.services import benchmark_service, kb_base_service, settings_service
-from app.services.event_service import publish_event
+from app.services.infra import benchmark_service, kb_base_service, settings_service
+from app.services.infra.event_service import publish_event
 
 __all__ = [
     "MAX_VALIDATE_RETRIES",
@@ -88,5 +89,6 @@ __all__ = [
     "route_after_outline_confirmed",
     "settings_service",
     "validate_node",
+    "wait_division_node",
     "write_node",
 ]

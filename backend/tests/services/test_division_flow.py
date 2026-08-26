@@ -13,7 +13,7 @@ import pytest
 from app.core.exceptions import ForbiddenError, ValidationError
 from app.models.project import Project
 from app.models.proposal import ChapterAnnotation, ChapterAssignment
-from app.services import division_service
+from app.services.project import division_service
 
 PROJECT_ID = uuid.uuid4()
 OWNER_ID = uuid.uuid4()

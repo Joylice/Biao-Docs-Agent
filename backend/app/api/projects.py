@@ -11,9 +11,10 @@ from app.core.database import get_db
 from app.core.deps import get_current_owner_id, get_current_user_id
 from app.core.response import paginated, success
 from app.schemas.project import ProjectCreate, ProjectMemberAdd, ProjectOut
-from app.services.project_service import (
+from app.services.project.project_service import (
     add_project_member,
     create_project,
+    delete_project,
     get_project,
     list_project_members,
     list_projects,
@@ -123,3 +124,28 @@ async def remove_member_api(
     await db.commit()
 
     return success(message="成员移除成功")
+
+
+@router.delete("/{project_id}")
+async def delete_project_api(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """删除项目（仅 owner 或系统管理员）：级联清理关联数据 + MinIO + 工作流 checkpoint."""
+    # 执行删除（service 内完成权限校验 + 级联清理，返回被删项目供审计）
+    project = await delete_project(db, project_id, user_id)
+
+    # 审计埋点：项目删除（security.md §4）；复用 service 返回的项目信息，避免重复查询
+    await audit.record(
+        db,
+        user_id,
+        "project.delete",
+        project_id=project_id,
+        detail={"project_name": project.name},
+    )
+
+    # 事务约定（BUG-1）：删除 + 审计同事务，响应前显式提交
+    await db.commit()
+
+    return success(message="项目已删除")

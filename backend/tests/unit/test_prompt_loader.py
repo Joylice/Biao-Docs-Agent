@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from app.core.exceptions import BizError
-from app.services.prompt_loader import load_parse_prompt
+from app.services.infra.prompt_loader import load_parse_prompt
 
 
 class TestLoadParsePrompt:
@@ -19,7 +19,7 @@ class TestLoadParsePrompt:
 
     def test_template_not_found(self) -> None:
         """模板文件不存在时抛出 BizError."""
-        with patch("app.services.prompt_loader._PROMPTS_DIR") as mock_dir:
+        with patch("app.services.infra.prompt_loader._PROMPTS_DIR") as mock_dir:
             mock_path = mock_dir / "parse.yaml"
             mock_path.read_text.side_effect = FileNotFoundError
             with pytest.raises(BizError, match="提示词模板"):

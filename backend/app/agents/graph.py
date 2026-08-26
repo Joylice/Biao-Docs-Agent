@@ -1,9 +1,11 @@
 """LangGraph 工作流图构建 — 对齐 SDD §6.
 
 流程：parse → confirm(HITL) → outline → confirm_outline(HITL)
-      → (retrieve → write → validate 循环) → consistency_check → integrate
-      → review(HITL) → [approved: export / feedback: rewrite → integrate → review]
+      → start_generation=True: (retrieve → write → validate 循环) → consistency_check
+      → integrate → review(HITL) → [approved: export / feedback: rewrite → integrate → review]
       → export → END
+      → start_generation=False: wait_division(HITL) → [人工分工编制，审核通过回写后]
+      → resume → consistency_check → integrate → review → ...
 
 Checkpointer：生产用 AsyncPostgresSaver（thread_id = project_id）；测试用 InMemorySaver。
 """
@@ -24,6 +26,7 @@ from app.agents.nodes import (
     review_route,
     rewrite_node,
     validate_node,
+    wait_division_node,
     write_node,
 )
 from app.agents.state import BidState
@@ -43,8 +46,16 @@ def get_async_postgres_saver():
 
 
 def outline_route(state: dict) -> str:
-    """confirm_outline 出口：regenerate 标记 → 回 generate_outline 重新生成；否则进入章节循环."""
-    return "generate_outline" if state.get("regenerate_requested") else "retrieve"
+    """confirm_outline 出口：
+    - regenerate 标记 → 回 generate_outline 重新生成
+    - start_generation=False（分工驱动）→ 停靠 wait_division 待分工
+    - 默认 → 进入章节生成循环（retrieve）
+    """
+    if state.get("regenerate_requested"):
+        return "generate_outline"
+    if state.get("current_phase") == "division":
+        return "wait_division"
+    return "retrieve"
 
 
 def build_workflow() -> StateGraph:
@@ -56,6 +67,7 @@ def build_workflow() -> StateGraph:
     workflow.add_node("confirm_score_points", confirm_score_points_node)
     workflow.add_node("generate_outline", generate_outline_node)
     workflow.add_node("confirm_outline", confirm_outline_node)
+    workflow.add_node("wait_division", wait_division_node)
     workflow.add_node("retrieve", retrieve_node)
     workflow.add_node("write", write_node)
     workflow.add_node("validate", validate_node)
@@ -73,12 +85,21 @@ def build_workflow() -> StateGraph:
     workflow.add_edge("confirm_score_points", "generate_outline")
     workflow.add_edge("generate_outline", "confirm_outline")
 
-    # confirm_outline → [regenerate: generate_outline → confirm_outline 回边] / 章节循环
+    # confirm_outline → [regenerate: generate_outline → confirm_outline 回边] /
+    #                    [wait_division: 分工驱动停靠] / 章节循环
     workflow.add_conditional_edges(
         "confirm_outline",
         outline_route,
-        {"generate_outline": "generate_outline", "retrieve": "retrieve"},
+        {
+            "generate_outline": "generate_outline",
+            "wait_division": "wait_division",
+            "retrieve": "retrieve",
+        },
     )
+    # wait_division（分工编制完成 resume）→ 整合校验 → 审阅
+    # （分工内容已在审核通过时回写 state.chapters；不经过自动生成/自动重写链路，
+    #   保持一致的人工编制内容）
+    workflow.add_edge("wait_division", "integrate")
     workflow.add_edge("retrieve", "write")
     workflow.add_edge("write", "validate")
     workflow.add_conditional_edges(

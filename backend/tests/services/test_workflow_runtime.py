@@ -11,8 +11,8 @@ from app.agents import nodes
 from app.core.config import settings
 from app.core.exceptions import BizError
 from app.models.proposal import ProposalSection, ProposalSkeleton
-from app.services import workflow_runtime
-from app.services.chapter_service import extract_chapter_summary
+from app.services.infra import workflow_runtime
+from app.services.proposal.chapter_service import extract_chapter_summary
 from tests.agents.test_graph import make_fake_db
 
 PROJECT_ID = uuid.uuid4()
@@ -67,10 +67,10 @@ def mock_node_deps(monkeypatch):
     monkeypatch.setattr(settings, "llm_mock", True)
     monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
     monkeypatch.setattr(nodes, "publish_event", fake_publish_event)
-    monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", fake_call_llm_with_schema)
-    monkeypatch.setattr("app.services.rag_service.get_embedding", fake_get_embedding)
-    monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve_similar)
-    monkeypatch.setattr("app.services.export_service.export_to_word", fake_export_to_word)
+    monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", fake_call_llm_with_schema)
+    monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_get_embedding)
+    monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve_similar)
+    monkeypatch.setattr("app.services.document.export_service.export_to_word", fake_export_to_word)
 
 
 class TestRunAndResume:
@@ -217,7 +217,7 @@ class TestRegenerateOutline:
                 ]
             }
 
-        monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", _call_llm_with_schema)
+        monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", _call_llm_with_schema)
         await self._advance_to_outline_interrupt()
         assert outline_calls["n"] == 1, "初始大纲应已生成一次"
 
@@ -481,7 +481,7 @@ class TestOutlineDraftClear:
         monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
         monkeypatch.setattr(nodes, "publish_event", fake_publish_event)
         monkeypatch.setattr(
-            "app.services.llm_service.call_llm_with_schema", fake_call_llm_with_schema
+            "app.services.llm.llm_service.call_llm_with_schema", fake_call_llm_with_schema
         )
 
         await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
@@ -675,3 +675,96 @@ class TestGenerateChapterDraft:
         assert "1" in snapshot.values["chapters"], "子节生成应写父章全文到 state"
         sections = [o for o in db.added if isinstance(o, ProposalSection)]
         assert any(s.section_id.startswith("1.") for s in sections), "子节行应落库"
+
+
+class TestDivisionDrivenMode:
+    """分工驱动编制模式（2026-08-25）：start_generation=False → 停靠 wait_division."""
+
+    @pytest.mark.asyncio
+    async def test_confirm_outline_start_generation_false_stops_at_wait_division(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """确认大纲携带 start_generation=False → 停在 wait_division interrupt，不进入章节生成."""
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+
+        result = await workflow_runtime.resume_workflow(
+            PROJECT_ID, {"confirmed": True, "start_generation": False}
+        )
+        assert result["__interrupt__"][0].value["type"] == "wait_division", (
+            "start_generation=False 应停在待分工 interrupt"
+        )
+        assert result["current_phase"] == "division"
+        assert not result.get("chapters"), "分工驱动模式不自动生成章节"
+
+    @pytest.mark.asyncio
+    async def test_confirm_outline_default_still_generates(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """resume 不带 start_generation（旧测试语义）→ 仍进入章节生成（向后兼容）."""
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+
+        result = await workflow_runtime.resume_workflow(PROJECT_ID, True)
+        assert result["__interrupt__"][0].value["type"] == "review_request"
+        assert set(result["chapters"].keys()) == {"1", "2"}
+
+    @pytest.mark.asyncio
+    async def test_wait_division_resume_advances_to_review(
+        self, memory_runtime, mock_node_deps
+    ) -> None:
+        """分工编制完成（章节已回写 state）→ resume wait_division → 整合审阅."""
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+        await workflow_runtime.resume_workflow(
+            PROJECT_ID, {"confirmed": True, "start_generation": False}
+        )
+
+        # 模拟分工审核通过已回写两个章节到 state
+        content = "# 人工编制内容\n\n" + "分工人员编制的内容。\n" * 20
+        await workflow_runtime.update_state(
+            PROJECT_ID,
+            {
+                "chapters": {"1": content, "2": content},
+                "chapter_summaries": {
+                    "1": {"title": "项目概述", "summary": "摘要1"},
+                    "2": {"title": "技术方案", "summary": "摘要2"},
+                },
+            },
+        )
+
+        result = await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+        assert result["__interrupt__"][0].value["type"] == "review_request"
+        assert result["current_phase"] == "review"
+        assert set(result["chapters"].keys()) == {"1", "2"}
+        assert "人工编制内容" in result["chapters"]["1"], "审阅内容应为分工编制产物"
+
+    @pytest.mark.asyncio
+    async def test_sync_approved_chapter_writes_state_and_db(
+        self, memory_runtime, mock_node_deps, monkeypatch
+    ) -> None:
+        """审核通过回写：state.chapters + proposal_sections（status=approved）+ 摘要."""
+        await workflow_runtime.run_workflow(PROJECT_ID, uuid.uuid4())
+        await workflow_runtime.resume_workflow(PROJECT_ID, {"confirmed": True})
+        await workflow_runtime.resume_workflow(
+            PROJECT_ID, {"confirmed": True, "start_generation": False}
+        )
+
+        db = make_fake_db()
+        monkeypatch.setattr("app.core.database.async_session_factory", lambda: db)
+
+        content = "# 分工编制\n\n负责人编制的内容，满足长度要求。\n" * 15
+        await workflow_runtime.sync_approved_chapter(
+            db, PROJECT_ID, "1", content, "<h1>分工编制</h1>"
+        )
+
+        snapshot = await workflow_runtime.get_state(PROJECT_ID)
+        assert "1" in snapshot.values["chapters"], "审核通过应回写 state.chapters"
+        assert snapshot.values["chapters"]["1"] == content
+        assert "1" in snapshot.values.get("chapter_summaries", {})
+
+        sections = [o for o in db.added if isinstance(o, ProposalSection)]
+        chapter_row = next((s for s in sections if s.section_id == "1"), None)
+        assert chapter_row is not None, "章级行应落库 proposal_sections"
+        assert chapter_row.status == "approved"
+        assert chapter_row.content_md == content

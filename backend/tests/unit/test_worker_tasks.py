@@ -6,7 +6,7 @@ import pytest
 
 from app.models.document import Document
 from app.models.project import Project
-from app.services.parse_service import ParsedTender
+from app.services.document.parse_service import ParsedTender
 from tests.agents.test_graph import FakeDB
 from worker.tasks import task_parse_tender
 
@@ -62,7 +62,7 @@ def _make_project() -> Project:
 def parse_env(monkeypatch):
     """mock 存储下载/文本提取/结果保存，仅 parse_tender_with_llm 返回值由用例注入."""
     from app.core import database
-    from app.services import parse_service, storage_service
+    from app.services.document import parse_service, storage_service
 
     state: dict = {}
 
@@ -174,7 +174,7 @@ class TestTaskParseTenderIdempotentCleanup:
     @pytest.mark.asyncio
     async def test_parse_cleans_old_score_points_before_save(self, parse_env, monkeypatch) -> None:
         """保存新结果前必须已对该文档旧评分点发起 DELETE（按 doc_id 限定）."""
-        from app.services import parse_service
+        from app.services.document import parse_service
 
         db = _make_db(_make_project())
         parse_env["patch_db"](db)
@@ -221,7 +221,7 @@ class TestTaskParseTenderScorePointsOnly:
         self, parse_env, monkeypatch
     ) -> None:
         """score_points_only=True 时 LLM 解析应收到 include_tech_requirements=False."""
-        from app.services import parse_service
+        from app.services.document import parse_service
 
         parse_env["patch_db"](_make_db(_make_project()))
 
@@ -245,7 +245,7 @@ class TestTaskParseTenderScorePointsOnly:
     @pytest.mark.asyncio
     async def test_default_keeps_tech_requirements(self, parse_env, monkeypatch) -> None:
         """首次解析（默认）仍提取技术需求."""
-        from app.services import parse_service
+        from app.services.document import parse_service
 
         parse_env["patch_db"](_make_db(_make_project()))
 

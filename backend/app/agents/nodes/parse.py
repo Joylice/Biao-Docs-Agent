@@ -21,7 +21,11 @@ async def _load_tender_context(
 
     sp_result = await db.execute(
         select(ScorePoint)
-        .where(ScorePoint.project_id == uuid.UUID(project_id))
+        .where(
+            ScorePoint.project_id == uuid.UUID(project_id),
+            # 2026-08-25 严格模式：仅已确认评分点进入大纲生成（与技术需求梳理对齐）
+            ScorePoint.confirmed.is_(True),
+        )
         .order_by(ScorePoint.clause_no)
     )
     score_points = [
@@ -46,10 +50,15 @@ async def _load_tender_context(
     )
     tech_requirements = [
         {
+            "id": str(tr.id),
             "seq": tr.seq,
             "description": tr.description,
             "category": tr.category,
             "is_mandatory": tr.is_mandatory,
+            # 评分点→技术需求关联（2026-08-25 评分点核心纲要所需）：
+            # sp_id 归属评分点，source 来源（sp_derived=由评分点梳理衍生 / tender=招标原文提取）
+            "sp_id": str(tr.sp_id) if tr.sp_id else None,
+            "source": tr.source,
         }
         for tr in tr_result.scalars().all()
     ]

@@ -70,7 +70,7 @@ const emit = defineEmits<{
   (e: 'checked', clause: DisqualificationClause, checked: boolean): void
 }>()
 
-const onChecked = (clause: DisqualificationClause, e: Event) => {
+const onChecked = (clause: DisqualificationClause, e: any) => {
   const checked = (e.target as HTMLInputElement).checked
   emit('checked', clause, checked)
 }

@@ -1,6 +1,6 @@
 """coverage_service 单测 — 评分点覆盖矩阵（confirmed SP vs 大纲 covered_clauses）."""
 
-from app.services.coverage_service import compute_coverage
+from app.services.proposal.coverage_service import compute_coverage
 
 
 def _sp(clause_no: str, item: str = "评分项", confirmed: bool = True) -> dict:

@@ -12,7 +12,7 @@ import pytest
 
 from app.agents import nodes
 from app.models.document import Document
-from app.services.rag_service import ChunkResult
+from app.services.llm.rag_service import ChunkResult
 from tests.agents.test_nodes import FakeDB
 
 PROJECT_ID = uuid.uuid4()
@@ -55,11 +55,11 @@ class TestRetrieveNodeCitations:
                 nodes.kb_base_service, "resolve_mount_doc_ids", AsyncMock(return_value=None)
             ),
             patch(
-                "app.services.rag_service.get_embedding",
+                "app.services.llm.rag_service.get_embedding",
                 AsyncMock(return_value=[0.1] * 8),
             ),
             patch(
-                "app.services.rag_service.retrieve_with_rerank",
+                "app.services.llm.rag_service.retrieve_with_rerank",
                 AsyncMock(return_value=chunks),
             ),
         ):
@@ -81,7 +81,7 @@ class TestRetrieveNodeCitations:
         with (
             patch.object(nodes, "async_session_factory", lambda: FakeDB({Document: []})),
             patch(
-                "app.services.rag_service.get_embedding",
+                "app.services.llm.rag_service.get_embedding",
                 AsyncMock(side_effect=RuntimeError("boom")),
             ),
         ):

@@ -22,7 +22,7 @@ from app.core.security import (
     verify_password,
 )
 from app.models.user import User
-from app.services import auth_service
+from app.services.infra import auth_service
 
 EMAIL = "commit@example.com"
 PASSWORD = "Pass#12345"

@@ -35,7 +35,7 @@
         <a-space
           v-if="!readonly"
           class="ote-ops"
-          size="2"
+          :size="2"
           @click.stop
         >
           <a-tooltip title="添加子节">

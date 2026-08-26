@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.models.project import Project
 from app.models.proposal import ChapterAssignment, ProposalWorkflow
-from app.services import workbench_service
+from app.services.project import workbench_service
 
 USER_ID = uuid.uuid4()
 PROJECT_ID = uuid.uuid4()

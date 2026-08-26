@@ -24,7 +24,7 @@ from app.core.database import get_db
 from app.core.security import create_access_token
 from app.main import app
 from app.models.project import Project
-from app.services import event_service, workflow_runtime
+from app.services.infra import event_service, workflow_runtime
 
 OWNER_ID = uuid.uuid4()
 

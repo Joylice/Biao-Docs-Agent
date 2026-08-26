@@ -38,6 +38,8 @@ declare module '@tiptap/core' {
       increaseIndent: () => ReturnType
       /** 减少当前段落/标题首行缩进（步进 2em） */
       decreaseIndent: () => ReturnType
+      /** 设置当前段落/标题首行缩进（em 值，0 表示清除） */
+      setIndent: (valueEm: number) => ReturnType
     }
   }
 }
@@ -96,6 +98,17 @@ const Indent = Extension.create({
     return {
       increaseIndent: () => changeIndent(INDENT_STEP_EM),
       decreaseIndent: () => changeIndent(-INDENT_STEP_EM),
+      setIndent:
+        (valueEm: number) =>
+        ({ state, commands }: { state: { selection: { $from: { parent: { type: { name: string }; attrs: Record<string, unknown> } } } }; commands: { updateAttributes: (type: string, attrs: Record<string, unknown>) => boolean } }) => {
+          const parent = state.selection.$from.parent
+          const type = parent.type.name
+          if (type !== 'paragraph' && type !== 'heading') return false
+          const current = parseIndentEm(parent.attrs.textIndent)
+          const next = Math.min(Math.max(valueEm, 0), INDENT_MAX_EM)
+          if (next === current) return false
+          return commands.updateAttributes(type, { textIndent: next === 0 ? null : `${next}em` })
+        },
     }
   },
 })

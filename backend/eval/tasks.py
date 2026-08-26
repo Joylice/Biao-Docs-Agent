@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from app.core.config import settings
-from app.services import settings_service
+from app.services.infra import settings_service
 from eval.dataset import (
     load_coverage_datasets,
     load_extraction_datasets,
@@ -54,7 +54,7 @@ async def _model_available(model: str) -> bool:
 
 async def _default_parse(text: str) -> list[dict]:
     """默认提取实现：复用 parse_service 的 LLM 结构化解析链路."""
-    from app.services.parse_service import parse_tender_with_llm
+    from app.services.document.parse_service import parse_tender_with_llm
 
     parsed = await parse_tender_with_llm(text, include_tech_requirements=False)
     return parsed.score_points
@@ -93,7 +93,7 @@ async def run_coverage(datasets: list[dict]) -> EvalResult:
     """按数据集计算覆盖矩阵（纯离线，无需 Key），coverage_rate 取样本均值."""
     if not datasets:
         return _skipped("coverage", "数据集为空")
-    from app.services.coverage_service import compute_coverage
+    from app.services.proposal.coverage_service import compute_coverage
 
     rates: list[float] = []
     details: list[dict] = []
@@ -127,7 +127,7 @@ async def _default_search(dataset: dict, query: str) -> list[str]:
     评测用独立 project_id/UUID，不触碰业务数据；threshold=-1 不过滤以便统计排名。
     """
     from app.core.database import async_session_factory
-    from app.services import rag_service
+    from app.services.llm import rag_service
 
     async with async_session_factory() as session:
         project_id = uuid.uuid4()

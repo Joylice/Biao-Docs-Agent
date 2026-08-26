@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.models.audit_log import AuditLog
-from app.services import audit_service
+from app.services.infra import audit_service
 
 MEMBER_ID = uuid.uuid4()
 PROJECT_ID = uuid.uuid4()

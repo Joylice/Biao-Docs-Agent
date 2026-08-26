@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services import assist_service
+from app.services.project import assist_service
 
 PROJECT_ID = uuid.uuid4()
 USER_ID = uuid.uuid4()
@@ -105,11 +105,11 @@ class TestAssistGenerate:
         def fake_session_factory():
             return _FakeSession(session)
 
-        monkeypatch.setattr("app.services.workflow_runtime.get_state", fake_get_state)
-        monkeypatch.setattr("app.services.workflow_runtime.update_state", fake_update_state)
-        monkeypatch.setattr("app.services.chapter_service.generate_chapter", fake_generate)
+        monkeypatch.setattr("app.services.infra.workflow_runtime.get_state", fake_get_state)
+        monkeypatch.setattr("app.services.infra.workflow_runtime.update_state", fake_update_state)
+        monkeypatch.setattr("app.services.proposal.chapter_service.generate_chapter", fake_generate)
         monkeypatch.setattr("app.agents.nodes._upsert_section", fake_upsert)
-        monkeypatch.setattr("app.services.assist_service.publish_event", fake_publish)
+        monkeypatch.setattr("app.services.project.assist_service.publish_event", fake_publish)
         monkeypatch.setattr("app.core.database.async_session_factory", fake_session_factory)
         return captured
 

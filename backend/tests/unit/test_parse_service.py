@@ -5,7 +5,7 @@ import io
 import pytest
 
 from app.core.exceptions import BizError
-from app.services.parse_service import (
+from app.services.document.parse_service import (
     _scoring_anchor,
     extract_tender_text,
     select_parse_window,
@@ -218,7 +218,8 @@ class TestParseTenderWithLlmSchema:
 
     @pytest.mark.asyncio
     async def test_schema_excludes_tech_requirements_when_disabled(self, monkeypatch) -> None:
-        from app.services import llm_service, parse_service
+        from app.services.llm import llm_service
+        from app.services.document import parse_service
 
         captured: dict = {}
 
@@ -248,7 +249,8 @@ class TestParseTenderWithLlmSchema:
 
     @pytest.mark.asyncio
     async def test_schema_includes_tech_requirements_by_default(self, monkeypatch) -> None:
-        from app.services import llm_service, parse_service
+        from app.services.llm import llm_service
+        from app.services.document import parse_service
 
         captured: dict = {}
 
@@ -277,7 +279,8 @@ class TestFormatRequirementsSchema:
 
     @pytest.mark.asyncio
     async def test_schema_includes_format_requirements(self, monkeypatch) -> None:
-        from app.services import llm_service, parse_service
+        from app.services.llm import llm_service
+        from app.services.document import parse_service
 
         captured: dict = {}
 
@@ -307,7 +310,8 @@ class TestFormatRequirementsSchema:
     @pytest.mark.asyncio
     async def test_format_requirements_kept_when_score_points_only(self, monkeypatch) -> None:
         """重新解析（跳过技术需求）仍提取格式要求."""
-        from app.services import llm_service, parse_service
+        from app.services.llm import llm_service
+        from app.services.document import parse_service
 
         async def fake_call(
             system_prompt: str,
@@ -330,7 +334,8 @@ class TestFormatRequirementsSchema:
 
     @pytest.mark.asyncio
     async def test_missing_format_requirements_fallback_empty(self, monkeypatch) -> None:
-        from app.services import llm_service, parse_service
+        from app.services.llm import llm_service
+        from app.services.document import parse_service
 
         async def fake_call(
             system_prompt: str,
@@ -348,7 +353,8 @@ class TestFormatRequirementsSchema:
     @pytest.mark.asyncio
     async def test_prompt_declares_chapter_format_category(self, monkeypatch) -> None:
         """阶段5：提示词枚举含 chapter_format（技术方案章节格式要求）."""
-        from app.services import llm_service, parse_service
+        from app.services.llm import llm_service
+        from app.services.document import parse_service
 
         captured: dict = {}
 
@@ -369,7 +375,8 @@ class TestFormatRequirementsSchema:
     @pytest.mark.asyncio
     async def test_chapter_format_items_passthrough(self, monkeypatch) -> None:
         """阶段5：chapter_format 条目原样透传落 meta（不参与排版映射）."""
-        from app.services import llm_service, parse_service
+        from app.services.llm import llm_service
+        from app.services.document import parse_service
 
         async def fake_call(
             system_prompt: str,
@@ -407,7 +414,7 @@ class TestSaveParseResultFormatRequirements:
         from unittest.mock import AsyncMock, MagicMock
 
         from app.models.document import Document
-        from app.services.parse_service import ParsedTender, save_parse_result
+        from app.services.document.parse_service import ParsedTender, save_parse_result
 
         doc_id = uuid.uuid4()
         project_id = uuid.uuid4()

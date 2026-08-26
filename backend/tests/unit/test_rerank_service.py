@@ -12,8 +12,8 @@ from unittest.mock import patch
 import pytest
 
 from app.core.config import settings
-from app.services import rerank_service
-from app.services.rag_service import ChunkResult
+from app.services.llm import rerank_service
+from app.services.llm.rag_service import ChunkResult
 
 
 def _chunk(content: str, score: float = 0.5) -> ChunkResult:
@@ -56,14 +56,14 @@ class TestRerankPassThrough:
     @pytest.mark.asyncio
     async def test_empty_candidates_returns_empty(self, monkeypatch) -> None:
         """空候选直通空列表."""
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
         result = await rerank_service.rerank("查询", [])
         assert result == []
 
     @pytest.mark.asyncio
     async def test_mock_mode_pass_through(self, monkeypatch) -> None:
         """LLM mock 模式下 rerank 直通原序（确定性，便于测试）."""
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_mock)
         chunks = [_chunk("a"), _chunk("b")]
         with patch.object(rerank_service, "_post_rerank") as post:
             result = await rerank_service.rerank("查询", chunks)
@@ -73,7 +73,7 @@ class TestRerankPassThrough:
     @pytest.mark.asyncio
     async def test_disabled_pass_through(self, monkeypatch) -> None:
         """rerank_enabled=False 直通."""
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
         monkeypatch.setattr(settings, "rerank_enabled", False)
         chunks = [_chunk("a"), _chunk("b")]
         with patch.object(rerank_service, "_post_rerank") as post:
@@ -84,7 +84,7 @@ class TestRerankPassThrough:
     @pytest.mark.asyncio
     async def test_missing_api_key_pass_through(self, monkeypatch) -> None:
         """未配置 api_key 直通（避免无凭据请求）."""
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
         monkeypatch.setattr(settings, "rerank_api_key", "")
         chunks = [_chunk("a")]
         with patch.object(rerank_service, "_post_rerank") as post:
@@ -99,7 +99,7 @@ class TestRerankReorder:
     @pytest.mark.asyncio
     async def test_reorders_by_relevance(self, monkeypatch) -> None:
         """远程返回乱序 index → 候选按相关度重排."""
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
         c0, c1, c2 = _chunk("c0"), _chunk("c1"), _chunk("c2")
         # index 2 最相关、0 次之、1 最低
         payload = _api_result([(2, 0.95), (0, 0.6), (1, 0.1)])
@@ -111,7 +111,7 @@ class TestRerankReorder:
     @pytest.mark.asyncio
     async def test_payload_redacts_content(self, monkeypatch) -> None:
         """外发 body 中的候选文本必须脱敏（手机号被遮蔽）."""
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
         chunks = [_chunk("联系电话 13812345678 请联系")]
         captured: dict = {}
 
@@ -127,7 +127,7 @@ class TestRerankReorder:
     @pytest.mark.asyncio
     async def test_request_headers_carry_key_and_model(self, monkeypatch) -> None:
         """Authorization 与 model 随请求下发（密钥不入日志由实现保证）."""
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
         captured: dict = {}
 
         def fake_post(url: str, headers: dict, payload: dict, timeout: float) -> dict:
@@ -149,7 +149,7 @@ class TestRerankDegrade:
     @pytest.mark.asyncio
     async def test_api_exception_degrades_to_original_order(self, monkeypatch) -> None:
         """HTTP 异常 → 原向量序."""
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
         chunks = [_chunk("a"), _chunk("b")]
         with patch.object(rerank_service, "_post_rerank", side_effect=ConnectionError("boom")):
             result = await rerank_service.rerank("查询", chunks)
@@ -158,7 +158,7 @@ class TestRerankDegrade:
     @pytest.mark.asyncio
     async def test_malformed_response_degrades(self, monkeypatch) -> None:
         """响应结构非法（缺 output.results）→ 原序."""
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
         chunks = [_chunk("a"), _chunk("b")]
         with patch.object(rerank_service, "_post_rerank", return_value={"foo": 1}):
             result = await rerank_service.rerank("查询", chunks)
@@ -167,7 +167,7 @@ class TestRerankDegrade:
     @pytest.mark.asyncio
     async def test_out_of_range_index_ignored(self, monkeypatch) -> None:
         """越界 index 被忽略，其余按分排序；未命中的候选按原序补尾."""
-        monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _fake_not_mock)
+        monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _fake_not_mock)
         c0, c1, c2 = _chunk("c0"), _chunk("c1"), _chunk("c2")
         payload = _api_result([(9, 0.99), (2, 0.8), (0, 0.5)])
         with patch.object(rerank_service, "_post_rerank", return_value=payload):

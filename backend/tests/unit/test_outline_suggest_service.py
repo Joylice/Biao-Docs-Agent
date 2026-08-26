@@ -5,8 +5,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.config import settings
-from app.services import outline_suggest_service, settings_service
-from app.services.outline_suggest_service import apply_outline_suggestions
+from app.services.proposal import outline_suggest_service
+from app.services.infra import settings_service
+from app.services.proposal.outline_suggest_service import apply_outline_suggestions
 
 SCORE_POINTS = [
     {"clause_no": "1", "item": "技术方案完整性", "score": 10, "criteria": "方案完整"},
@@ -132,7 +133,7 @@ class TestLLMSuggestions:
                 ]
             }
 
-        monkeypatch.setattr("app.services.outline_suggest_service.call_llm_with_schema", fake_llm)
+        monkeypatch.setattr("app.services.proposal.outline_suggest_service.call_llm_with_schema", fake_llm)
         suggestions = await outline_suggest_service.build_outline_suggestions(SCORE_POINTS, OUTLINE)
         assert len(suggestions) == 1
         assert suggestions[0]["suggestion_type"] == "rename"
@@ -148,7 +149,7 @@ class TestLLMSuggestions:
         async def boom(**kwargs) -> dict:
             raise RuntimeError("模拟 LLM 故障")
 
-        monkeypatch.setattr("app.services.outline_suggest_service.call_llm_with_schema", boom)
+        monkeypatch.setattr("app.services.proposal.outline_suggest_service.call_llm_with_schema", boom)
         suggestions = await outline_suggest_service.build_outline_suggestions(SCORE_POINTS, OUTLINE)
         assert len(suggestions) == 1
         assert suggestions[0]["suggestion_type"] == "add_section"
@@ -164,7 +165,7 @@ class TestLLMSuggestions:
             captured["user_prompt"] = kwargs["user_prompt"]
             return {"suggestions": []}
 
-        monkeypatch.setattr("app.services.outline_suggest_service.call_llm_with_schema", fake_llm)
+        monkeypatch.setattr("app.services.proposal.outline_suggest_service.call_llm_with_schema", fake_llm)
         sp = [{"clause_no": "1", "item": "联系人 13812345678", "score": 1, "criteria": "x"}]
         await outline_suggest_service.build_outline_suggestions(sp, [])
         assert "13812345678" not in captured["user_prompt"]

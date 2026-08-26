@@ -54,7 +54,7 @@
                   size="small"
                   style="width: 140px"
                   :options="roleOptions"
-                  @change="(val: UserRole) => handleRoleChange(record, val)"
+                  @change="(val) => handleRoleChange(record, val as UserRole)"
                 />
               </template>
               <template v-else-if="column.key === 'created_at'">
@@ -62,8 +62,8 @@
               </template>
               <template v-else-if="column.key === 'actions'">
                 <a-space>
-                  <a @click="formModalsRef?.openEdit(record)">编辑</a>
-                  <a @click="resetPwdRef?.open(record)">重置密码</a>
+                  <a @click="formModalsRef?.openEdit(record as UserItem)">编辑</a>
+                  <a @click="resetPwdRef?.open(record as UserItem)">重置密码</a>
                   <a-tooltip
                     v-if="record.id === currentUserId"
                     title="不能删除自己"
@@ -181,7 +181,7 @@ const handleUserUpdated = () => {
   fetchCurrentUserRole()
 }
 
-const handleRoleChange = (record: UserItem, newRole: UserRole) => {
+const handleRoleChange = (record: any, newRole: UserRole) => {
   if (newRole === record.role) return
   Modal.confirm({
     title: `将「${record.display_name || record.email}」的角色变更为「${roleName[newRole]}」？`,
@@ -205,14 +205,14 @@ const handleRoleChange = (record: UserItem, newRole: UserRole) => {
   })
 }
 
-const handleTableChange = (pag: { current: number; pageSize: number }) => {
-  pagination.current = pag.current
-  pagination.pageSize = pag.pageSize
+const handleTableChange = (pag: { current?: number; pageSize?: number }) => {
+  pagination.current = pag.current ?? 1
+  pagination.pageSize = pag.pageSize ?? 10
   fetchUsers()
 }
 
 /** 删除用户（Popconfirm 轻量二次确认，无需填写理由；角色变更确认仍保留 Modal） */
-const handleDelete = async (record: UserItem) => {
+const handleDelete = async (record: any) => {
   try {
     const { data } = await deleteUser(record.id)
     if (data.code === 0) {

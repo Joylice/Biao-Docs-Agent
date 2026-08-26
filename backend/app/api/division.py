@@ -16,9 +16,10 @@ from app.core.database import get_db
 from app.core.deps import get_current_owner_id, get_current_user_id
 from app.core.exceptions import BizError, ForbiddenError, NotFoundError, ValidationError
 from app.core.response import success
-from app.services import division_service, version_service, workflow_runtime
-from app.services.event_service import publish_event, publish_user_event
-from app.services.project_service import _check_project_member
+from app.services.infra import workflow_runtime
+from app.services.infra.event_service import publish_event, publish_user_event
+from app.services.project import division_service, version_service
+from app.services.project.project_service import _check_project_member
 
 router = APIRouter()
 
@@ -205,7 +206,7 @@ async def assist_generate_assignment(
 ) -> dict:
     """AI 辅助生成（仅 assignee）：知识库检索 + 章节上下文 + 自定义提示词，流式经 WS
     section_token（source=assist）推送，可经 stop 端点暂停（已生成部分按 mode 落库）."""
-    from app.services import assist_service
+    from app.services.project import assist_service
 
     assignment = await _load_my_assignment(db, project_id, assignment_id, user_id)
     if assignment.status not in ("in_progress", "rejected"):
@@ -251,7 +252,7 @@ async def stop_assist_generate(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """暂停辅助生成（仅 assignee）：置位取消令牌，生成端点保留已生成部分后返回."""
-    from app.services import assist_service
+    from app.services.project import assist_service
 
     assignment = await _load_my_assignment(db, project_id, assignment_id, user_id)
     stopped = assist_service.stop_task(project_id, assignment.chapter_no)
@@ -362,11 +363,24 @@ async def review_assignment(
     owner_id: uuid.UUID = Depends(get_current_owner_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """负责人审核：submitted → approved/rejected（rejected 回退可重编），推送 task_reviewed."""
+    """负责人审核：submitted → approved/rejected（rejected 回退可重编），推送 task_reviewed.
+
+    审核通过（approved）时：分工编制内容回写工作流正式方案（state.chapters +
+    proposal_sections，status=approved），供审阅页/Word 导出使用（2026-08-25）。
+    """
     assignment = await division_service.get_assignment(db, project_id, assignment_id)
     if assignment is None:
         raise NotFoundError("分工记录")
     await division_service.review_assignment(db, assignment, body.action, body.comment)
+    if body.action == "approved" and assignment.content:
+        # 内容回写正式方案；flush 后由下方统一 commit 提交
+        await workflow_runtime.sync_approved_chapter(
+            db,
+            project_id,
+            assignment.chapter_no,
+            assignment.content,
+            assignment.content_html,
+        )
     await audit.record(
         db,
         owner_id,

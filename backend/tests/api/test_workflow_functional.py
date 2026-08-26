@@ -23,7 +23,7 @@ from app.main import app
 from app.models.document import ScorePoint, TechRequirement
 from app.models.project import Project, ProjectMember
 from app.models.proposal import ProposalSkeleton
-from app.services import workflow_runtime
+from app.services.infra import workflow_runtime
 from tests.agents.test_graph import FakeDB
 
 OWNER_ID = uuid.uuid4()
@@ -56,6 +56,7 @@ def _node_db() -> FakeDB:
                     score=10,
                     criteria="方案完整",
                     is_star=False,
+                    confirmed=True,  # 严格模式：仅已确认评分点进入大纲
                 )
             ],
             TechRequirement: [
@@ -142,10 +143,10 @@ def mock_node_deps(monkeypatch):
     monkeypatch.setattr(settings, "llm_mock", True)
     monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
     monkeypatch.setattr(nodes, "publish_event", fake_publish_event)
-    monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", fake_call_llm_with_schema)
-    monkeypatch.setattr("app.services.rag_service.get_embedding", fake_get_embedding)
-    monkeypatch.setattr("app.services.rag_service.retrieve_similar", fake_retrieve_similar)
-    monkeypatch.setattr("app.services.export_service.export_to_word", fake_export_to_word)
+    monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", fake_call_llm_with_schema)
+    monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_get_embedding)
+    monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve_similar)
+    monkeypatch.setattr("app.services.document.export_service.export_to_word", fake_export_to_word)
 
 
 async def _get_status(client: AsyncClient, headers: dict[str, str]) -> dict:
@@ -176,7 +177,7 @@ class TestConfirmReview:
     """review HITL 恢复端点：approved → 导出 / feedback → 重写后复审."""
 
     async def _advance_to_review(self, client: AsyncClient, headers: dict[str, str]) -> None:
-        """start → confirm-score-points → confirm-outline，推进到 review interrupt."""
+        """start → confirm-score-points → confirm-outline（自动生成模式），推进到 review interrupt."""
         resp = await client.post(f"/api/v1/projects/{PROJECT_ID}/workflow/start", headers=headers)
         assert resp.status_code == 200
         await _wait_status(client, headers, lambda d: _interrupt_type(d) == "confirm_score_points")
@@ -188,7 +189,9 @@ class TestConfirmReview:
         await _wait_status(client, headers, lambda d: _interrupt_type(d) == "confirm_outline")
 
         resp = await client.post(
-            f"/api/v1/projects/{PROJECT_ID}/workflow/confirm-outline", headers=headers
+            f"/api/v1/projects/{PROJECT_ID}/workflow/confirm-outline",
+            headers=headers,
+            json={"start_generation": True},
         )
         assert resp.status_code == 200
         await _wait_status(client, headers, lambda d: _interrupt_type(d) == "review_request")
@@ -224,7 +227,7 @@ class TestConfirmReview:
         async def fake_rewrite_chapter(**kwargs) -> str:
             return rewrite_marker * 20
 
-        monkeypatch.setattr("app.services.review_service.rewrite_chapter", fake_rewrite_chapter)
+        monkeypatch.setattr("app.services.proposal.review_service.rewrite_chapter", fake_rewrite_chapter)
 
         await self._advance_to_review(client, owner_headers)
 
@@ -305,12 +308,12 @@ class TestWorkflowApiEndToEnd:
         )
         assert status["outline"], "mock 模式大纲已生成"
 
-        # ── 3. confirm-outline（携带修改后的大纲）→ 进入生成 → 停在审阅 ──
+        # ── 3. confirm-outline（自动生成模式 + 携带修改后的大纲）→ 进入生成 → 停在审阅 ──
         modified_outline = [{"chapter_no": "9", "title": "定制章节", "sections": ["小节A"]}]
         resp = await client.post(
             f"/api/v1/projects/{PROJECT_ID}/workflow/confirm-outline",
             headers=owner_headers,
-            json={"outline": modified_outline},
+            json={"outline": modified_outline, "start_generation": True},
         )
         assert resp.status_code == 200
 

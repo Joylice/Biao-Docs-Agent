@@ -28,3 +28,6 @@ backend/_logs/
 # Canvas 交付报告（本地产物，不入库）
 *.canvas.tsx
 *.canvas.status.json
+
+# Vite 构建临时文件
+*.timestamp-*.mjs

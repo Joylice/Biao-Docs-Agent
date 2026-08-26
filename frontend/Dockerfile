@@ -1,11 +1,13 @@
 FROM docker.1ms.run/library/node:22-alpine AS build
 
 WORKDIR /app
-ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
-COPY package.json package-lock.json ./
-RUN npm install
+# Enable corepack for pnpm (node 22 ships corepack)
+RUN corepack enable && corepack prepare pnpm@latest --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm config set registry https://registry.npmmirror.com \
+    && pnpm install --frozen-lockfile
 COPY . .
-RUN npm run build
+RUN pnpm build
 
 FROM docker.1ms.run/library/nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html

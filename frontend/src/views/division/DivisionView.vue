@@ -101,8 +101,26 @@
             </template>
             刷新
           </a-button>
+          <a-tag
+            v-if="approvedCount > 0"
+            color="success"
+          >
+            已通过 {{ approvedCount }} 章
+          </a-tag>
+          <a-button
+            v-if="approvedCount > 0"
+            type="primary"
+            :loading="confirmingDivision"
+            @click="handleConfirmDivision"
+          >
+            <template #icon>
+              <CheckCircleOutlined />
+            </template>
+            进入审阅
+          </a-button>
           <a-button
             type="primary"
+            ghost
             @click="goToGenerate"
           >
             <template #icon>
@@ -142,21 +160,14 @@
       <template v-else>
         <DivisionKanban
           :items="filteredItems"
+          :is-owner="isOwner"
           @select="handleSelectTask"
           @move="handleMoveTask"
         />
       </template>
     </PageContainer>
 
-    <!-- 章节编辑抽屉 -->
-    <ChapterEditorDrawer
-      :visible="editorOpen"
-      :task="editingTask"
-      :project-id="projectId"
-      :is-owner="isOwner"
-      @close="editorOpen = false"
-      @updated="handleTaskUpdated"
-    />
+    <!-- 章节编辑改为全屏富文本编辑器页面（路由跳转） -->
   </div>
 </template>
 
@@ -164,8 +175,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons-vue'
-import { fetchWorkflowStatus } from '@/api/workflow'
+import {
+  ArrowLeftOutlined,
+  CheckCircleOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons-vue'
+import { fetchWorkflowStatus, confirmDivision } from '@/api/workflow'
 import {
   fetchChapterAssignments,
   upsertChapterAssignments,
@@ -181,7 +196,6 @@ import ErrorState from '@/components/ErrorState.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 import DivisionKanban from './components/DivisionKanban.vue'
-import ChapterEditorDrawer from './components/ChapterEditorDrawer.vue'
 import { currentUserId, fetchCurrentUserRole } from '@/stores/currentUser'
 import { usePermission } from '@/composables/usePermission'
 import { useHotkeys } from '@/composables/useHotkeys'
@@ -222,10 +236,6 @@ const assigning = ref(false)
 
 // 筛选
 const filterAssignee = ref<string | undefined>(undefined)
-
-// 编辑抽屉
-const editorOpen = ref(false)
-const editingTask = ref<AssignmentItem | null>(null)
 
 const isOwner = computed(() => isProjectOwner(projectOwnerId.value))
 
@@ -360,6 +370,25 @@ const myTaskCount = computed(() =>
   ).length,
 )
 
+/** 已审核通过的章节数（>0 时允许进入审阅） */
+const approvedCount = computed(
+  () => items.value.filter((item) => item.status === 'approved').length,
+)
+/** 分工编制完成确认（resume wait_division → 进入审阅）状态 */
+const confirmingDivision = ref(false)
+
+const handleConfirmDivision = async () => {
+  confirmingDivision.value = true
+  try {
+    await confirmDivision(projectId)
+    message.success('分工编制已完成，进入审阅')
+    router.push({ name: 'Review', params: { projectId } })
+  } catch (err) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    message.error(msg || '进入审阅失败，请确认分工编制已提交并审核')
+  } finally { confirmingDivision.value = false }
+}
+
 /* ---------------- 数据加载 ---------------- */
 
 /** 同步分配草稿基线（owner 下拉初值 = 已推送的 assignee_id） */
@@ -481,9 +510,17 @@ const handleAssign = async () => {
 }
 
 /* ---------------- 看板交互 ---------------- */
+/**
+ * 点击任务卡片 → 跳转全屏富文本编辑器页面。
+ * 本人卡片 → 可编辑模式；非本人卡片（含 owner）→ 只读模式（query param 标记）。
+ */
 const handleSelectTask = (item: AssignmentItem) => {
-  editingTask.value = item
-  editorOpen.value = true
+  const isMyTask = item.assignee_id === currentUserId.value
+  router.push({
+    name: 'ChapterEditor',
+    params: { projectId, chapterNo: item.chapter_no },
+    query: isMyTask ? undefined : { readonly: '1' },
+  })
 }
 
 /** 拖拽移动动作描述：合法状态转换 → 对应后端接口；非法返回 null */
@@ -498,8 +535,8 @@ const resolveMoveAction = (item: AssignmentItem, targetStatus: TaskStatus): Move
     // 领取
     return { kind: 'accept', successText: `已领取：${item.title}` }
   }
-  if (targetStatus === 'submitted' && item.status === 'in_progress') {
-    // 提交
+  if (targetStatus === 'submitted' && ['in_progress', 'rejected'].includes(item.status)) {
+    // 提交（含打回后修订完成再次提审：rejected → submitted）
     return { kind: 'submit', successText: `已提交：${item.title}` }
   }
   if (targetStatus === 'approved' && item.status === 'submitted') {
@@ -567,12 +604,6 @@ useHotkeys([
   { combo: 'ctrl+shift+z', handler: handleKanbanRedo },
   { combo: 'ctrl+y', handler: handleKanbanRedo },
 ])
-
-const handleTaskUpdated = async () => {
-  await fetchAssignments()
-  // 抽屉内的状态/内容变更同样来自后端，重置基线避免撤销覆盖无关更新
-  kanbanHistory.reset(items.value)
-}
 
 const goToGenerate = () => {
   router.push({ name: 'Generate', params: { projectId } })

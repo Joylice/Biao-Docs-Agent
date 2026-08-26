@@ -28,8 +28,8 @@ from app.main import app
 from app.models.audit_log import AuditLog
 from app.models.llm_settings import LlmSetting
 from app.models.user import User
-from app.services import settings_service
-from app.services.settings_service import RuntimeLlmConfig, invalidate_runtime_cache
+from app.services.infra import settings_service
+from app.services.infra.settings_service import RuntimeLlmConfig, invalidate_runtime_cache
 
 ADMIN_USER_ID = uuid.uuid4()
 ADMIN_EMAIL = "admin@example.com"
@@ -46,12 +46,16 @@ def _row(
     dashscope: str | None = None,
     base: str | None = None,
     llm_mock: bool = False,
+    embedding_model: str | None = None,
+    embedding_key: str | None = None,
 ) -> LlmSetting:
     return LlmSetting(
         id=uuid.uuid4(),
         deepseek_api_key_enc=encrypt_secret(deepseek) if deepseek else None,
         dashscope_api_key_enc=encrypt_secret(dashscope) if dashscope else None,
         embedding_api_base=base,
+        embedding_model=embedding_model,
+        embedding_api_key_enc=encrypt_secret(embedding_key) if embedding_key else None,
         llm_mock=llm_mock,
     )
 
@@ -206,7 +210,7 @@ async def test_put_by_non_admin_rejected_403(
     resp = await client.put(
         "/api/v1/settings/llm",
         headers=auth_headers,
-        json={"embedding_api_base": "http://emb:11434/v1", "llm_mock": False},
+        json={"embedding_api_base": "http://emb:11434/v1", "embedding_model": "bge-m3", "llm_mock": False},
     )
 
     assert resp.status_code == 403
@@ -245,7 +249,7 @@ async def test_admin_list_empty_rejected_with_hint(
     resp = await client.put(
         "/api/v1/settings/llm",
         headers=admin_headers,
-        json={"embedding_api_base": "http://emb:11434/v1", "llm_mock": False},
+        json={"embedding_api_base": "http://emb:11434/v1", "embedding_model": "bge-m3", "llm_mock": False},
     )
 
     assert resp.status_code == 403
@@ -321,6 +325,7 @@ async def test_put_llm_settings_encrypts_and_commits(
             "deepseek_api_key": plain_key,
             "dashscope_api_key": "",
             "embedding_api_base": "http://emb:11434/v1",
+            "embedding_model": "bge-m3",
             "llm_mock": False,
         },
     )
@@ -362,6 +367,7 @@ async def test_put_llm_settings_clears_with_empty_string(
             "deepseek_api_key": "",
             "dashscope_api_key": "",
             "embedding_api_base": "",
+            "embedding_model": "",
             "llm_mock": False,
         },
     )
@@ -385,7 +391,7 @@ async def test_put_llm_settings_omitted_keys_kept(
     resp = await client.put(
         "/api/v1/settings/llm",
         headers=admin_headers,
-        json={"embedding_api_base": "http://emb/v1", "llm_mock": False},
+        json={"embedding_api_base": "http://emb/v1", "embedding_model": "bge-m3", "llm_mock": False},
     )
 
     assert resp.status_code == 200
@@ -397,7 +403,7 @@ async def test_put_llm_settings_omitted_keys_kept(
 async def test_put_llm_settings_requires_base_and_mock(
     client: AsyncClient, override_db, admin_headers: dict[str, str]
 ) -> None:
-    """全量契约：embedding_api_base/llm_mock 必填，缺失 → 422（密钥字段可省略）."""
+    """全量契约：embedding_api_base/embedding_model/llm_mock 必填，缺失 → 422（密钥字段可省略）."""
     override_db(_FakeSettingsSession(user=_admin_user()))
     resp = await client.put(
         "/api/v1/settings/llm", headers=admin_headers, json={"deepseek_api_key": "sk-x"}
@@ -419,6 +425,7 @@ async def test_put_masked_key_rejected(
         json={
             "deepseek_api_key": "sk-****1234",
             "embedding_api_base": "http://emb:11434/v1",
+            "embedding_model": "bge-m3",
             "llm_mock": False,
         },
     )
@@ -441,7 +448,7 @@ async def test_put_private_embedding_base_rejected(
     resp = await client.put(
         "/api/v1/settings/llm",
         headers=admin_headers,
-        json={"embedding_api_base": "http://192.168.1.10/v1", "llm_mock": False},
+        json={"embedding_api_base": "http://192.168.1.10/v1", "embedding_model": "bge-m3", "llm_mock": False},
     )
 
     assert resp.status_code == 400
@@ -461,7 +468,7 @@ async def test_put_invalidates_runtime_cache_only_after_commit(
     resp = await client.put(
         "/api/v1/settings/llm",
         headers=admin_headers,
-        json={"embedding_api_base": "http://emb:11434/v1", "llm_mock": False},
+        json={"embedding_api_base": "http://emb:11434/v1", "embedding_model": "bge-m3", "llm_mock": False},
     )
 
     assert resp.status_code == 200

@@ -9,7 +9,7 @@ from app.agents.nodes._shared import logger
 from app.core.config import settings
 from app.models.document import Document
 from app.models.proposal import ProposalSection
-from app.services import benchmark_service, settings_service
+from app.services.infra import benchmark_service, settings_service
 
 
 async def consistency_check_node(state: dict) -> dict:
@@ -19,9 +19,9 @@ async def consistency_check_node(state: dict) -> dict:
     定向重写（复用 rewrite 链路，最多 1 次）；否则发 warning 事件不阻塞导出。
     检查异常降级无问题继续（一致性检查不阻塞交付主链路）。
     """
-    from app.services.chapter_service import extract_chapter_summary
-    from app.services.consistency_service import check_consistency
-    from app.services.review_service import rewrite_chapter
+    from app.services.proposal.chapter_service import extract_chapter_summary
+    from app.services.proposal.consistency_service import check_consistency
+    from app.services.proposal.review_service import rewrite_chapter
 
     project_id = state.get("project_id", "")
     chapters = dict(state.get("chapters", {}))
@@ -109,7 +109,7 @@ async def consistency_check_node(state: dict) -> dict:
 
 async def integrate_node(state: dict) -> dict:
     """节点：全文整合 — 校验章节齐全 + E2 术语统一，进入审阅阶段."""
-    from app.services.glossary_service import unify_terms
+    from app.services.proposal.glossary_service import unify_terms
 
     project_id = state.get("project_id", "")
     outline = state.get("outline", [])
@@ -168,8 +168,8 @@ async def review_node(state: dict) -> dict:
 
 async def rewrite_node(state: dict) -> dict:
     """节点：按反馈局部重写 — 记录 reviews 表并重写指定章节（同步刷新摘要）."""
-    from app.services.chapter_service import extract_chapter_summary
-    from app.services.review_service import rewrite_chapter
+    from app.services.proposal.chapter_service import extract_chapter_summary
+    from app.services.proposal.review_service import rewrite_chapter
 
     project_id = state.get("project_id", "")
     feedback = state.get("review_feedback", {})
@@ -244,7 +244,7 @@ def _review_record(project_id: str, chapter_no: str, comment: str):
 
 async def export_node(state: dict) -> dict:
     """节点：导出 Word — 写入 documents(doc_type=export) 并推送完成事件."""
-    from app.services.export_service import export_to_word
+    from app.services.document.export_service import export_to_word
 
     project_id = state.get("project_id", "")
     chapters = state.get("chapters", {})

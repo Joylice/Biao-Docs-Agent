@@ -1,6 +1,6 @@
 """提示词模板加载器扩展测试."""
 
-from app.services.prompt_loader import (
+from app.services.infra.prompt_loader import (
     load_chapter_prompt,
     load_outline_prompt,
     load_review_prompt,
@@ -8,7 +8,7 @@ from app.services.prompt_loader import (
 
 
 class TestOutlinePrompt:
-    """大纲提示词测试."""
+    """大纲提示词测试（2026-08-25：评分点为核心纲要）."""
 
     def test_load_outline_prompt(self) -> None:
         """正常加载大纲模板."""
@@ -29,103 +29,75 @@ class TestOutlinePrompt:
         assert "4.2.1" in user
         assert "高可用" in user
 
-    def test_outline_prompt_tech_requirements_as_core(self) -> None:
-        """提示词必须以技术需求为核心组织大纲（2026-08-16 优化）."""
+    def test_outline_prompt_score_points_as_core(self) -> None:
+        """提示词必须以评分点为核心纲要组织大纲（2026-08-25 优化）."""
         score_points = [{"clause_no": "4.2.1", "item": "技术方案", "score": 10}]
         tech_requirements = [{"description": "支持高可用部署", "category": "架构"}]
         system, user = load_outline_prompt(score_points, tech_requirements)
-        # 核心指令：明确以技术需求为章节组织依据
-        assert "技术需求" in system
-        assert any(kw in system for kw in ("为核心", "核心依据", "唯一依据", "主要依据")), (
-            "system_prompt 应明确技术需求为核心组织依据"
+        # 核心指令：明确以评分点为章节组织依据
+        assert "评分点" in system
+        assert any(kw in system for kw in ("核心纲要", "主要依据", "划分依据")), (
+            "system_prompt 应明确评分点为核心组织依据"
         )
-        # 用户输入中技术需求优先呈现（位于评分点之前），弱化评分点地位
-        tr_idx = user.index("高可用")
+        # 用户输入中评分点优先呈现（位于通用需求之前）
         sp_idx = user.index("4.2.1")
-        assert tr_idx < sp_idx, "user_prompt 中技术需求应先于评分点呈现"
+        tr_idx = user.index("高可用")
+        assert sp_idx < tr_idx, "user_prompt 中评分点应先于通用需求呈现"
 
-    def test_outline_prompt_score_points_weakened(self) -> None:
-        """提示词不得再以评分项/分值为章节划分依据（2026-08-16 优化）."""
-        score_points = [{"clause_no": "4.2.1", "item": "技术方案", "score": 10}]
-        tech_requirements = [{"description": "高可用", "category": "架构"}]
-        system, _user = load_outline_prompt(score_points, tech_requirements)
-        # 旧版强评分驱动指令必须移除
-        assert "对应评分项" not in system, "子节粒度不应再以评分项划分"
-        assert "所有评分点" not in system, "不应再以覆盖所有评分点为大纲硬约束"
+    def test_outline_prompt_score_points_grouped_into_chapters(self) -> None:
+        """提示词应说明按主题合并评分点为一级章节."""
+        score_points = [
+            {"id": "sp1", "clause_no": "4.1", "item": "系统架构", "score": 20},
+            {"id": "sp2", "clause_no": "4.2", "item": "系统安全", "score": 20},
+        ]
+        tech_requirements = [
+            {"sp_id": "sp1", "description": "高可用", "category": "架构"},
+            {"sp_id": "sp2", "description": "等保合规", "category": "安全"},
+        ]
+        system, user = load_outline_prompt(score_points, tech_requirements)
+        assert "分组合并" in system, "system_prompt 应说明评分点按主题分组合并成章"
+        # 关联技术需求挂在评分点之下（子节推导来源）
+        assert "关联技术需求" in user
+        sp1_idx = user.index("4.1")
+        ha_idx = user.index("高可用")
+        assert sp1_idx < ha_idx, "评分点 4.1 的关联需求应紧随其后"
 
-    def test_outline_prompt_chapter_titles_from_tech_requirements(self) -> None:
-        """章节标题必须由技术需求派生，禁止直接采用评分项名称（2026-08-16 优化）."""
+    def test_outline_prompt_general_reqs_separated(self) -> None:
+        """未关联评分点的通用需求单独列出作补充，并入最相关章节."""
+        score_points = [{"id": "sp1", "clause_no": "4.1", "item": "系统架构", "score": 20}]
+        tech_requirements = [{"sp_id": None, "description": "通用运维要求", "category": "运维"}]
+        system, user = load_outline_prompt(score_points, tech_requirements)
+        assert "通用" in system, "system_prompt 应说明未关联需求的处理方式"
+        assert "通用运维要求" in user
+
+    def test_outline_prompt_strategy_and_flags(self) -> None:
+        """评分点携带应对策略/星号/风险标记，提示词应保留并强调重点评分点."""
+        score_points = [
+            {
+                "id": "sp1",
+                "clause_no": "4.1",
+                "item": "系统架构",
+                "score": 20,
+                "is_star": True,
+                "strategy": "承诺满足 99.99% 可用性",
+            }
+        ]
+        tech_requirements = [{"sp_id": "sp1", "description": "高可用", "category": "架构"}]
+        system, user = load_outline_prompt(score_points, tech_requirements)
+        assert "应对策略" in system or "策略" in system, (
+            "system_prompt 应要求章节内容纲要体现应对策略"
+        )
+        assert "承诺满足 99.99% 可用性" in user, "user_prompt 应保留评分点应对策略"
+
+    def test_outline_prompt_chapter_titles_from_score_points(self) -> None:
+        """章节命名由评分点及关联需求综合提炼，体现项目特征，禁止通用模板标题."""
         score_points = [{"clause_no": "4.1", "item": "质量保证措施", "score": 20}]
         tech_requirements = [{"description": "高可用", "category": "架构"}]
         system, _user = load_outline_prompt(score_points, tech_requirements)
-        assert "章节标题" in system
-        assert "不得直接" in system and "评分项名称" in system, (
-            "system_prompt 应禁止直接采用评分项名称作为章节标题"
+        assert "章节命名" in system or "章节标题" in system
+        assert "禁止" in system and "通用模板" in system, (
+            "system_prompt 应禁止通用模板式标题"
         )
-
-    def test_outline_prompt_contains_finalized_template(self) -> None:
-        """提示词必须固化定稿骨架：6 段核心章节模板（2026-08-16 定稿参考）."""
-        score_points = [{"clause_no": "4.1", "item": "技术方案", "score": 10}]
-        tech_requirements = [{"description": "高可用", "category": "架构"}]
-        system, _user = load_outline_prompt(score_points, tech_requirements)
-        for kw in (
-            "需求分析",
-            "业务流程设计",
-            "总体架构设计",
-            "详细功能说明",
-            "对接方案",
-            "培训与运维服务",
-        ):
-            assert kw in system, f"system_prompt 应包含定稿骨架章节: {kw}"
-        assert "需求分析" in system and "培训与运维服务" in system
-        # 骨架顺序与命名保持（需求 → 流程 → 架构 → 功能 → 对接 → 培训运维）
-        skeleton = [
-            "需求分析",
-            "业务流程设计",
-            "总体架构设计",
-            "详细功能说明",
-            "对接方案",
-            "培训与运维服务",
-        ]
-        idxs = [system.index(k) for k in skeleton]
-        assert idxs == sorted(idxs), "定稿骨架章节应按顺序呈现"
-
-    def test_outline_prompt_contains_gdsz_template(self) -> None:
-        """提示词必须固化广东施组定稿模版：2.3 九子节 + 2.4 模块化结构（2026-08-16 定稿）."""
-        system, _user = load_outline_prompt([], [])
-        # 2.3 总体架构设计的九个固定子节
-        for kw in (
-            "设计思路",
-            "设计原则",
-            "设计目标",
-            "总体架构图",
-            "功能模块图",
-            "数据架构",
-            "技术架构",
-            "业务架构",
-            "安全架构",
-        ):
-            assert kw in system, f"system_prompt 应包含 2.3 固定子节: {kw}"
-        # 2.4 详细功能说明的模块化固定结构（章节生成阶段展开）
-        for kw in ("系统概述", "需求设计", "功能架构", "功能说明", "界面设计", "业务流程设计"):
-            assert kw in system, f"system_prompt 应包含 2.4 模块化结构: {kw}"
-
-    def test_outline_prompt_architecture_subsections_order(self) -> None:
-        """2.3 九个固定子节在提示词中按模版顺序呈现（思路→原则→目标→图→架构）."""
-        system, _user = load_outline_prompt([], [])
-        arch = [
-            "设计思路",
-            "设计原则",
-            "设计目标",
-            "总体架构图",
-            "功能模块图",
-            "数据架构",
-            "技术架构",
-            "业务架构",
-            "安全架构",
-        ]
-        idxs = [system.index(k) for k in arch]
-        assert idxs == sorted(idxs), "2.3 固定子节应按模版顺序呈现"
 
 
 class TestChapterPrompt:

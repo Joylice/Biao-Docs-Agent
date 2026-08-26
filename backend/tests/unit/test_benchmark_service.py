@@ -7,7 +7,7 @@ import pytest
 
 from app.core.exceptions import BizError
 from app.models.document import ScorePoint
-from app.services import benchmark_service
+from app.services.infra import benchmark_service
 
 PROJECT_ID = uuid.uuid4()
 

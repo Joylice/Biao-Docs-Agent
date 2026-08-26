@@ -259,7 +259,9 @@ const canEdit = computed(() => {
 })
 
 const canAccept = computed(() => props.task?.status === 'pending' && !props.task.assignee_id)
-const canSubmit = computed(() => canEdit.value && props.task?.status === 'in_progress')
+const canSubmit = computed(() =>
+  canEdit.value && ['in_progress', 'rejected'].includes(props.task?.status || ''),
+)
 const canApprove = computed(() => props.isOwner && props.task?.status === 'submitted')
 const canReject = computed(() => props.isOwner && props.task?.status === 'submitted')
 

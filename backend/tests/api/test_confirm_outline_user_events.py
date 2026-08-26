@@ -36,7 +36,7 @@ async def test_confirm_outline_pushes_workbench_refresh_to_members(
     client: AsyncClient, monkeypatch
 ) -> None:
     """确认大纲后向成员+owner 频道推送 workbench_refresh（去重）."""
-    from app.services import workflow_runtime
+    from app.services.infra import workflow_runtime
 
     owner_id = uuid.uuid4()
     member_id = uuid.uuid4()

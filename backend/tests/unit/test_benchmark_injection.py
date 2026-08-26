@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from app.services.chapter_service import generate_chapter
-from app.services.prompt_loader import load_chapter_prompt
+from app.services.proposal.chapter_service import generate_chapter
+from app.services.infra.prompt_loader import load_chapter_prompt
 
 
 class TestLoadChapterPromptBenchmark:
@@ -48,7 +48,7 @@ class TestGenerateChapterInjection:
             captured["user_prompt"] = user_prompt
             return "章节内容"
 
-        with patch("app.services.chapter_service.call_llm_text", fake_llm):
+        with patch("app.services.proposal.chapter_service.call_llm_text", fake_llm):
             await generate_chapter(
                 chapter={"title": "技术方案", "sections": ["总体设计"]},
                 score_points=[],
@@ -67,7 +67,7 @@ class TestGenerateChapterInjection:
             captured["user_prompt"] = user_prompt
             return "章节内容"
 
-        with patch("app.services.chapter_service.call_llm_text", fake_llm):
+        with patch("app.services.proposal.chapter_service.call_llm_text", fake_llm):
             await generate_chapter(
                 chapter={"title": "技术方案", "sections": ["总体设计"]},
                 score_points=[],

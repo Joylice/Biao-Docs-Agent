@@ -140,8 +140,8 @@ def upload_env(monkeypatch):
         calls["index"].append((pid, did))
         return True
 
-    monkeypatch.setattr("app.services.task_service.enqueue_parse_tender", fake_enqueue_parse)
-    monkeypatch.setattr("app.services.task_service.enqueue_index_document", fake_enqueue_index)
+    monkeypatch.setattr("app.services.project.task_service.enqueue_parse_tender", fake_enqueue_parse)
+    monkeypatch.setattr("app.services.project.task_service.enqueue_index_document", fake_enqueue_index)
 
     yield {
         "user_id": user_id,
@@ -278,7 +278,7 @@ def reparse_env(monkeypatch):
     app.dependency_overrides[get_db] = lambda: session
 
     enqueue_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr("app.services.task_service.enqueue_parse_tender", enqueue_mock)
+    monkeypatch.setattr("app.services.project.task_service.enqueue_parse_tender", enqueue_mock)
     monkeypatch.setattr("app.core.audit.record", AsyncMock())
 
     yield {

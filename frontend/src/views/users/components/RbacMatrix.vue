@@ -14,17 +14,17 @@
     >
       <template #headerCell="{ column }">
         <div
-          v-if="permByCode[column.key]"
+          v-if="permByCode[String(column.key)]"
           class="rbac-col-head"
         >
           <a-tag
-            v-if="groupStartCodes.has(column.key)"
+            v-if="groupStartCodes.has(String(column.key))"
             class="rbac-col-head__tag"
           >
-            {{ categoryLabel(permByCode[column.key].category) }}
+            {{ categoryLabel(permByCode[String(column.key)].category) }}
           </a-tag>
           <div class="rbac-col-head__name">
-            {{ permByCode[column.key].name }}
+            {{ permByCode[String(column.key)].name }}
           </div>
           <div class="rbac-col-head__code">
             {{ column.key }}
@@ -43,21 +43,21 @@
         </template>
         <template v-else>
           <a-tooltip
-            v-if="lockReason(record.role, column.key)"
-            :title="lockReason(record.role, column.key)"
+            v-if="lockReason(record.role, String(column.key))"
+            :title="lockReason(record.role, String(column.key))"
           >
             <span class="rbac-check">
               <a-checkbox
-                :checked="roleCodes[record.role as UserRole].includes(column.key)"
+                :checked="roleCodes[record.role as UserRole].includes(String(column.key))"
                 disabled
               />
             </span>
           </a-tooltip>
           <a-checkbox
             v-else
-            :checked="roleCodes[record.role as UserRole].includes(column.key)"
+            :checked="roleCodes[record.role as UserRole].includes(String(column.key))"
             :disabled="savingRoles[record.role as UserRole]"
-            @change="onPermChange($event, record.role, column.key)"
+            @change="onPermChange($event, record.role, String(column.key))"
           />
         </template>
       </template>

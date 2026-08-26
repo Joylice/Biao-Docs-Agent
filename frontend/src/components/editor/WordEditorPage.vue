@@ -18,15 +18,68 @@
           {{ chapterNo }}
         </a-tag>
         <span class="word-page__chapter-title">{{ chapterTitle || '章节编辑' }}</span>
+        <a-tag
+          v-if="taskStatusText"
+          :color="taskStatusColor"
+        >
+          {{ taskStatusText }}
+        </a-tag>
+        <a-tag
+          v-if="isReadOnly"
+          color="default"
+        >
+          只读模式
+        </a-tag>
       </div>
       <div class="word-page__header-right">
+        <!-- 任务状态操作按钮 -->
+        <a-button
+          v-if="canAccept"
+          size="small"
+          type="primary"
+          :loading="accepting"
+          @click="handleAccept"
+        >
+          领取任务
+        </a-button>
+        <a-button
+          v-if="canSubmit"
+          size="small"
+          type="primary"
+          :loading="submittingTask"
+          @click="handleSubmit"
+        >
+          提交审核
+        </a-button>
+        <a-button
+          v-if="canApprove"
+          size="small"
+          :loading="approving"
+          @click="handleApprove"
+        >
+          审核通过
+        </a-button>
+        <a-button
+          v-if="canReject"
+          size="small"
+          danger
+          @click="showRejectModal = true"
+        >
+          打回
+        </a-button>
+        <a-divider
+          v-if="canAccept || canSubmit || canApprove || canReject"
+          type="vertical"
+        />
         <span
+          v-if="!isReadOnly"
           class="word-page__save-hint"
           :class="`word-page__save-hint--${saveStatus}`"
         >
           {{ saveHint }}
         </span>
         <a-button
+          v-if="!isReadOnly"
           size="small"
           type="primary"
           :loading="saveStatus === 'saving'"
@@ -35,17 +88,123 @@
         >
           保存
         </a-button>
+        <a-button
+          size="small"
+          aria-label="导出Word"
+          @click="handleExportWord"
+        >
+          <template #icon>
+            <DownloadOutlined />
+          </template>
+          导出
+        </a-button>
+        <a-button
+          size="small"
+          aria-label="打印"
+          @click="handlePrint"
+        >
+          <template #icon>
+            <PrinterOutlined />
+          </template>
+          打印
+        </a-button>
+        <a-dropdown>
+          <a-button size="small" aria-label="目录">
+            <template #icon>
+              <UnorderedListOutlined />
+            </template>
+            目录
+          </a-button>
+          <template #overlay>
+            <a-menu>
+              <a-menu-item key="insert" @click="handleInsertToc">
+                插入目录
+              </a-menu-item>
+              <a-menu-item key="update" @click="handleUpdateToc">
+                更新目录
+              </a-menu-item>
+            </a-menu>
+          </template>
+        </a-dropdown>
+        <a-button
+          size="small"
+          :type="propertiesVisible ? 'primary' : 'default'"
+          aria-label="属性面板"
+          @click="toggleProperties"
+        >
+          <template #icon>
+            <SettingOutlined />
+          </template>
+          属性
+        </a-button>
+        <a-button
+          size="small"
+          :type="commentsVisible ? 'primary' : 'default'"
+          aria-label="批注面板"
+          @click="toggleComments"
+        >
+          <template #icon>
+            <CommentOutlined />
+          </template>
+          批注
+        </a-button>
+        <a-button
+          size="small"
+          :type="versionHistoryVisible ? 'primary' : 'default'"
+          aria-label="版本历史"
+          @click="toggleVersionHistory"
+        >
+          <template #icon>
+            <HistoryOutlined />
+          </template>
+          版本
+        </a-button>
+        <a-dropdown>
+          <a-button size="small" type="primary" :loading="aiLoading" aria-label="AI 辅助">
+            <template #icon>
+              <RobotOutlined />
+            </template>
+            AI 辅助
+          </a-button>
+          <template #overlay>
+            <a-menu>
+              <a-menu-item key="polish" @click="handleAiAction('polish')">
+                <template #icon><EditOutlined /></template>
+                AI 润色（选中文字）
+              </a-menu-item>
+              <a-menu-item key="expand" @click="handleAiAction('expand')">
+                <template #icon><ExpandOutlined /></template>
+                AI 扩写（选中文字）
+              </a-menu-item>
+              <a-menu-item key="condense" @click="handleAiAction('condense')">
+                <template #icon><CompressOutlined /></template>
+                AI 缩写（选中文字）
+              </a-menu-item>
+              <a-menu-item key="translate" @click="handleAiAction('translate')">
+                <template #icon><TranslationOutlined /></template>
+                AI 翻译（选中文字）
+              </a-menu-item>
+              <a-menu-divider />
+              <a-menu-item key="autoFormat" @click="handleAutoFormat">
+                <template #icon><BgColorsOutlined /></template>
+                AI 自动排版
+              </a-menu-item>
+            </a-menu>
+          </template>
+        </a-dropdown>
       </div>
     </header>
 
-    <!-- Ribbon 工具栏（a-tabs 四选项卡） -->
+    <!-- Ribbon 工具栏（只读模式下隐藏） -->
     <WordEditorToolbar
+      v-if="!isReadOnly"
       class="word-page__toolbar"
       :editor="editorInstance"
       :project-id="projectId"
       :upload-image="uploadImage"
       @update:outline-visible="outlineVisible = $event"
       @update:zoom="zoom = $event"
+      @open-comments="toggleComments"
     />
 
     <!-- 主体：三栏布局 -->
@@ -58,6 +217,13 @@
 
       <!-- 中间：A4 纸面编辑区 + 浮动组件 -->
       <div class="word-page__editor-area">
+        <!-- 水平标尺（视图选项卡控制显隐） -->
+        <WordEditorRuler
+          v-if="rulerVisible"
+          class="word-page__ruler"
+          :editor="editorInstance"
+          @indent-change="handleRulerIndentChange"
+        />
         <a-spin
           :spinning="loading"
           wrapper-class-name="word-page__editor-spin"
@@ -66,13 +232,47 @@
             ref="editorRef"
             class="word-page__editor"
             :content="initialHtml"
-            :readonly="loading"
+            :readonly="loading || isReadOnly"
             :project-id="projectId"
             :style="{ '--paper-zoom': zoom / 100 }"
             placeholder="请输入章节内容，支持标题、列表、表格等富文本排版..."
             @update:content="handleContentUpdate"
           />
         </a-spin>
+
+        <!-- AI 辅助编写（只读模式下隐藏） -->
+        <div v-if="!isReadOnly" class="word-page__assist">
+          <a-input
+            v-model:value="assistPrompt"
+            placeholder="输入 AI 辅助指令，如：补充技术架构说明、优化语言表达..."
+            allow-clear
+            :disabled="!canEdit"
+            @press-enter="handleAssist"
+          >
+            <template #addonAfter>
+              <a-button
+                type="primary"
+                :loading="assisting"
+                :disabled="!canEdit"
+                @click="handleAssist"
+              >
+                AI 辅助
+              </a-button>
+            </template>
+          </a-input>
+          <a-radio-group
+            v-model:value="assistMode"
+            size="small"
+            :disabled="!canEdit"
+          >
+            <a-radio-button value="append">
+              追加
+            </a-radio-button>
+            <a-radio-button value="overwrite">
+              覆盖
+            </a-radio-button>
+          </a-radio-group>
+        </div>
 
         <!-- 查找替换浮动面板 -->
         <WordEditorSearchPanel
@@ -102,7 +302,30 @@
         />
       </div>
 
-      <!-- 右侧：属性面板（P2 预留，暂不渲染） -->
+      <!-- 右侧：属性面板 -->
+      <WordEditorProperties
+        v-if="propertiesVisible"
+        class="word-page__properties"
+        :editor="editorInstance"
+        @close="propertiesVisible = false"
+      />
+
+      <!-- 右侧：批注面板 -->
+      <WordEditorComments
+        v-if="commentsVisible"
+        class="word-page__comments"
+        :editor="editorInstance"
+        @close="commentsVisible = false"
+      />
+
+      <!-- 右侧：版本历史面板 -->
+      <WordEditorVersionHistory
+        v-if="versionHistoryVisible"
+        class="word-page__version"
+        :editor="editorInstance"
+        @close="versionHistoryVisible = false"
+        @restore="handleRestoreVersion"
+      />
     </div>
 
     <!-- 底部状态栏 -->
@@ -148,6 +371,22 @@
       />
     </a-modal>
 
+    <!-- 打回原因弹窗 -->
+    <a-modal
+      v-model:open="showRejectModal"
+      title="打回原因"
+      ok-text="确认打回"
+      cancel-text="取消"
+      :confirm-loading="rejectingTask"
+      @ok="handleReject"
+    >
+      <a-textarea
+        v-model:value="rejectComment"
+        :rows="4"
+        placeholder="请输入打回原因..."
+      />
+    </a-modal>
+
     <!-- 隐藏文件选择 input（右键菜单"插入图片"触发） -->
     <input
       ref="fileInputRef"
@@ -188,7 +427,7 @@
 import { ref, computed, unref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { ArrowLeftOutlined, LoadingOutlined } from '@ant-design/icons-vue'
+import { ArrowLeftOutlined, LoadingOutlined, DownloadOutlined, PrinterOutlined, UnorderedListOutlined, SettingOutlined, CommentOutlined, HistoryOutlined, RobotOutlined, EditOutlined, ExpandOutlined, CompressOutlined, TranslationOutlined, BgColorsOutlined } from '@ant-design/icons-vue'
 import type { Editor } from '@tiptap/core'
 import WordEditor from './WordEditor.vue'
 import WordEditorToolbar from './WordEditorToolbar.vue'
@@ -198,17 +437,29 @@ import WordEditorSearchPanel from './WordEditorSearchPanel.vue'
 import WordEditorTableToolbar from './WordEditorTableToolbar.vue'
 import WordEditorImageToolbar from './WordEditorImageToolbar.vue'
 import WordEditorContextMenu from './WordEditorContextMenu.vue'
-import type { SaveStatus } from './WordEditorStatusBar.vue'
-import { markdownToHtml, htmlToMarkdown } from './utils/markdown-converter'
+import WordEditorRuler from './WordEditorRuler.vue'
+import WordEditorProperties from './WordEditorProperties.vue'
+import WordEditorComments from './WordEditorComments.vue'
+import WordEditorVersionHistory from './WordEditorVersionHistory.vue'
+import { markdownToHtml } from './utils/markdown-converter'
+import { exportToWord, printDocument } from './utils/word-export'
+import { insertToc, updateToc } from './utils/toc-generator'
 import {
-  fetchChapterContent,
-  saveChapterContent,
-  fetchChapterAssignments,
+  acceptAssignment,
+  submitAssignment,
+  approveAssignment,
+  rejectAssignment,
+  assistChapter,
 } from '@/api'
-import type { AssignmentNode } from '@/types'
+import type { AssignmentItem, AssistRequest } from '@/types'
+import { currentUserId } from '@/stores/currentUser'
+import { usePermission } from '@/composables/usePermission'
 import { useHotkeys } from '@/composables/useHotkeys'
 import { useImageUpload } from '@/composables/useImageUpload'
 import { useFormatBrush } from '@/composables/useFormatBrush'
+import { useAiAssistant } from '@/composables/useAiAssistant'
+import { useChapterPersistence } from '@/composables/useChapterPersistence'
+import { useEditorPanels } from '@/composables/useEditorPanels'
 import { FONT_SIZE_OPTIONS } from './extensions/font-size'
 import { provide } from 'vue'
 
@@ -236,123 +487,301 @@ watch(
   { immediate: true },
 )
 
-/* ---------------- 加载 / 保存状态 ---------------- */
-const loading = ref(false)
-const initialHtml = ref('')
-const chapterTitle = ref('')
+/* ---------------- 任务状态（从分工树中查找当前章节） ---------------- */
+const { isProjectOwner } = usePermission()
+const projectOwnerId = ref('')
+const currentTask = ref<AssignmentItem | null>(null)
 
-/** 保存状态机：idle → saving → saved/error */
-const saveStatus = ref<SaveStatus>('idle')
-/** 是否有未保存改动（对比最近一次成功保存的 HTML） */
-const dirty = ref(false)
-const lastSavedHtml = ref('')
-/** 自动保存失败重试计数（上限 2 次） */
-const retryCount = ref(0)
+/** 路由 readonly 参数：分工页跳转时标记非本人章节为只读 */
+const routeReadonly = computed(() => route.query.readonly === '1')
 
-/* 定时器句柄 */
-let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
-let retryTimer: ReturnType<typeof setTimeout> | null = null
-
-/** 自动保存防抖时长（ms） */
-const AUTOSAVE_DEBOUNCE_MS = 2000
-/** 失败重试延迟（ms） */
-const RETRY_DELAY_MS = 1500
-/** 自动保存最大重试次数 */
-const MAX_RETRY = 2
-
-const SAVE_HINT: Record<SaveStatus, string> = {
-  idle: '有改动未保存时将自动保存',
-  saving: '保存中...',
-  saved: '已保存',
-  error: '保存失败，自动重试中...',
-}
-const saveHint = computed(() =>
-  dirty.value && saveStatus.value === 'idle' ? '待自动保存' : SAVE_HINT[saveStatus.value],
+const isOwner = computed(() => isProjectOwner(projectOwnerId.value))
+const isAssignee = computed(
+  () => !!currentTask.value && currentTask.value.assignee_id === currentUserId.value,
 )
+/**
+ * 编辑权限：
+ * - 无分工任务 → 只读（仅 owner 可看）
+ * - owner → 不可编制任何章节
+ * - assignee 且状态为 in_progress/rejected → 可编辑
+ * - 其他 → 只读
+ */
+const canEdit = computed(() => {
+  if (!currentTask.value) return false
+  if (isOwner.value) return false
+  if (isAssignee.value && ['in_progress', 'rejected'].includes(currentTask.value.status)) return true
+  return false
+})
+/** 只读模式：不可编辑 或 路由标记 readonly */
+const isReadOnly = computed(() => !canEdit.value || routeReadonly.value)
 
-/* ---------------- 内容变化 → 防抖自动保存 ---------------- */
-const handleContentUpdate = (html: string) => {
-  dirty.value = html !== lastSavedHtml.value
-  if (!dirty.value) {
-    // 内容回退到上次保存状态：取消待执行的自动保存
-    if (autoSaveTimer) {
-      clearTimeout(autoSaveTimer)
-      autoSaveTimer = null
-    }
-    return
+/* ---------------- 加载 / 保存（useChapterPersistence） ---------------- */
+const {
+  loading,
+  initialHtml,
+  chapterTitle,
+  saveStatus,
+  saveHint,
+  handleContentUpdate,
+  saveNow,
+  loadChapter,
+  handleBeforeUnload,
+  dispose: disposePersistence,
+} = useChapterPersistence({
+  projectId,
+  chapterNo,
+  getEditorHtml: () => editorRef.value?.getHTML() ?? '',
+  isReadOnly: () => isReadOnly.value,
+  onLoaded: ({ projectOwnerId: ownerId, currentTask: task }) => {
+    projectOwnerId.value = ownerId
+    currentTask.value = task
+  },
+})
+
+const taskStatusText = computed(() => {
+  const map: Record<string, string> = {
+    pending: '待领取',
+    in_progress: '编制中',
+    rejected: '被打回',
+    submitted: '已提审',
+    approved: '已通过',
   }
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  autoSaveTimer = setTimeout(() => {
-    void doSave('auto')
-  }, AUTOSAVE_DEBOUNCE_MS)
+  return map[currentTask.value?.status || ''] || ''
+})
+
+const taskStatusColor = computed(() => {
+  const map: Record<string, string> = {
+    pending: 'default',
+    in_progress: 'processing',
+    rejected: 'error',
+    submitted: 'warning',
+    approved: 'success',
+  }
+  return map[currentTask.value?.status || ''] || 'default'
+})
+
+const canAccept = computed(
+  () =>
+    isAssignee.value &&
+    currentTask.value?.status === 'pending',
+)
+const canSubmit = computed(
+  () => canEdit.value && currentTask.value?.status === 'in_progress',
+)
+const canApprove = computed(() => isOwner.value && currentTask.value?.status === 'submitted')
+const canReject = computed(() => isOwner.value && currentTask.value?.status === 'submitted')
+
+// 任务操作状态
+const accepting = ref(false)
+const submittingTask = ref(false)
+const approving = ref(false)
+const rejectingTask = ref(false)
+const showRejectModal = ref(false)
+const rejectComment = ref('')
+
+const handleAccept = async () => {
+  if (!currentTask.value) return
+  accepting.value = true
+  try {
+    await acceptAssignment(projectId, currentTask.value.id)
+    message.success('已领取任务')
+    await loadChapter()
+  } catch {
+    message.error('领取失败')
+  } finally {
+    accepting.value = false
+  }
 }
 
-/* ---------------- 保存核心逻辑 ---------------- */
-/**
- * 执行保存：getHTML → htmlToMarkdown 得 markdown，双字段提交。
- * @param source auto=自动保存（静默失败重试）；manual=手动保存（结果有提示）
- */
-const doSave = async (source: 'auto' | 'manual') => {
-  const instance = editorRef.value
-  if (!instance || loading.value || saveStatus.value === 'saving') return
-  if (!dirty.value && source === 'auto') return
-
-  saveStatus.value = 'saving'
+const handleSubmit = async () => {
+  if (!currentTask.value) return
+  await saveNow()
+  submittingTask.value = true
   try {
-    const html = instance.getHTML()
-    const markdown = htmlToMarkdown(html)
-    await saveChapterContent(projectId, chapterNo, {
-      content: markdown,
-      content_html: html,
-    })
-    lastSavedHtml.value = html
-    dirty.value = false
-    retryCount.value = 0
-    saveStatus.value = 'saved'
-    if (source === 'manual') {
-      message.success('保存成功')
+    await submitAssignment(projectId, currentTask.value.id)
+    message.success('已提交审核')
+    await loadChapter()
+  } catch {
+    message.error('提交失败')
+  } finally {
+    submittingTask.value = false
+  }
+}
+
+const handleApprove = async () => {
+  if (!currentTask.value) return
+  approving.value = true
+  try {
+    await approveAssignment(projectId, currentTask.value.id)
+    message.success('审核通过')
+    await loadChapter()
+  } catch {
+    message.error('操作失败')
+  } finally {
+    approving.value = false
+  }
+}
+
+const handleReject = async () => {
+  if (!currentTask.value) return
+  rejectingTask.value = true
+  try {
+    await rejectAssignment(projectId, currentTask.value.id, rejectComment.value || '审核不通过')
+    message.success('已打回')
+    showRejectModal.value = false
+    rejectComment.value = ''
+    await loadChapter()
+  } catch {
+    message.error('操作失败')
+  } finally {
+    rejectingTask.value = false
+  }
+}
+
+/* ---------------- AI 辅助 ---------------- */
+const assistPrompt = ref('')
+const assistMode = ref<'append' | 'overwrite'>('append')
+const assisting = ref(false)
+
+const handleAssist = async () => {
+  if (!assistPrompt.value.trim() || !chapterNo) return
+  assisting.value = true
+  try {
+    const payload: AssistRequest = {
+      chapter_no: chapterNo,
+      prompt: assistPrompt.value,
+      mode: assistMode.value,
+    }
+    const { data } = await assistChapter(projectId, payload)
+    const newContent = data.data?.content
+    if (typeof newContent === 'string') {
+      const html = markdownToHtml(newContent)
+      const inst = editorInstance.value
+      if (inst) {
+        if (assistMode.value === 'append') {
+          inst.chain().focus().insertContent(html).run()
+        } else {
+          inst.chain().focus().setContent(html).run()
+        }
+      }
+      message.success('AI 辅助完成')
+      assistPrompt.value = ''
     }
   } catch {
-    saveStatus.value = 'error'
-    if (retryCount.value < MAX_RETRY) {
-      // 自动重试：延迟后重新触发
-      retryCount.value++
-      if (retryTimer) clearTimeout(retryTimer)
-      retryTimer = setTimeout(() => {
-        void doSave(source)
-      }, RETRY_DELAY_MS)
-    } else if (source === 'manual') {
-      message.error('保存失败，请稍后重试')
-    }
+    message.error('AI 辅助失败')
+  } finally {
+    assisting.value = false
   }
 }
 
-/** 手动保存（Ctrl+S / 保存按钮）：先清掉待执行的自动保存 */
-const saveNow = () => {
-  if (autoSaveTimer) {
-    clearTimeout(autoSaveTimer)
-    autoSaveTimer = null
+/** 导出为 Word .doc 文件 */
+const handleExportWord = () => {
+  const html = editorRef.value?.getHTML() ?? ''
+  if (!html || html === '<p></p>') {
+    message.warning('文档内容为空，无法导出')
+    return
   }
-  void doSave('manual')
+  const filename = `${chapterTitle.value || chapterNo}_技术方案`
+  exportToWord(html, filename, chapterTitle.value || '技术方案', undefined, {
+    header: chapterTitle.value || '技术方案',
+    showPageNumber: true,
+    pageNumberAlign: 'center',
+  })
+  message.success('已导出 Word 文件')
 }
 
-/* ---------------- 面板显隐 / 缩放 / 弹窗状态 ---------------- */
-/** 大纲面板显隐（默认 false：P0 用户习惯先看不到，从「视图」选项卡切换） */
-const outlineVisible = ref(false)
-/** 查找替换面板显隐 */
-const searchVisible = ref(false)
-/** 查找替换面板模式 */
-const searchMode = ref<'find' | 'replace'>('find')
-/** 缩放百分比（传给 WordEditor CSS 变量与 StatusBar） */
-const zoom = ref(100)
-/** 链接插入弹窗显隐 */
-const linkModalOpen = ref(false)
-/** 链接 URL 输入值 */
-const linkUrl = ref('')
-/** 隐藏文件选择 input 的 ref */
-const fileInputRef = ref<HTMLInputElement | null>(null)
-/** 搜索查询（右键菜单"查找"选中文字 → 通过 initial-query 传给 SearchPanel） */
-const searchQuery = ref('')
+/** 打印当前文档 */
+const handlePrint = () => {
+  const html = editorRef.value?.getHTML() ?? ''
+  if (!html || html === '<p></p>') {
+    message.warning('文档内容为空，无法打印')
+    return
+  }
+  printDocument(html, chapterTitle.value || '技术方案', {
+    header: chapterTitle.value || '技术方案',
+    showPageNumber: true,
+    pageNumberAlign: 'center',
+  })
+}
+
+/** 标尺拖拽调整首行缩进 */
+const handleRulerIndentChange = (valueEm: number) => {
+  const ed = editorInstance.value
+  if (!ed) return
+  ed.chain().focus().setIndent(valueEm).run()
+}
+
+/** 插入目录 */
+const handleInsertToc = () => {
+  const ed = editorInstance.value
+  if (!ed) return
+  insertToc(ed, { title: '目录', levels: [1, 2, 3] })
+  message.success('已插入目录')
+}
+
+/** 更新目录 */
+const handleUpdateToc = () => {
+  const ed = editorInstance.value
+  if (!ed) return
+  const updated = updateToc(ed, { title: '目录', levels: [1, 2, 3] })
+  if (updated) {
+    message.success('目录已更新')
+  } else {
+    message.info('未找到目录，请先插入目录')
+  }
+}
+
+/** 恢复到指定版本 */
+const handleRestoreVersion = (content: string) => {
+  const ed = editorInstance.value
+  if (!ed) return
+  ed.chain().focus().setContent(content).run()
+  message.success('已恢复到指定版本')
+}
+
+/** AI 操作处理 */
+const handleAiAction = async (action: 'polish' | 'expand' | 'condense' | 'translate') => {
+  const selectedText = aiAssistant.getSelectedText()
+  if (!selectedText) {
+    message.warning('请先选中需要处理的文字')
+    return
+  }
+  const result = await applyAiAction(action)
+  if (result) {
+    message.success('AI 处理完成')
+  } else {
+    message.error('AI 处理失败，请稍后重试')
+  }
+}
+
+/** AI 自动排版 */
+const handleAutoFormat = () => {
+  const success = autoFormat()
+  if (success) {
+    message.success('已完成自动排版')
+  } else {
+    message.error('自动排版失败')
+  }
+}
+
+/* ---------------- 面板显隐 / 缩放 / 弹窗状态（useEditorPanels） ---------------- */
+const {
+  outlineVisible,
+  rulerVisible,
+  propertiesVisible,
+  commentsVisible,
+  versionHistoryVisible,
+  searchVisible,
+  searchMode,
+  zoom,
+  linkModalOpen,
+  linkUrl,
+  fileInputRef,
+  searchQuery,
+  toggleProperties,
+  toggleComments,
+  toggleVersionHistory,
+} = useEditorPanels()
 
 /* ---------------- 图片上传 composable ---------------- */
 const { uploadImage, uploadProgress, uploading } = useImageUpload(
@@ -362,6 +791,10 @@ const { uploadImage, uploadProgress, uploading } = useImageUpload(
 /* ---------------- 格式刷 composable（单一实例，provide 给 Toolbar） ---------------- */
 const formatBrush = useFormatBrush(editorForComposables)
 provide('formatBrush', formatBrush)
+
+/* ---------------- AI 辅助 composable ---------------- */
+const aiAssistant = useAiAssistant(() => editorInstance.value, projectId, chapterNo)
+const { loading: aiLoading, applyAiAction, autoFormat } = aiAssistant
 
 /* ---------------- 字号增减 ---------------- */
 
@@ -639,50 +1072,9 @@ watch(editorForComposables, (inst, oldInst) => {
   }
 })
 
-/* ---------------- 数据加载 ---------------- */
-
-/** 在分工树中递归查找 chapter_no 对应的标题 */
-const findChapterTitle = (nodes: AssignmentNode[], target: string): string => {
-  for (const node of nodes) {
-    if (node.chapter_no === target) return node.title
-    if (node.children?.length) {
-      const found = findChapterTitle(node.children, target)
-      if (found) return found
-    }
-  }
-  return ''
-}
-
-const loadChapter = async () => {
-  loading.value = true
-  try {
-    const [contentRes, assignmentsRes] = await Promise.all([
-      fetchChapterContent(projectId, chapterNo),
-      fetchChapterAssignments(projectId),
-    ])
-    const data = contentRes.data.data
-    // content_html 优先；缺失时将 markdown 转 HTML 供富文本编辑
-    initialHtml.value = data?.content_html || (data?.content ? markdownToHtml(data.content) : '')
-    lastSavedHtml.value = initialHtml.value
-    chapterTitle.value = findChapterTitle(assignmentsRes.data.data?.items ?? [], chapterNo)
-  } catch {
-    message.error('章节内容加载失败')
-  } finally {
-    loading.value = false
-  }
-}
-
 /* ---------------- 返回 / 生命周期 ---------------- */
 const handleBack = () => {
   void router.push({ name: 'Division', params: { projectId } })
-}
-
-/** 页面关闭/刷新时拦截未保存内容 */
-const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-  if (dirty.value) {
-    e.preventDefault()
-    e.returnValue = ''
-  }
 }
 
 onMounted(() => {
@@ -692,8 +1084,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  if (retryTimer) clearTimeout(retryTimer)
+  disposePersistence()
   // 移除格式刷 click listener
   const inst = editorForComposables.value
   if (inst && !inst.isDestroyed) {
@@ -785,6 +1176,24 @@ onBeforeUnmount(() => {
 .word-page__editor {
   flex: 1;
   min-height: 0;
+}
+
+/* AI 辅助编写区 */
+.word-page__assist {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-color);
+}
+.word-page__assist .ant-input-affix-wrapper,
+.word-page__assist .ant-input-group-wrapper {
+  flex: 1;
+}
+.word-page__assist .ant-radio-group {
+  flex: 0 0 auto;
 }
 
 /* ========== 缩放：CSS 变量 → :deep 纸面 transform ========== */

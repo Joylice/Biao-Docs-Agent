@@ -85,7 +85,7 @@ async def test_kb_search_returns_hits(client: AsyncClient, override_db, monkeypa
             }
         ]
 
-    monkeypatch.setattr("app.services.rag_service.search_materials", fake_search_materials)
+    monkeypatch.setattr("app.services.llm.rag_service.search_materials", fake_search_materials)
 
     resp = await client.get(
         f"/api/v1/projects/{PROJECT_ID}/kb/search",

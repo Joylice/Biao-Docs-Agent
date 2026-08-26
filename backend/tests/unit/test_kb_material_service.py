@@ -16,7 +16,7 @@ import pytest
 
 from app.core.exceptions import BizError, ValidationError
 from app.models.document import Document
-from app.services import kb_material_service
+from app.services.infra import kb_material_service
 
 DOC_ID = uuid.uuid4()
 KB_ID = uuid.uuid4()

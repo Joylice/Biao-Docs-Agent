@@ -15,7 +15,7 @@ from app.core.deps import get_current_user_id
 from app.core.rbac import user_permission_codes
 from app.core.response import success
 from app.schemas.auth import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse, UserOut
-from app.services import auth_service
+from app.services.infra import auth_service
 
 router = APIRouter()
 

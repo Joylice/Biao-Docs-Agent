@@ -16,9 +16,9 @@ from app.core.database import get_db
 from app.core.deps import get_current_user_id
 from app.core.exceptions import ForbiddenError
 from app.core.response import success
-from app.services import annotation_service
-from app.services.division_service import check_chapter_editable
-from app.services.project_service import _check_project_member
+from app.services.project import annotation_service
+from app.services.project.division_service import check_chapter_editable
+from app.services.project.project_service import _check_project_member
 
 router = APIRouter()
 

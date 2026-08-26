@@ -20,7 +20,7 @@
           @press-enter="reload"
         />
         <a-range-picker
-          v-model:value="filters.range"
+          v-model:value="rangeValue"
           show-time
           style="width: 360px"
         />
@@ -91,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import type { Dayjs } from 'dayjs'
 import { fetchAuditLogs } from '@/api'
@@ -128,6 +128,14 @@ const filters = reactive<{
   action: '',
   targetType: '',
   range: null,
+})
+
+/** a-range-picker v-model：外部类型 [Dayjs, Dayjs] | undefined，内部 null 表示无（转换适配） */
+const rangeValue = computed<[Dayjs, Dayjs] | undefined>({
+  get: () => filters.range ?? undefined,
+  set: (val) => {
+    filters.range = val ?? null
+  },
 })
 
 const pagination = reactive({
@@ -197,9 +205,9 @@ const formatDetail = (detail: Record<string, unknown> | null) => {
   return JSON.stringify(detail, null, 2)
 }
 
-const handleTableChange = (pag: { current: number; pageSize: number }) => {
-  pagination.current = pag.current
-  pagination.pageSize = pag.pageSize
+const handleTableChange = (pag: { current?: number; pageSize?: number }) => {
+  pagination.current = pag.current ?? 1
+  pagination.pageSize = pag.pageSize ?? 20
   fetchLogs()
 }
 

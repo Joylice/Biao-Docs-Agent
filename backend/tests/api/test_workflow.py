@@ -78,7 +78,7 @@ async def test_regenerate_outline_no_auth(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_confirm_outline_passes_edited_outline_to_resume(client, monkeypatch) -> None:
     """确认大纲携带编辑后 outline → resume payload 原样传递（不再 update_state 清 interrupt）."""
-    from app.services import workflow_runtime
+    from app.services.infra import workflow_runtime
 
     owner_id = uuid.uuid4()
     project_id = uuid.uuid4()
@@ -117,9 +117,93 @@ async def test_confirm_outline_passes_edited_outline_to_resume(client, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_confirm_outline_passes_start_generation_to_resume(client, monkeypatch) -> None:
+    """确认大纲携带 start_generation=false → resume payload 传递该标记，next_phase=division."""
+    from app.services.infra import workflow_runtime
+
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = project
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    app.dependency_overrides[get_db] = lambda: session
+
+    captured: dict = {}
+    user_events: list = []
+
+    async def fake_ensure(pid, expected_type) -> None:
+        captured["ensure"] = (pid, expected_type)
+
+    def fake_resume(pid, resume_value) -> None:
+        captured["resume"] = (pid, resume_value)
+
+    async def fake_publish_user(uid, event) -> None:
+        user_events.append((uid, event))
+
+    monkeypatch.setattr(workflow_runtime, "ensure_pending_interrupt", fake_ensure)
+    monkeypatch.setattr(workflow_runtime, "resume_workflow_in_background", fake_resume)
+    monkeypatch.setattr(workflow_runtime, "list_project_member_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.api.workflow.publish_user_event", fake_publish_user)
+
+    try:
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/workflow/confirm-outline",
+            headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+            json={"start_generation": False},
+        )
+        assert response.status_code == 200
+        _pid, resume_value = captured["resume"]
+        assert resume_value["start_generation"] is False
+        assert response.json()["data"]["next_phase"] == "division"
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_confirm_division_requires_wait_division_interrupt(client, monkeypatch) -> None:
+    """confirm-division 仅在 wait_division interrupt 挂起时可调用."""
+    from app.services.infra import workflow_runtime
+
+    owner_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    project = Project(id=project_id, name="测试项目", owner_id=owner_id)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = project
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    app.dependency_overrides[get_db] = lambda: session
+
+    captured: dict = {}
+
+    async def fake_ensure(pid, expected_type) -> None:
+        captured["ensure"] = (pid, expected_type)
+
+    def fake_resume(pid, resume_value) -> None:
+        captured["resume"] = (pid, resume_value)
+
+    monkeypatch.setattr(workflow_runtime, "ensure_pending_interrupt", fake_ensure)
+    monkeypatch.setattr(workflow_runtime, "resume_workflow_in_background", fake_resume)
+
+    try:
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/workflow/confirm-division",
+            headers={"Authorization": f"Bearer {create_access_token(str(owner_id))}"},
+        )
+        assert response.status_code == 200
+        assert captured["ensure"][1] == "wait_division"
+        _pid, resume_value = captured["resume"]
+        assert resume_value == {"confirmed": True}
+        assert response.json()["data"]["next_phase"] == "review"
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
 async def test_confirm_outline_passes_mounted_doc_ids_to_resume(client, monkeypatch) -> None:
     """mounted_doc_ids 经 resume payload 传递（字符串化 UUID 列表）."""
-    from app.services import workflow_runtime
+    from app.services.infra import workflow_runtime
 
     owner_id = uuid.uuid4()
     project_id = uuid.uuid4()
@@ -159,7 +243,7 @@ async def test_confirm_outline_passes_mounted_doc_ids_to_resume(client, monkeypa
 @pytest.mark.asyncio
 async def test_confirm_outline_passes_mounted_kb_ids_to_resume(client, monkeypatch) -> None:
     """mounted_kb_ids 经 resume payload 传递（知识库级挂载，与文档级并存）."""
-    from app.services import workflow_runtime
+    from app.services.infra import workflow_runtime
 
     owner_id = uuid.uuid4()
     project_id = uuid.uuid4()
@@ -209,7 +293,7 @@ async def test_save_section_edit_no_auth(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_save_section_edit_success(client: AsyncClient, monkeypatch) -> None:
     """PUT sections/{chapter_no}：成员校验 + 调服务 + 审计 + 显式 commit."""
-    from app.services import workflow_runtime
+    from app.services.infra import workflow_runtime
 
     owner_id = uuid.uuid4()
     project_id = uuid.uuid4()
@@ -250,7 +334,7 @@ async def test_save_section_edit_success(client: AsyncClient, monkeypatch) -> No
 async def test_save_section_edit_chapter_not_found(client: AsyncClient, monkeypatch) -> None:
     """章节不存在 → 4004."""
     from app.core.exceptions import BizError
-    from app.services import workflow_runtime
+    from app.services.infra import workflow_runtime
 
     owner_id = uuid.uuid4()
     project_id = uuid.uuid4()
@@ -371,7 +455,7 @@ async def test_outline_suggest_no_auth(client: AsyncClient) -> None:
 async def test_outline_suggest_requires_pending_interrupt(client: AsyncClient, monkeypatch) -> None:
     """非 confirm_outline 挂起态生成建议 → 4009."""
     from app.core.exceptions import BizError
-    from app.services import workflow_runtime
+    from app.services.infra import workflow_runtime
 
     owner_id = uuid.uuid4()
     project_id = uuid.uuid4()
@@ -401,7 +485,7 @@ async def test_outline_suggest_requires_pending_interrupt(client: AsyncClient, m
 @pytest.mark.asyncio
 async def test_outline_suggest_returns_suggestions(client: AsyncClient, monkeypatch) -> None:
     """生成建议：读 state 的 score_points/outline → build 建议 → 返回."""
-    from app.services import workflow_runtime
+    from app.services.infra import workflow_runtime
 
     owner_id = uuid.uuid4()
     project_id = uuid.uuid4()
@@ -428,7 +512,7 @@ async def test_outline_suggest_returns_suggestions(client: AsyncClient, monkeypa
     monkeypatch.setattr(workflow_runtime, "ensure_pending_interrupt", fake_ensure)
     monkeypatch.setattr(workflow_runtime, "get_status_dict", fake_status)
     monkeypatch.setattr(
-        "app.services.outline_suggest_service.build_outline_suggestions", fake_build
+        "app.services.proposal.outline_suggest_service.build_outline_suggestions", fake_build
     )
     try:
         response = await client.post(
@@ -448,7 +532,7 @@ async def test_outline_suggest_apply_returns_adjusted_outline(
     client: AsyncClient, monkeypatch
 ) -> None:
     """采纳建议：adopted 传递 → apply 返回调整后大纲（不写 state）."""
-    from app.services import workflow_runtime
+    from app.services.infra import workflow_runtime
 
     owner_id = uuid.uuid4()
     project_id = uuid.uuid4()
@@ -475,7 +559,7 @@ async def test_outline_suggest_apply_returns_adjusted_outline(
     monkeypatch.setattr(workflow_runtime, "ensure_pending_interrupt", fake_ensure)
     monkeypatch.setattr(workflow_runtime, "get_status_dict", fake_status)
     monkeypatch.setattr(
-        "app.services.outline_suggest_service.apply_outline_suggestions", fake_apply
+        "app.services.proposal.outline_suggest_service.apply_outline_suggestions", fake_apply
     )
     try:
         response = await client.post(
@@ -508,7 +592,7 @@ async def test_section_suggest_no_auth(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_section_suggest_returns_suggestions(client: AsyncClient, monkeypatch) -> None:
     """内容建议：读 state chapters/score_points → build → 返回（含指定章节）."""
-    from app.services import workflow_runtime
+    from app.services.infra import workflow_runtime
 
     owner_id = uuid.uuid4()
     project_id = uuid.uuid4()
@@ -531,7 +615,7 @@ async def test_section_suggest_returns_suggestions(client: AsyncClient, monkeypa
 
     monkeypatch.setattr(workflow_runtime, "get_status_dict", fake_status)
     monkeypatch.setattr(
-        "app.services.section_suggest_service.build_section_suggestions", fake_build
+        "app.services.proposal.section_suggest_service.build_section_suggestions", fake_build
     )
     try:
         response = await client.post(
@@ -553,7 +637,7 @@ async def test_section_suggest_returns_suggestions(client: AsyncClient, monkeypa
 @pytest.mark.asyncio
 async def test_start_workflow_commits_audit(client: AsyncClient, monkeypatch) -> None:
     """BUG-1：启动工作流的审计写入在响应前显式 commit."""
-    from app.services import workflow_runtime
+    from app.services.infra import workflow_runtime
 
     owner_id = uuid.uuid4()
     project_id = uuid.uuid4()
@@ -587,7 +671,7 @@ class TestRedispatchFeedback:
 
     def _env(self, monkeypatch, assignment, outline):
         import app.api.workflow as workflow_api
-        from app.services import workflow_runtime
+        from app.services.infra import workflow_runtime
 
         owner_id = uuid.uuid4()
         project_id = uuid.uuid4()

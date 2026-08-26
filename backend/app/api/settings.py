@@ -16,7 +16,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_admin_id, get_current_user_id
 from app.core.response import success
 from app.schemas.settings import LlmSettingsTestRequest, LlmSettingsUpdate
-from app.services import settings_service
+from app.services.infra import settings_service
 
 router = APIRouter()
 

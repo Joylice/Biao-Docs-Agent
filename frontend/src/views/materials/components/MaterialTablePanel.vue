@@ -97,7 +97,7 @@
             type="link"
             size="small"
             :loading="downloadingId === record.id"
-            @click="handleDownload(record)"
+            @click="handleDownload(record as Material)"
           >
             下载
           </a-button>
@@ -106,7 +106,7 @@
             <a-button
               type="link"
               size="small"
-              @click="emit('edit', record)"
+              @click="emit('edit', record as Material)"
             >
               编辑
             </a-button>
@@ -116,7 +116,7 @@
               ok-text="删除"
               cancel-text="取消"
               :ok-button-props="{ danger: true }"
-              @confirm="handleDelete(record)"
+              @confirm="handleDelete(record as Material)"
             >
               <a-button
                 type="link"
@@ -159,7 +159,7 @@ const emit = defineEmits<{
 
 const { canEditMaterial } = usePermission()
 
-const statusMeta: Record<string, { badge: string; text: string }> = {
+const statusMeta: Record<string, { badge: 'default' | 'processing' | 'success' | 'error'; text: string }> = {
   uploaded: { badge: 'default', text: '待处理' },
   indexing: { badge: 'processing', text: '索引中' },
   indexed: { badge: 'success', text: '已完成' },
@@ -260,9 +260,9 @@ const handleDelete = async (record: Material) => {
   }
 }
 
-const handleTableChange = (pag: { current: number; pageSize: number }) => {
-  pagination.current = pag.current
-  pagination.pageSize = pag.pageSize
+const handleTableChange = (pag: { current?: number; pageSize?: number }) => {
+  pagination.current = pag.current ?? 1
+  pagination.pageSize = pag.pageSize ?? 10
   fetchMaterials()
 }
 

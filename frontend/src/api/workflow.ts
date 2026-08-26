@@ -77,6 +77,12 @@ export const confirmReview = (projectId: string, data: ConfirmReviewRequest) =>
     data,
   )
 
+/** 分工编制完成确认（resume wait_division interrupt → 进入整合审阅） */
+export const confirmDivision = (projectId: string) =>
+  api.post<ApiResponse<{ next_phase?: string }>>(
+    `/projects/${projectId}/workflow/confirm-division`,
+  )
+
 /** 保存章节编辑（审阅页直接写入正式方案） */
 export const saveWorkflowSection = (projectId: string, chapterNo: string, content: string) =>
   api.put<ApiResponse<void>>(`/projects/${projectId}/workflow/sections/${chapterNo}`, { content })

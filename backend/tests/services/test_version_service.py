@@ -10,7 +10,7 @@ from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 from app.models.project import Project
 from app.models.proposal import ProposalSection, ProposalVersion
-from app.services import version_service
+from app.services.project import version_service
 
 
 def _scalar_result(value: object) -> MagicMock:

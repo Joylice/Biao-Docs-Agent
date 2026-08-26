@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user_id
 from app.core.response import success
-from app.services import workbench_service
+from app.services.project import workbench_service
 
 router = APIRouter()
 

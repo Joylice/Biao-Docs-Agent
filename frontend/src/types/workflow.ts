@@ -51,6 +51,8 @@ export interface ConfirmOutlineRequest {
   outline: OutlineItem[]
   mounted_doc_ids?: string[] | null
   mounted_kb_ids?: string[] | null
+  /** 2026-08-25：是否确认后自动批量生成章节；false（默认）由分工驱动编制 */
+  start_generation?: boolean
 }
 
 /** 审阅确认请求（通过 / 章节反馈重写） */

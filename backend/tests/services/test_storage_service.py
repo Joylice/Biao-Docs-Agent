@@ -3,7 +3,7 @@
 import pytest
 
 from app.core.config import settings
-from app.services import storage_service
+from app.services.document import storage_service
 
 
 def test_presigned_url_rewrites_host_to_public_endpoint(monkeypatch) -> None:

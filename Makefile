@@ -1,4 +1,4 @@
-.PHONY: check security-check test lint format type-check eval
+.PHONY: check security-check test lint format type-check eval migrate dev dev-backend dev-frontend docker-up docker-down docker-build test-coverage-gates
 
 # ── 一键自检（CI 本地等价物） ──
 check: lint type-check test
@@ -11,18 +11,19 @@ lint:
 # ── 类型检查 ──
 type-check:
 	cd backend && mypy app
+	cd frontend && pnpm vue-tsc --noEmit
 
 # ── 测试 + 覆盖率 ──
 test:
 	cd backend && pytest tests --cov=app --cov-report=term-missing --cov-fail-under=70 -q
 
-# ── 关键模块覆盖率门禁 ──
+# ── 关键模块覆盖率门禁（R1 重构后按 services 子域分组路径） ──
 test-coverage-gates:
-	cd backend && pytest tests/services --cov=app.services.parse_service  --cov-fail-under=80 -q
-	cd backend && pytest tests/services --cov=app.services.rag_service    --cov-fail-under=80 -q
-	cd backend && pytest tests/services --cov=app.services.export_service --cov-fail-under=80 -q
-	cd backend && pytest tests/unit    --cov=app.core.redact             --cov-fail-under=80 -q
-	cd backend && pytest tests/agents  --cov=app.agents.graph            --cov-fail-under=80 -q
+	cd backend && pytest tests/services --cov=app.services.document.parse_service  --cov-fail-under=80 -q
+	cd backend && pytest tests/services --cov=app.services.llm.rag_service         --cov-fail-under=80 -q
+	cd backend && pytest tests/services --cov=app.services.document.export_service --cov-fail-under=80 -q
+	cd backend && pytest tests/unit    --cov=app.core.redact                      --cov-fail-under=80 -q
+	cd backend && pytest tests/agents  --cov=app.agents.graph                     --cov-fail-under=80 -q
 
 # ── 安全扫描 ──
 security-check:
@@ -42,6 +43,8 @@ migrate:
 	cd backend && alembic upgrade head
 
 # ── 开发服务器 ──
+dev: dev-backend dev-frontend
+
 dev-backend:
 	cd backend && uvicorn app.main:app --reload --port 8000
 
@@ -54,3 +57,6 @@ docker-up:
 
 docker-down:
 	docker compose -f deploy/docker-compose.yml down
+
+docker-build:
+	docker compose -f deploy/docker-compose.yml build

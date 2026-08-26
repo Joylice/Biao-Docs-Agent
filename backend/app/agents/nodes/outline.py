@@ -24,14 +24,78 @@ async def _upsert_skeleton(db, project_id: str, tree: list[dict]) -> None:
     await db.flush()
 
 
+# 资格/商务类需求关键词：招标原文提取（source=NULL）的需求中含资质/业绩/财务等
+# 资格条件内容，不属于技术方案应答范围，大纲生成时排除（2026-08-25）
+_QUALIFICATION_KEYWORDS = (
+    "资质",
+    "业绩",
+    "财务",
+    "信誉",
+    "注册证书",
+    "职称",
+    "证书",
+    "许可证",
+    "保证金",
+    "投标报价",
+    "合同金额",
+    # 人员资格类（负责人/工程师/建造师等岗位配置要求）
+    "负责人",
+    "工程师",
+    "建造师",
+    "项目总工",
+    "项目经理",
+    "人员配备",
+    "组织机构",
+    "岗位",
+)
+
+
+def _is_qualification_req(desc: str) -> bool:
+    """判断技术需求是否为资格/商务/人员配置类（命中关键词）."""
+    if not desc:
+        return False
+    return any(kw in desc for kw in _QUALIFICATION_KEYWORDS)
+
+
+async def _load_outline_inputs(
+    project_id: str, state: dict
+) -> tuple[list[dict], list[dict]]:
+    """从 DB 重新读取大纲输入（评分点严格过滤 + 排除资格类需求）.
+
+    2026-08-25 严格模式修复：regenerate 路径复用 checkpointer 旧 state（可能含
+    未确认评分点/资格需求），此处改为每次重新读 DB——评分点仅 confirmed=true；
+    技术需求排除资质/业绩/财务/信誉/证书类（保留 sp_derived 关联需求与纯技术通用需求）。
+    DB 读取失败时降级用 state 原值（不阻塞生成）。
+    """
+    if not project_id:
+        return state.get("score_points", []), state.get("tech_requirements", [])
+    try:
+
+        async with _pkg.async_session_factory() as db:
+            _, _, sps, trs, _ = await _pkg._load_tender_context(db, project_id)
+        # 排除资格/商务类技术需求（保留关联评分点的 sp_derived 与纯技术通用需求）
+        trs = [tr for tr in trs if not _is_qualification_req(tr.get("description", ""))]
+        return sps, trs
+    except Exception:
+        logger.warning("重新读取大纲输入失败，降级用 state 值")
+        return state.get("score_points", []), state.get("tech_requirements", [])
+
+
 async def generate_outline_node(state: dict) -> dict:
-    """节点：生成大纲 — 基于评分点和技术需求，落库 proposal_skeletons."""
-    from app.services.llm_service import call_llm_with_schema
-    from app.services.prompt_loader import load_outline_prompt
+    """节点：生成大纲 — 基于评分点和技术需求，落库 proposal_skeletons.
+
+    2026-08-25 严格模式修复：评分点/技术需求不再信任 state 中的旧值（工作流启动时
+    读入，regenerate 路径可能复用严格模式上线前的全量数据），改为每次重新从 DB 读取：
+    - 评分点仅取 confirmed=true（与技术需求梳理对齐，未确认评分点不进大纲）
+    - 技术需求排除资格/商务类（资质/业绩/财务/信誉/人员证书，source=NULL 招标原文提取），
+      避免"企业资质与业绩""人员配置"等非技术章节混入大纲
+    """
+    from app.services.infra.prompt_loader import load_outline_prompt
+    from app.services.llm.llm_service import call_llm_with_schema
 
     project_id = state.get("project_id", "")
-    score_points = state.get("score_points", [])
-    tech_requirements = state.get("tech_requirements", [])
+    # 从 DB 重新读取（严格过滤 + 排除资格需求）；读失败降级用 state 值
+    score_points, tech_requirements = await _load_outline_inputs(project_id, state)
 
     # 阶段6：注入项目上下文（名称/招标编号/行业）；查询失败降级不阻塞生成
     project_name = tender_no = industry = ""
@@ -126,9 +190,11 @@ async def confirm_outline_node(state: dict) -> dict:
     """节点：HITL — 等待人工确认大纲（支持二次编辑与 action=regenerate 重新生成）.
 
     resume 值：
-    - True / {"confirmed": True} → 确认大纲，进入章节生成
+    - True / {"confirmed": True} → 确认大纲，进入章节生成（缺省 start_generation=True）
+    - {"confirmed": True, "start_generation": False} → 确认后停靠「待分工」
+      （wait_division interrupt），章节内容由分工页编制，审核通过后回写正式方案
     - {"confirmed": True, "outline": [...]} → 采用前端二次编辑后的大纲
-      （替换 state.outline 并落库 proposal_skeletons），随后进入章节生成
+      （替换 state.outline 并落库 proposal_skeletons），随后进入章节生成/待分工
     - {"confirmed": True, "mounted_doc_ids": [...]} → 资料库挂载配置写入 state
       （None=项目全量 / []=不挂载 / 列表=指定文档）
     - {"action": "regenerate"} → 用最新提示词重新生成大纲（复用 generate_outline_node
@@ -174,13 +240,19 @@ async def confirm_outline_node(state: dict) -> dict:
                 "current_phase": "outline",
                 "regenerate_requested": False,
             }
+        # 2026-08-25：start_generation 缺省 True 保持旧行为（测试直接 resume True 兼容）
+        start_generation = (
+            decision.get("start_generation", True)
+            if isinstance(decision, dict)
+            else True
+        )
         # 确认成功：清除二次编辑草稿（独立 DB 写；防陈旧草稿下次误恢复）
         async with _pkg.async_session_factory() as db:
             await _pkg._clear_outline_draft(db, state.get("project_id", ""))
             await db.commit()
         updates: dict = {
-            "current_phase": "generate",
-            "progress": 0.4,
+            "current_phase": "generate" if start_generation else "division",
+            "progress": 0.4 if start_generation else 0.45,
             "validate_retries": 0,
             "outline": state.get("outline", []),
             "regenerate_requested": False,

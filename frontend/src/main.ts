@@ -1,7 +1,6 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import piniaPluginPersistedState from 'pinia-plugin-persistedstate'
-import Antd from 'ant-design-vue'
 import 'ant-design-vue/dist/reset.css'
 
 import App from './App.vue'
@@ -21,7 +20,8 @@ pinia.use(piniaPluginPersistedState)
 
 app.use(pinia)
 app.use(router)
-app.use(Antd)
+// 注意：antd 组件按需引入由 unplugin-vue-components 自动解析（vite.config.ts），
+// 此处不再全量 app.use(Antd)。message/Modal 等静态方法需在使用处显式 import。
 
 // 初始化 UI store（应用主题）
 const uiStore = useUiStore(pinia)

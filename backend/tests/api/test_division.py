@@ -274,7 +274,7 @@ class TestAssistGenerate:
         self, client: AsyncClient, override_db, monkeypatch
     ) -> None:
         """assignee 辅助生成：委托 assist_service，返回内容与 stopped 标记 + 审计."""
-        from app.services import assist_service
+        from app.services.project import assist_service
 
         assignment = _assignment("in_progress")
         session = override_db([])
@@ -338,7 +338,7 @@ class TestAssistGenerate:
         self, client: AsyncClient, override_db, monkeypatch
     ) -> None:
         """stop 端点：置位取消令牌，返回 stopped=True."""
-        from app.services import assist_service
+        from app.services.project import assist_service
 
         assignment = _assignment("in_progress")
         session = override_db([])
@@ -355,7 +355,7 @@ class TestAssistGenerate:
         self, client: AsyncClient, override_db, monkeypatch
     ) -> None:
         """无进行中任务 → stopped=False（幂等）."""
-        from app.services import assist_service
+        from app.services.project import assist_service
 
         assignment = _assignment("in_progress")
         session = override_db([])
@@ -489,6 +489,89 @@ class TestReviewAssignment:
         )
         assert resp.status_code == 400
         assert resp.json()["code"] == 4000
+
+    @pytest.mark.asyncio
+    async def test_review_approve_with_content_syncs_to_workflow(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """审核通过且内容非空 → 分工内容回写工作流正式方案（sync_approved_chapter）."""
+        assignment = _assignment("submitted")
+        assignment.content = "# 分工编制内容\n\n负责人编制的内容。\n" * 10
+        assignment.content_html = "<h1>分工编制内容</h1>"
+
+        session = override_db([])
+        session.execute.side_effect = [
+            _result(_project()),  # get_current_owner_id
+            _result(assignment),  # get_assignment
+            _result(_project()),  # 审核通过 → 自动快照钩子加载项目
+        ]
+
+        published: list = []
+        synced: dict = {}
+
+        async def fake_publish(pid, event):
+            published.append(event)
+
+        async def fake_sync(db, pid, chapter_no, content, content_html=None):
+            synced["chapter_no"] = chapter_no
+            synced["content"] = content
+            synced["content_html"] = content_html
+
+        auto_snapshot = AsyncMock(return_value=None)
+        monkeypatch.setattr(division_api, "publish_event", fake_publish)
+        monkeypatch.setattr(division_api.version_service, "maybe_auto_snapshot", auto_snapshot)
+        monkeypatch.setattr(
+            division_api.workflow_runtime, "sync_approved_chapter", fake_sync
+        )
+
+        resp = await client.post(
+            f"{_url()}/{assignment.id}/review",
+            headers=_headers(OWNER_ID),
+            json={"action": "approved", "comment": ""},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["status"] == "approved"
+        assert synced["chapter_no"] == "1"
+        assert "分工编制内容" in synced["content"]
+        assert synced["content_html"] == "<h1>分工编制内容</h1>"
+
+    @pytest.mark.asyncio
+    async def test_review_approve_without_content_skips_sync(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """审核通过但内容为空 → 不回写正式方案（避免空内容覆盖既有内容）."""
+        assignment = _assignment("submitted")  # content 默认空
+        session = override_db([])
+        session.execute.side_effect = [
+            _result(_project()),
+            _result(assignment),
+            _result(_project()),
+        ]
+
+        published: list = []
+        sync_called = False
+
+        async def fake_publish(pid, event):
+            published.append(event)
+
+        async def fake_sync(*args, **kwargs):
+            nonlocal sync_called
+            sync_called = True
+
+        auto_snapshot = AsyncMock(return_value=None)
+        monkeypatch.setattr(division_api, "publish_event", fake_publish)
+        monkeypatch.setattr(division_api.version_service, "maybe_auto_snapshot", auto_snapshot)
+        monkeypatch.setattr(
+            division_api.workflow_runtime, "sync_approved_chapter", fake_sync
+        )
+
+        resp = await client.post(
+            f"{_url()}/{assignment.id}/review",
+            headers=_headers(OWNER_ID),
+            json={"action": "approved", "comment": ""},
+        )
+        assert resp.status_code == 200
+        assert sync_called is False, "内容为空时不应回写正式方案"
 
 
 class TestAnnotations:

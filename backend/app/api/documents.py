@@ -28,10 +28,12 @@ from app.schemas.document import (
     ScorePointUpdate,
     TechRequirementOut,
 )
-from app.services import disqualification_service as dq_service  # 废标条款服务（阶段 H）
-from app.services import document_service, rag_service, task_service
-from app.services.project_service import _check_project_member
-from app.services.storage_service import download_file, presigned_url, upload_file
+from app.services.document import document_service
+from app.services.document.storage_service import download_file, presigned_url, upload_file
+from app.services.llm import rag_service
+from app.services.project import task_service
+from app.services.project.project_service import _check_project_member
+from app.services.proposal import disqualification_service as dq_service  # 废标条款服务（阶段 H）
 
 router = APIRouter()
 
@@ -373,7 +375,10 @@ async def update_disqualification_clauses(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """人工编辑废标条款：清洗后删旧插新幂等覆盖（阶段 H）."""
-    from app.services.disqualification_service import normalize_risk_category, normalize_severity
+    from app.services.proposal.disqualification_service import (
+        normalize_risk_category,
+        normalize_severity,
+    )
 
     await _check_project_member(db, project_id, user_id)
     doc = await document_service.load_tender_doc_for_format(db, project_id, document_id)

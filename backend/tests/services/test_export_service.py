@@ -12,7 +12,7 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.shared import Pt, Twips
 
-import app.services.export_service as export_service
+import app.services.document.export_service as export_service
 from app.core.exceptions import BizError
 
 OUTLINE = [{"chapter_no": "1", "title": "项目概述"}]

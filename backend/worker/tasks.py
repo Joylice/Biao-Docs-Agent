@@ -15,12 +15,12 @@ async def task_parse_tender(
     """
     from app.core.database import async_session_factory
     from app.models.document import Document
-    from app.services.parse_service import (
+    from app.services.document.parse_service import (
         extract_tender_text,
         parse_tender_with_llm,
         save_parse_result,
     )
-    from app.services.storage_service import download_file
+    from app.services.document.storage_service import download_file
 
     logger.info(f"开始解析招标文件: project={project_id}, doc={doc_id}")
 
@@ -98,13 +98,13 @@ async def task_index_document(ctx: dict, project_id: str, doc_id: str) -> dict:
     """异步任务：文档向量化入库（RAG 索引）."""
     from app.core.database import async_session_factory
     from app.models.document import Document
-    from app.services.parse_service import extract_tender_text
-    from app.services.rag_service import (
+    from app.services.document.parse_service import extract_tender_text
+    from app.services.document.storage_service import download_file
+    from app.services.llm.rag_service import (
         chunk_text,
         embed_and_store,
         get_embeddings_batch,
     )
-    from app.services.storage_service import download_file
 
     logger.info(f"开始向量化入库: project={project_id}, doc={doc_id}")
 
@@ -147,9 +147,27 @@ async def task_index_document(ctx: dict, project_id: str, doc_id: str) -> dict:
 
 
 async def task_generate_chapters(ctx: dict, project_id: str) -> dict:
-    """异步任务：逐章生成方案内容."""
-    logger.info(f"开始章节生成: project={project_id}")
+    """异步任务：启动 LangGraph 章节生成工作流.
 
-    # TODO: 接入 LangGraph workflow 执行
-    # 目前由 workflow API 同步处理
-    return {"status": "success", "message": "章节生成任务已提交"}
+    将章节生成委托给 workflow_runtime，由 LangGraph 12 节点状态图处理：
+    parse_tender -> confirm_score_points -> generate_outline -> confirm_outline
+    -> retrieve -> write -> validate -> consistency_check -> integrate
+    -> review -> rewrite -> export
+
+    并发控制：workflow_runtime.start_workflow_in_background 内部维护
+    _running set 防止同一 project 并发执行。此处幂等——已有运行中工作流时直接返回。
+    """
+    import uuid
+
+    from app.services.infra.workflow_runtime import start_workflow_in_background
+
+    logger.info(f"开始章节生成工作流: project={project_id}")
+    try:
+        pid = uuid.UUID(project_id)
+        await start_workflow_in_background(pid)
+        return {"status": "success", "message": "章节生成工作流已启动"}
+    except ValueError:
+        return {"status": "error", "message": f"无效的项目 ID: {project_id}"}
+    except Exception as e:
+        logger.error(f"章节生成工作流启动失败: {e}")
+        return {"status": "error", "message": str(e)}

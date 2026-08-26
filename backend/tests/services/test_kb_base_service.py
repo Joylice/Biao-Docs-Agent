@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.models.project import ProjectMember
-from app.services import kb_base_service
+from app.services.infra import kb_base_service
 
 
 def _rows_result(rows: list) -> MagicMock:

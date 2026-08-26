@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.core.config import settings
 from app.main import app
-from app.services import workflow_runtime
+from app.services.infra import workflow_runtime
 
 # 测试环境无 PostgreSQL：缩短 checkpointer 连接池等待，避免 TestClient lifespan 阻塞 30s；
 # Windows ProactorEventLoop 下 psycopg 不可用，直接短路初始化避免连接重试噪音

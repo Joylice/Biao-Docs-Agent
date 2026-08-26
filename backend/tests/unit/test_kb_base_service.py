@@ -19,7 +19,7 @@ from app.core.exceptions import BizError, ForbiddenError, NotFoundError
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 from app.models.project import Project
-from app.services import kb_base_service
+from app.services.infra import kb_base_service
 
 USER_ID = uuid.uuid4()
 OTHER_ID = uuid.uuid4()

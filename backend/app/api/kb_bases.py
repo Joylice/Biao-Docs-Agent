@@ -20,7 +20,8 @@ from app.core.database import get_db
 from app.core.deps import get_current_user_id
 from app.core.response import paginated, success
 from app.schemas.document import DocumentListOut
-from app.services import kb_base_service, kb_material_service, storage_service
+from app.services.document import storage_service
+from app.services.infra import kb_base_service, kb_material_service
 
 router = APIRouter()
 

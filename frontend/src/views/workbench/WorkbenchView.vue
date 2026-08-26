@@ -15,7 +15,7 @@
         <template #action>
           <a-button
             type="primary"
-            @click="fetchSummary"
+            @click="() => fetchSummary()"
           >
             重试
           </a-button>
@@ -142,7 +142,7 @@
                     size="small"
                   />
                   <a-space
-                    size="4"
+                    :size="4"
                     wrap
                     class="workbench__project-dist"
                   >

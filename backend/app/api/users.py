@@ -34,7 +34,7 @@ from app.schemas.user import (
     UserListOut,
     UserUpdateIn,
 )
-from app.services import user_service
+from app.services.infra import user_service
 
 router = APIRouter()
 

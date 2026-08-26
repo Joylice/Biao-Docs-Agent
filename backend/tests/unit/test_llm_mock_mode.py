@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from app.core.config import settings
-from app.services.llm_service import _MOCK_TEXT, call_llm_text, call_llm_with_schema
-from app.services.rag_service import get_embedding, get_embeddings_batch
+from app.services.llm.llm_service import _MOCK_TEXT, call_llm_text, call_llm_with_schema
+from app.services.llm.rag_service import get_embedding, get_embeddings_batch
 
 PARSE_RESPONSE_FORMAT = {
     "type": "json_schema",

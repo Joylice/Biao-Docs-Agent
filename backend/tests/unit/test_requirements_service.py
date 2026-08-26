@@ -38,7 +38,7 @@ def _clause_key(sp: ScorePoint) -> str:
 
 class TestBuildRequirementRows:
     def test_matched_row_gets_sp_id_and_sp_derived_source(self) -> None:
-        from app.services.requirements_service import build_requirement_rows
+        from app.services.proposal.requirements_service import build_requirement_rows
 
         sp = _sp("2.2.2(1)", "技术方案")
         rows = build_requirement_rows(
@@ -63,7 +63,7 @@ class TestBuildRequirementRows:
         assert rows[0]["is_mandatory"] is True
 
     def test_unmatched_row_gets_null_sp_and_tender_source(self) -> None:
-        from app.services.requirements_service import build_requirement_rows
+        from app.services.proposal.requirements_service import build_requirement_rows
 
         sp = _sp("2.2.2(1)", "技术方案")
         fallback_doc = uuid.uuid4()
@@ -79,7 +79,7 @@ class TestBuildRequirementRows:
         assert rows[0]["doc_id"] == fallback_doc
 
     def test_seq_continues_from_start(self) -> None:
-        from app.services.requirements_service import build_requirement_rows
+        from app.services.proposal.requirements_service import build_requirement_rows
 
         sp = _sp("1.1", "项A")
         rows = build_requirement_rows(
@@ -95,7 +95,7 @@ class TestBuildRequirementRows:
         assert [r["seq"] for r in rows] == [6, 7]
 
     def test_blank_description_skipped(self) -> None:
-        from app.services.requirements_service import build_requirement_rows
+        from app.services.proposal.requirements_service import build_requirement_rows
 
         sp = _sp("1.1", "项A")
         rows = build_requirement_rows(
@@ -108,7 +108,7 @@ class TestBuildRequirementRows:
         assert rows == []
 
     def test_sp_clause_whitespace_normalized(self) -> None:
-        from app.services.requirements_service import build_requirement_rows
+        from app.services.proposal.requirements_service import build_requirement_rows
 
         sp = _sp("4.2.1", "平台功能")
         rows = build_requirement_rows(
@@ -122,7 +122,7 @@ class TestBuildRequirementRows:
 
     def test_duplicate_clause_no_maps_to_distinct_points(self) -> None:
         """真实招标文件同一 clause_no 下存在多个评分项，映射不得互相覆盖."""
-        from app.services.requirements_service import build_requirement_rows
+        from app.services.proposal.requirements_service import build_requirement_rows
 
         sp_a = _sp("2.2.2(1)", "总体施工组织布置及规划")
         sp_b = _sp("2.2.2(1)", "承包人项目管理方案")
@@ -142,7 +142,7 @@ class TestBuildRequirementRows:
 
     def test_clause_no_multi_candidate_item_substring_match(self) -> None:
         """LLM 仅写条款号且该条款号下多个评分项时，description 含评分项名则尽力匹配."""
-        from app.services.requirements_service import build_requirement_rows
+        from app.services.proposal.requirements_service import build_requirement_rows
 
         sp_a = _sp("2.2.2(1)", "总体施工组织布置及规划")
         sp_b = _sp("2.2.2(1)", "承包人项目管理方案")
@@ -165,7 +165,7 @@ class TestBuildRequirementRows:
 
     def test_clause_no_multi_candidate_no_item_match_keeps_tender(self) -> None:
         """条款号多候选且 description 不含任一评分项名：保守降级为通用需求（不误配）."""
-        from app.services.requirements_service import build_requirement_rows
+        from app.services.proposal.requirements_service import build_requirement_rows
 
         sp_a = _sp("2.2.2(1)", "总体施工组织布置及规划")
         sp_b = _sp("2.2.2(1)", "承包人项目管理方案")
@@ -223,13 +223,13 @@ def _gen_env(monkeypatch, sps: list[ScorePoint], max_seq: int = 0, llm=None):
         else _llm_result([])
     )
     llm_mock = AsyncMock(return_value=llm or default_llm)
-    monkeypatch.setattr("app.services.llm_service.call_llm_with_schema", llm_mock)
+    monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", llm_mock)
     return session, llm_mock
 
 
 @pytest.mark.asyncio
 async def test_generate_uses_confirmed_points_when_ids_omitted(monkeypatch) -> None:
-    from app.services import requirements_service
+    from app.services.proposal import requirements_service
 
     sps = [_sp("2.2.2(1)", "技术方案", confirmed=True)]
     session, llm_mock = _gen_env(monkeypatch, sps)
@@ -249,7 +249,7 @@ async def test_generate_uses_confirmed_points_when_ids_omitted(monkeypatch) -> N
 
 @pytest.mark.asyncio
 async def test_generate_idempotent_deletes_previous_sp_derived(monkeypatch) -> None:
-    from app.services import requirements_service
+    from app.services.proposal import requirements_service
 
     sps = [_sp("1.1", "项A")]
     session, _ = _gen_env(monkeypatch, sps)
@@ -271,7 +271,7 @@ async def test_generate_idempotent_deletes_previous_sp_derived(monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_generate_idempotent_cleans_unmatched_tender_rows(monkeypatch) -> None:
     """未匹配需求（source='tender'）也随下次 generate 清理，防重复生成积累."""
-    from app.services import requirements_service
+    from app.services.proposal import requirements_service
 
     sps = [_sp("1.1", "项A")]
     session, _ = _gen_env(monkeypatch, sps)
@@ -290,7 +290,7 @@ async def test_generate_idempotent_cleans_unmatched_tender_rows(monkeypatch) -> 
 
 @pytest.mark.asyncio
 async def test_generate_persists_rows_with_mapping(monkeypatch) -> None:
-    from app.services import requirements_service
+    from app.services.proposal import requirements_service
 
     sps = [_sp("1.1", "项A")]
     session, _ = _gen_env(monkeypatch, sps, max_seq=5)
@@ -307,7 +307,7 @@ async def test_generate_persists_rows_with_mapping(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_generate_no_confirmed_points_raises(monkeypatch) -> None:
-    from app.services import requirements_service
+    from app.services.proposal import requirements_service
 
     session, llm_mock = _gen_env(monkeypatch, [])
 
@@ -319,7 +319,7 @@ async def test_generate_no_confirmed_points_raises(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_generate_explicit_ids_missing_raises(monkeypatch) -> None:
-    from app.services import requirements_service
+    from app.services.proposal import requirements_service
 
     sps = [_sp("1.1", "项A")]
     session, llm_mock = _gen_env(monkeypatch, sps)
@@ -336,12 +336,12 @@ async def test_generate_explicit_ids_missing_raises(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_generate_mock_mode_deterministic(monkeypatch) -> None:
     """mock 模式走 call_llm_with_schema 确定性降级（不 patch LLM，走真实 mock 分支）."""
-    from app.services import requirements_service
+    from app.services.proposal import requirements_service
 
     async def _mock_enabled(_mock=None):
         return True
 
-    monkeypatch.setattr("app.services.settings_service.is_mock_enabled", _mock_enabled)
+    monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _mock_enabled)
 
     sps = [_sp("1.1", "项A")]
     session = AsyncMock()
@@ -367,7 +367,7 @@ async def test_generate_mock_mode_deterministic(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_list_requirements_only_mapped_filters() -> None:
-    from app.services import requirements_service
+    from app.services.proposal import requirements_service
 
     session = AsyncMock()
     rows = []
@@ -385,8 +385,27 @@ async def test_list_requirements_only_mapped_filters() -> None:
 
 
 def test_load_requirements_prompt_injects_score_points_json() -> None:
-    from app.services.prompt_loader import load_requirements_prompt
+    from app.services.infra.prompt_loader import load_requirements_prompt
 
     system_prompt, user_prompt = load_requirements_prompt('[{"clause_no": "4.2.1"}]')
     assert system_prompt
     assert "4.2.1" in user_prompt
+
+
+def test_requirements_prompt_criteria_as_core_analysis() -> None:
+    """技术需求提示词：以选定评分点为核心、评分标准为分析依据（2026-08-25 优化）."""
+    from app.services.infra.prompt_loader import load_requirements_prompt
+
+    system_prompt, user_prompt = load_requirements_prompt('[{"clause_no": "4.2.1"}]')
+    # 评分点为核心主线
+    assert "评分点" in system_prompt and "核心" in system_prompt, (
+        "system_prompt 应明确以评分点为核心"
+    )
+    # 评分标准（criteria）是最直接分析来源，逐条拆解为评审要点
+    assert "评分标准" in system_prompt, "system_prompt 应明确评分标准为分析依据"
+    assert "评审要点" in system_prompt, "system_prompt 应要求逐条拆解评审标准"
+    assert "量化指标" in system_prompt, "system_prompt 应保留评分标准中的量化指标"
+    # user_prompt 引导按评分标准逐条分析
+    assert "criteria" in user_prompt or "评分标准" in user_prompt, (
+        "user_prompt 应提示按评分标准逐条分析"
+    )

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services import event_service
+from app.services.infra import event_service
 
 
 def test_user_event_channel_naming() -> None:

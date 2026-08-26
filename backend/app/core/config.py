@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     app_name: str = "投标软件技术方案智能体"
     debug: bool = False
     api_prefix: str = "/api/v1"
+    # CORS 允许的前端来源（逗号分隔的环境变量，如 "http://localhost:5173,http://localhost:3000"）
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
     # ── 数据库 ──
     database_url: str = "postgresql+psycopg://bid:bid@localhost:5432/bid"

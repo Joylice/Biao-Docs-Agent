@@ -18,8 +18,8 @@ from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.exceptions import ValidationError as BizValidationError
 from app.models.llm_settings import LlmSetting
 from app.schemas.settings import LlmSettingsUpdate
-from app.services import settings_service
-from app.services.settings_service import (
+from app.services.infra import settings_service
+from app.services.infra.settings_service import (
     RuntimeLlmConfig,
     get_runtime_config,
     get_settings_view,
@@ -45,12 +45,16 @@ def _row(
     dashscope: str | None = None,
     base: str | None = None,
     llm_mock: bool = False,
+    embedding_model: str | None = None,
+    embedding_key: str | None = None,
 ) -> LlmSetting:
     return LlmSetting(
         id=uuid.uuid4(),
         deepseek_api_key_enc=encrypt_secret(deepseek) if deepseek else None,
         dashscope_api_key_enc=encrypt_secret(dashscope) if dashscope else None,
         embedding_api_base=base,
+        embedding_model=embedding_model,
+        embedding_api_key_enc=encrypt_secret(embedding_key) if embedding_key else None,
         llm_mock=llm_mock,
     )
 
@@ -102,6 +106,8 @@ class TestLlmSettingModel:
             "deepseek_api_key_enc",
             "dashscope_api_key_enc",
             "embedding_api_base",
+            "embedding_model",
+            "embedding_api_key_enc",
             "llm_mock",
             "updated_at",
         ):
@@ -112,6 +118,8 @@ class TestLlmSettingModel:
         assert LlmSetting.__table__.c.deepseek_api_key_enc.nullable is True
         assert LlmSetting.__table__.c.dashscope_api_key_enc.nullable is True
         assert LlmSetting.__table__.c.embedding_api_base.nullable is True
+        assert LlmSetting.__table__.c.embedding_model.nullable is True
+        assert LlmSetting.__table__.c.embedding_api_key_enc.nullable is True
 
 
 class TestMaskSecret:
@@ -130,7 +138,7 @@ class TestGetSettingsView:
     """GET 视图：脱敏 + configured 标志."""
 
     async def test_view_when_no_row(self, monkeypatch) -> None:
-        """未配置过：密钥为空串、configured=False，base/mock 展示 env 生效值."""
+        """未配置过：密钥为空串、configured=False，base/model/mock 展示 env 生效值."""
         monkeypatch.setattr(settings, "llm_mock", False)
         session = AsyncMock()
         session.execute.return_value = _result(None)
@@ -139,28 +147,39 @@ class TestGetSettingsView:
 
         assert view["deepseek_api_key"] == ""
         assert view["dashscope_api_key"] == ""
+        assert view["embedding_api_key"] == ""
         assert view["deepseek_configured"] is False
         assert view["dashscope_configured"] is False
+        assert view["embedding_configured"] is False
         assert view["embedding_api_base"] == settings.embedding_api_base
+        assert view["embedding_model"] == settings.embedding_model
         assert view["llm_mock"] is False
 
     async def test_view_masks_configured_keys(self) -> None:
         """已配置：密钥脱敏为 sk-****后4位，configured=True."""
         session = AsyncMock()
         session.execute.return_value = _result(
-            _row(deepseek="sk-deepseek1234", dashscope="sk-dash5678", base="http://emb:1/v1")
+            _row(
+                deepseek="sk-deepseek1234", dashscope="sk-dash5678",
+                base="http://emb:1/v1", embedding_model="bge-m3",
+                embedding_key="sk-embkey9999",
+            )
         )
 
         view = await get_settings_view(session)
 
         assert view["deepseek_api_key"] == "sk-****1234"
         assert view["dashscope_api_key"] == "sk-****5678"
+        assert view["embedding_api_key"] == "sk-****9999"
         assert view["deepseek_configured"] is True
         assert view["dashscope_configured"] is True
+        assert view["embedding_configured"] is True
         assert view["embedding_api_base"] == "http://emb:1/v1"
+        assert view["embedding_model"] == "bge-m3"
         # 安全门禁：视图任何字段不得含密钥明文
         assert "sk-deepseek1234" not in str(view)
         assert "sk-dash5678" not in str(view)
+        assert "sk-embkey9999" not in str(view)
 
     async def test_view_partial_configured(self) -> None:
         """仅配置 deepseek：dashscope_configured=False."""
@@ -177,11 +196,13 @@ class TestGetSettingsView:
 class TestUpdateLlmSettings:
     """PUT upsert：密钥三态（None=保持/""=清除/非空=更新）、加密入库、变更字段清单."""
 
-    def _payload(self, deepseek=None, dashscope=None, base="", llm_mock=False):
+    def _payload(self, deepseek=None, dashscope=None, base="", llm_mock=False, embedding_model="", embedding_api_key=None):
         return LlmSettingsUpdate(
             deepseek_api_key=deepseek,
             dashscope_api_key=dashscope,
             embedding_api_base=base,
+            embedding_model=embedding_model,
+            embedding_api_key=embedding_api_key,
             llm_mock=llm_mock,
         )
 
@@ -191,7 +212,7 @@ class TestUpdateLlmSettings:
 
         changed = await update_llm_settings(
             session,
-            self._payload(deepseek="sk-new-key", base="http://emb:2/v1", llm_mock=True),
+            self._payload(deepseek="sk-new-key", base="http://emb:2/v1", llm_mock=True, embedding_model="bge-m3"),
         )
 
         assert session.flushed is True
@@ -202,12 +223,13 @@ class TestUpdateLlmSettings:
         assert decrypt_secret(row.deepseek_api_key_enc) == "sk-new-key"
         assert row.dashscope_api_key_enc is None  # 未提供 = 未配置
         assert row.embedding_api_base == "http://emb:2/v1"
+        assert row.embedding_model == "bge-m3"
         assert row.llm_mock is True
-        assert set(changed) == {"deepseek_api_key", "embedding_api_base", "llm_mock"}
+        assert set(changed) == {"deepseek_api_key", "embedding_api_base", "embedding_model", "llm_mock"}
 
     async def test_empty_string_clears_key(self) -> None:
         """空串清除已有密钥（列置 NULL）."""
-        existing = _row(deepseek="sk-old", dashscope="sk-old2", base="http://old/v1")
+        existing = _row(deepseek="sk-old", dashscope="sk-old2", base="http://old/v1", embedding_model="old-model")
         session = _FakeSession(row=existing)
 
         changed = await update_llm_settings(session, self._payload(deepseek="", dashscope=""))
@@ -215,16 +237,17 @@ class TestUpdateLlmSettings:
         assert existing.deepseek_api_key_enc is None
         assert existing.dashscope_api_key_enc is None
         assert existing.embedding_api_base is None
-        assert set(changed) == {"deepseek_api_key", "dashscope_api_key", "embedding_api_base"}
+        assert existing.embedding_model is None
+        assert set(changed) == {"deepseek_api_key", "dashscope_api_key", "embedding_api_base", "embedding_model"}
 
     async def test_none_keeps_existing_keys(self) -> None:
         """W-5 三态：None（省略）→ 保持原密文不变，且不进 changed."""
-        existing = _row(deepseek="sk-keep", dashscope="sk-keep2", base="http://emb/v1")
+        existing = _row(deepseek="sk-keep", dashscope="sk-keep2", base="http://emb/v1", embedding_model="bge-m3")
         before_deepseek = existing.deepseek_api_key_enc
         before_dashscope = existing.dashscope_api_key_enc
         session = _FakeSession(row=existing)
 
-        changed = await update_llm_settings(session, self._payload(base="http://emb/v1"))
+        changed = await update_llm_settings(session, self._payload(base="http://emb/v1", embedding_model="bge-m3"))
 
         assert existing.deepseek_api_key_enc == before_deepseek
         assert existing.dashscope_api_key_enc == before_dashscope
@@ -233,12 +256,12 @@ class TestUpdateLlmSettings:
 
     async def test_empty_clears_but_none_keeps_other(self) -> None:
         """混合三态：deepseek=""（清除）而 dashscope=None（保持）."""
-        existing = _row(deepseek="sk-old", dashscope="sk-stay", base="http://emb/v1")
+        existing = _row(deepseek="sk-old", dashscope="sk-stay", base="http://emb/v1", embedding_model="bge-m3")
         before_dashscope = existing.dashscope_api_key_enc
         session = _FakeSession(row=existing)
 
         changed = await update_llm_settings(
-            session, self._payload(deepseek="", base="http://emb/v1")
+            session, self._payload(deepseek="", base="http://emb/v1", embedding_model="bge-m3")
         )
 
         assert existing.deepseek_api_key_enc is None
@@ -247,12 +270,12 @@ class TestUpdateLlmSettings:
 
     async def test_unchanged_values_not_in_changed(self) -> None:
         """重复提交相同值：changed 为空."""
-        existing = _row(deepseek="sk-same", base="http://emb/v1", llm_mock=True)
+        existing = _row(deepseek="sk-same", base="http://emb/v1", llm_mock=True, embedding_model="bge-m3")
         session = _FakeSession(row=existing)
 
         changed = await update_llm_settings(
             session,
-            self._payload(deepseek="sk-same", base="http://emb/v1", llm_mock=True),
+            self._payload(deepseek="sk-same", base="http://emb/v1", llm_mock=True, embedding_model="bge-m3"),
         )
 
         assert changed == []
@@ -344,7 +367,7 @@ class TestValidateEmbeddingApiBase:
         """PUT 路径集成：upsert 对非空 base 执行 SSRF 校验."""
         monkeypatch.setattr(settings, "debug", False)
         session = _FakeSession(row=None)
-        payload = LlmSettingsUpdate(embedding_api_base="http://localhost:11434/v1", llm_mock=False)
+        payload = LlmSettingsUpdate(embedding_api_base="http://localhost:11434/v1", embedding_model="bge-m3", llm_mock=False)
         with pytest.raises(BizValidationError):
             await update_llm_settings(session, payload)
         assert session.flushed is False
@@ -375,7 +398,11 @@ class TestGetRuntimeConfig:
     async def test_reads_row_from_db(self, monkeypatch) -> None:
         session = AsyncMock()
         session.execute.return_value = _result(
-            _row(deepseek="sk-ds", dashscope="sk-qw", base="http://emb:9/v1", llm_mock=True)
+            _row(
+                deepseek="sk-ds", dashscope="sk-qw",
+                base="http://emb:9/v1", llm_mock=True,
+                embedding_model="bge-m3", embedding_key="sk-emb",
+            )
         )
 
         @asynccontextmanager
@@ -390,6 +417,8 @@ class TestGetRuntimeConfig:
         assert cfg.deepseek_api_key == "sk-ds"
         assert cfg.dashscope_api_key == "sk-qw"
         assert cfg.embedding_api_base == "http://emb:9/v1"
+        assert cfg.embedding_model == "bge-m3"
+        assert cfg.embedding_api_key == "sk-emb"
         assert cfg.llm_mock is True
 
     async def test_no_row_returns_none(self, monkeypatch) -> None:
@@ -520,7 +549,7 @@ class TestConnection:
         assert "auth failed" in result["error"]
 
     async def test_embedding_success(self, fake_litellm, monkeypatch) -> None:
-        """DashScope 云端 embedding：库内 dashscope key 作为 api_key 传入."""
+        """Embedding 调用成功：库内 embedding key 优先、model/base 从 cfg 读取."""
         monkeypatch.setattr(settings, "llm_mock", False)
         monkeypatch.setattr(settings, "embedding_model", "dashscope/text-embedding-v3")
         fake_litellm.aembedding = AsyncMock(
@@ -529,7 +558,9 @@ class TestConnection:
 
         async def fake_cfg():
             return RuntimeLlmConfig(
-                embedding_api_base="http://emb:1/v1", dashscope_api_key="sk-emb"
+                embedding_api_base="http://emb:1/v1",
+                embedding_model="bge-m3",
+                embedding_api_key="sk-emb",
             )
 
         monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
@@ -538,6 +569,8 @@ class TestConnection:
 
         assert result == {"ok": True, "dimension": 4}
         kwargs = fake_litellm.aembedding.call_args.kwargs
+        # 无前缀模型名自动补 openai_like/（容错逻辑）
+        assert kwargs["model"] == "openai_like/bge-m3"
         assert kwargs["api_base"] == "http://emb:1/v1"
         assert kwargs["input"] == ["测试"]
         assert kwargs["api_key"] == "sk-emb"
@@ -558,7 +591,7 @@ class TestConnection:
         )
 
         async def fake_cfg():
-            return RuntimeLlmConfig(embedding_api_base="http://emb:1/v1")
+            return RuntimeLlmConfig(embedding_api_base="http://emb:1/v1", embedding_model="bge-m3")
 
         monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
 
@@ -567,6 +600,30 @@ class TestConnection:
         assert result["ok"] is True
         kwargs = fake_litellm.aembedding.call_args.kwargs
         assert "api_key" not in kwargs
+        # 无前缀模型名自动补 openai_like/（容错逻辑）
+        assert kwargs["model"] == "openai_like/bge-m3"
+
+    async def test_embedding_with_prefix_kept_unchanged(self, fake_litellm, monkeypatch) -> None:
+        """带 provider 前缀的模型名原样透传，不做改写."""
+        monkeypatch.setattr(settings, "llm_mock", False)
+        fake_litellm.aembedding = AsyncMock(
+            return_value=SimpleNamespace(data=[{"embedding": [0.1, 0.2, 0.3, 0.4]}])
+        )
+
+        async def fake_cfg():
+            return RuntimeLlmConfig(
+                embedding_api_base="http://emb:1/v1",
+                embedding_model="dashscope/text-embedding-v3",
+                dashscope_api_key="sk-dash",
+            )
+
+        monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
+
+        result = await run_connection_test("embedding")
+
+        assert result["ok"] is True
+        kwargs = fake_litellm.aembedding.call_args.kwargs
+        assert kwargs["model"] == "dashscope/text-embedding-v3"  # 前缀不被改写
 
     async def test_embedding_failure_returns_ok_false(self, fake_litellm, monkeypatch) -> None:
         monkeypatch.setattr(settings, "llm_mock", False)

@@ -12,12 +12,15 @@ class LlmSettingsUpdate(BaseModel):
     - ""（空字符串）= 清除该项
     - 非空 = 更新（服务端拒收疑似脱敏串，S-1）
 
-    embedding_api_base / llm_mock 保持必填全量（"" = 清除 base 回退 env）。
+    embedding_api_base / embedding_model / llm_mock 保持必填全量（"" = 清除 base/model 回退 env）。
+    embedding_api_key 走密钥三态（与 deepseek/dashscope 一致）。
     """
 
     deepseek_api_key: str | None = None
     dashscope_api_key: str | None = None
     embedding_api_base: str
+    embedding_model: str
+    embedding_api_key: str | None = None
     llm_mock: bool
 
 

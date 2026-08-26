@@ -76,8 +76,8 @@ class TestKbSearch:
         hit = SimpleNamespace(content="素材内容", page_no=2, score=0.9)
         with (
             patch.object(tools.settings_service, "is_mock_enabled", AsyncMock(return_value=False)),
-            patch("app.services.rag_service.get_embedding", AsyncMock(return_value=object())),
-            patch("app.services.rag_service.retrieve_with_rerank", AsyncMock(return_value=[hit])),
+            patch("app.services.llm.rag_service.get_embedding", AsyncMock(return_value=object())),
+            patch("app.services.llm.rag_service.retrieve_with_rerank", AsyncMock(return_value=[hit])),
             patch.object(tools, "async_session_factory", lambda: FakeDB([])),
         ):
             rows = await tools.kb_search(PROJECT_ID, "q")
@@ -165,7 +165,7 @@ class TestPreflightAndRecheck:
             }
         ]
         with patch(
-            "app.services.llm_service.chat_with_tools",
+            "app.services.llm.llm_service.chat_with_tools",
             AsyncMock(return_value=("无需补充", calls)),
         ):
             ctx = await tools.write_tool_preflight(PROJECT_ID, "总体架构", "基础素材")
@@ -174,7 +174,7 @@ class TestPreflightAndRecheck:
     @pytest.mark.asyncio
     async def test_preflight_no_calls_returns_base(self) -> None:
         with patch(
-            "app.services.llm_service.chat_with_tools", AsyncMock(return_value=("无需补充", []))
+            "app.services.llm.llm_service.chat_with_tools", AsyncMock(return_value=("无需补充", []))
         ):
             ctx = await tools.write_tool_preflight(PROJECT_ID, "总体架构", "基础素材")
         assert ctx == "基础素材"
@@ -183,7 +183,7 @@ class TestPreflightAndRecheck:
     async def test_recheck_keeps_confirmed_issues(self) -> None:
         issues = ["字数不足（10 < 200）", "误报问题"]
         with patch(
-            "app.services.llm_service.chat_with_tools",
+            "app.services.llm.llm_service.chat_with_tools",
             AsyncMock(return_value=('{"keep": ["字数不足（10 < 200）"]}', [])),
         ):
             kept = await tools.validate_tool_recheck(PROJECT_ID, "1", "正文", issues, [])
@@ -193,7 +193,7 @@ class TestPreflightAndRecheck:
     async def test_recheck_invalid_json_keeps_all(self) -> None:
         issues = ["问题A"]
         with patch(
-            "app.services.llm_service.chat_with_tools", AsyncMock(return_value=("解析不了", []))
+            "app.services.llm.llm_service.chat_with_tools", AsyncMock(return_value=("解析不了", []))
         ):
             kept = await tools.validate_tool_recheck(PROJECT_ID, "1", "正文", issues, [])
         assert kept == issues

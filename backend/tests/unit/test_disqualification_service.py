@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services import disqualification_service as dq
+from app.services.proposal import disqualification_service as dq
 
 
 def _clause(

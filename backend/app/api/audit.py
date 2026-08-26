@@ -10,7 +10,7 @@ from app.core import audit
 from app.core.database import get_db
 from app.core.deps import get_current_admin_id
 from app.core.response import paginated
-from app.services import audit_service
+from app.services.infra import audit_service
 
 router = APIRouter()
 

@@ -23,6 +23,8 @@ class LlmSetting(Base):
     deepseek_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
     dashscope_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
     embedding_api_base: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    embedding_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
     llm_mock: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
