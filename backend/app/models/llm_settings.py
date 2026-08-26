@@ -22,6 +22,10 @@ class LlmSetting(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     deepseek_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
     dashscope_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # 自定义 LLM 主模型（运行时覆盖 env llm_model；可带 provider 前缀，无前缀自动补 openai_like/）
+    llm_model: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # 自定义 LLM OpenAI 兼容服务地址（http/https；无 key 端点可留空 api_key）
+    llm_api_base: Mapped[str | None] = mapped_column(String(512), nullable=True)
     embedding_api_base: Mapped[str | None] = mapped_column(String(512), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(256), nullable=True)
     embedding_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)

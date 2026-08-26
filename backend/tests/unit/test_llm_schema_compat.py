@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.core.config import settings as app_settings
 from app.services.llm.llm_service import call_llm_with_schema
 
 _JSON_SCHEMA_FORMAT = {
@@ -37,8 +38,9 @@ async def _false(mock: bool | None = None) -> bool:
     return False
 
 
-async def _no_key(_model: str) -> dict:
-    return {}
+async def _no_runtime_config():
+    """无库内配置 → resolve_llm_target 回退 env 且不注入 api_key."""
+    return None
 
 
 @pytest.fixture
@@ -54,7 +56,9 @@ def real_mode(monkeypatch):
     mock_litellm.acompletion = fake_acompletion
     monkeypatch.setitem(sys.modules, "litellm", mock_litellm)
     monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _false)
-    monkeypatch.setattr("app.services.llm.llm_service._api_key_kwargs", _no_key)
+    monkeypatch.setattr(
+        "app.services.infra.settings_service.get_runtime_config", _no_runtime_config
+    )
     return captured
 
 
@@ -63,7 +67,7 @@ class TestDeepseekJsonSchemaDowngrade:
 
     @pytest.mark.asyncio
     async def test_downgrades_to_json_object(self, real_mode, monkeypatch) -> None:
-        monkeypatch.setattr("app.services.llm.llm_service.settings.llm_model", "deepseek/deepseek-chat")
+        monkeypatch.setattr(app_settings, "llm_model", "deepseek/deepseek-chat")
         result = await call_llm_with_schema(
             "s", "u", response_format=_JSON_SCHEMA_FORMAT, mock=False
         )
@@ -74,7 +78,7 @@ class TestDeepseekJsonSchemaDowngrade:
     async def test_schema_constraint_injected_into_system_prompt(
         self, real_mode, monkeypatch
     ) -> None:
-        monkeypatch.setattr("app.services.llm.llm_service.settings.llm_model", "deepseek/deepseek-chat")
+        monkeypatch.setattr(app_settings, "llm_model", "deepseek/deepseek-chat")
         await call_llm_with_schema(
             "orig-system", "u", response_format=_JSON_SCHEMA_FORMAT, mock=False
         )
@@ -85,7 +89,7 @@ class TestDeepseekJsonSchemaDowngrade:
     @pytest.mark.asyncio
     async def test_json_object_format_passthrough(self, real_mode, monkeypatch) -> None:
         """已是 json_object 的格式不做改动."""
-        monkeypatch.setattr("app.services.llm.llm_service.settings.llm_model", "deepseek/deepseek-chat")
+        monkeypatch.setattr(app_settings, "llm_model", "deepseek/deepseek-chat")
         await call_llm_with_schema("s", "u", response_format={"type": "json_object"}, mock=False)
         assert real_mode["response_format"] == {"type": "json_object"}
 
@@ -95,6 +99,6 @@ class TestNonDeepseekKeepsJsonSchema:
 
     @pytest.mark.asyncio
     async def test_keeps_json_schema(self, real_mode, monkeypatch) -> None:
-        monkeypatch.setattr("app.services.llm.llm_service.settings.llm_model", "qwen/qwen-plus")
+        monkeypatch.setattr(app_settings, "llm_model", "qwen/qwen-plus")
         await call_llm_with_schema("s", "u", response_format=_JSON_SCHEMA_FORMAT, mock=False)
         assert real_mode["response_format"] == _JSON_SCHEMA_FORMAT

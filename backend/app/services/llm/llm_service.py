@@ -9,7 +9,6 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
-from app.core.config import settings
 from app.core.exceptions import LLMServiceError
 from app.core.redact import redact
 from app.services.infra import settings_service
@@ -55,15 +54,6 @@ def _mock_schema_response(response_format: dict | None) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-async def _api_key_kwargs(model: str) -> dict[str, Any]:
-    """库内密钥优先：模型前缀命中页面配置的密钥则作为 api_key 传入，否则回退 env."""
-    cfg = await settings_service.get_runtime_config()
-    if cfg is None:
-        return {}
-    api_key = cfg.api_key_for(model)
-    return {"api_key": api_key} if api_key else {}
-
-
 def _compat_response_format(
     model: str, response_format: dict | None, system_prompt: str
 ) -> tuple[dict | None, str]:
@@ -98,8 +88,9 @@ async def call_llm_with_schema(
     try:
         from litellm import acompletion
 
+        model, _api_base, llm_kwargs = await settings_service.resolve_llm_target()
         response_format, system_prompt = _compat_response_format(
-            settings.llm_model, response_format, system_prompt
+            model, response_format, system_prompt
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -107,13 +98,13 @@ async def call_llm_with_schema(
         ]
 
         kwargs = {
-            "model": settings.llm_model,
+            "model": model,
             "messages": messages,
             "temperature": 0.1,
+            **llm_kwargs,
         }
         if response_format:
             kwargs["response_format"] = response_format
-        kwargs.update(await _api_key_kwargs(settings.llm_model))
 
         response = await acompletion(**kwargs)
         content = response.choices[0].message.content
@@ -138,16 +129,17 @@ async def call_llm_text(
     try:
         from litellm import acompletion
 
+        model, _api_base, llm_kwargs = await settings_service.resolve_llm_target()
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
         response = await acompletion(
-            model=settings.llm_model,
+            model=model,
             messages=messages,
             temperature=temperature,
-            **await _api_key_kwargs(settings.llm_model),
+            **llm_kwargs,
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -179,6 +171,7 @@ async def chat_with_tools(
     try:
         from litellm import acompletion
 
+        model, _api_base, llm_kwargs = await settings_service.resolve_llm_target()
         messages: list[Any] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -186,11 +179,11 @@ async def chat_with_tools(
         calls: list[dict] = []
         for _ in range(max_rounds):
             response = await acompletion(
-                model=settings.llm_model,
+                model=model,
                 messages=messages,
                 tools=tools,
                 temperature=temperature,
-                **await _api_key_kwargs(settings.llm_model),
+                **llm_kwargs,
             )
             message = response.choices[0].message
             tool_calls = getattr(message, "tool_calls", None)
@@ -212,10 +205,10 @@ async def chat_with_tools(
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
         # 轮数耗尽：不带 tools 收敛最终答复
         response = await acompletion(
-            model=settings.llm_model,
+            model=model,
             messages=messages,
             temperature=temperature,
-            **await _api_key_kwargs(settings.llm_model),
+            **llm_kwargs,
         )
         return (response.choices[0].message.content or ""), calls
     except Exception as e:
@@ -249,17 +242,18 @@ async def call_llm_stream(
     try:
         from litellm import acompletion
 
+        model, _api_base, llm_kwargs = await settings_service.resolve_llm_target()
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
         response = await acompletion(
-            model=settings.llm_model,
+            model=model,
             messages=messages,
             temperature=temperature,
             stream=True,
-            **await _api_key_kwargs(settings.llm_model),
+            **llm_kwargs,
         )
         async for chunk in response:
             if stop_event is not None and stop_event.is_set():

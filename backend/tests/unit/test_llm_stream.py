@@ -54,10 +54,12 @@ class TestStreamRealMode:
         monkeypatch.setitem(sys.modules, "litellm", mock_litellm)
         monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _false)
 
-        async def no_key_kwargs(_model: str) -> dict:
-            return {}
+        async def no_runtime_config():
+            return None
 
-        monkeypatch.setattr("app.services.llm.llm_service._api_key_kwargs", no_key_kwargs)
+        monkeypatch.setattr(
+            "app.services.infra.settings_service.get_runtime_config", no_runtime_config
+        )
 
         chunks = [c async for c in call_llm_stream("s", "u", mock=False)]
         assert chunks == ["你好", "，世界"]

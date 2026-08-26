@@ -210,7 +210,11 @@ async def test_put_by_non_admin_rejected_403(
     resp = await client.put(
         "/api/v1/settings/llm",
         headers=auth_headers,
-        json={"embedding_api_base": "http://emb:11434/v1", "embedding_model": "bge-m3", "llm_mock": False},
+        json={
+            "embedding_api_base": "http://emb:11434/v1",
+            "embedding_model": "bge-m3",
+            "llm_mock": False,
+        },
     )
 
     assert resp.status_code == 403
@@ -249,7 +253,11 @@ async def test_admin_list_empty_rejected_with_hint(
     resp = await client.put(
         "/api/v1/settings/llm",
         headers=admin_headers,
-        json={"embedding_api_base": "http://emb:11434/v1", "embedding_model": "bge-m3", "llm_mock": False},
+        json={
+            "embedding_api_base": "http://emb:11434/v1",
+            "embedding_model": "bge-m3",
+            "llm_mock": False,
+        },
     )
 
     assert resp.status_code == 403
@@ -391,7 +399,11 @@ async def test_put_llm_settings_omitted_keys_kept(
     resp = await client.put(
         "/api/v1/settings/llm",
         headers=admin_headers,
-        json={"embedding_api_base": "http://emb/v1", "embedding_model": "bge-m3", "llm_mock": False},
+        json={
+            "embedding_api_base": "http://emb/v1",
+            "embedding_model": "bge-m3",
+            "llm_mock": False,
+        },
     )
 
     assert resp.status_code == 200
@@ -448,7 +460,11 @@ async def test_put_private_embedding_base_rejected(
     resp = await client.put(
         "/api/v1/settings/llm",
         headers=admin_headers,
-        json={"embedding_api_base": "http://192.168.1.10/v1", "embedding_model": "bge-m3", "llm_mock": False},
+        json={
+            "embedding_api_base": "http://192.168.1.10/v1",
+            "embedding_model": "bge-m3",
+            "llm_mock": False,
+        },
     )
 
     assert resp.status_code == 400
@@ -468,13 +484,129 @@ async def test_put_invalidates_runtime_cache_only_after_commit(
     resp = await client.put(
         "/api/v1/settings/llm",
         headers=admin_headers,
-        json={"embedding_api_base": "http://emb:11434/v1", "embedding_model": "bge-m3", "llm_mock": False},
+        json={
+            "embedding_api_base": "http://emb:11434/v1",
+            "embedding_model": "bge-m3",
+            "llm_mock": False,
+        },
     )
 
     assert resp.status_code == 200
     assert session.committed is True
     assert session.cache_alive_at_commit is True  # commit 之前缓存仍有效
     assert settings_service._runtime_cache is None  # commit 之后失效
+
+
+# ── 自定义 LLM 端点（llm_model / llm_api_base）──
+
+
+@pytest.mark.asyncio
+async def test_put_custom_llm_model_and_base(
+    client: AsyncClient, override_db, admin_headers: dict[str, str]
+) -> None:
+    """新增大模型：llm_model + llm_api_base 入库（明文，非密钥）."""
+    session = _FakeSettingsSession(row=None, user=_admin_user())
+    override_db(session)
+
+    resp = await client.put(
+        "/api/v1/settings/llm",
+        headers=admin_headers,
+        json={
+            "embedding_api_base": "http://emb:11434/v1",
+            "embedding_model": "bge-m3",
+            "llm_mock": False,
+            "llm_model": "qwen72b",
+            "llm_api_base": "http://123.249.37.244:7778/v1",
+        },
+    )
+
+    assert resp.status_code == 200
+    row = session.row
+    assert row is not None
+    assert row.llm_model == "qwen72b"
+    assert row.llm_api_base == "http://123.249.37.244:7778/v1"
+
+
+@pytest.mark.asyncio
+async def test_put_private_llm_base_rejected(
+    client: AsyncClient, override_db, admin_headers: dict[str, str]
+) -> None:
+    """SSRF 防护：llm_api_base 指向私网 → 400 / code 4000."""
+    session = _FakeSettingsSession(row=None, user=_admin_user())
+    override_db(session)
+
+    resp = await client.put(
+        "/api/v1/settings/llm",
+        headers=admin_headers,
+        json={
+            "embedding_api_base": "http://emb:11434/v1",
+            "embedding_model": "bge-m3",
+            "llm_mock": False,
+            "llm_model": "qwen72b",
+            "llm_api_base": "http://10.0.0.5/v1",
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["code"] == 4000
+    assert session.committed is False
+
+
+@pytest.mark.asyncio
+async def test_get_llm_settings_shows_custom_model(
+    client: AsyncClient, override_db, auth_headers: dict[str, str]
+) -> None:
+    """GET 回显自定义模型与地址（明文）."""
+    session = AsyncMock()
+    session.execute.return_value = _result(
+        LlmSetting(
+            id=uuid.uuid4(),
+            llm_model="qwen72b",
+            llm_api_base="http://123.249.37.244:7778/v1",
+            llm_mock=False,
+        )
+    )
+    override_db(session)
+
+    resp = await client.get("/api/v1/settings/llm", headers=auth_headers)
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["llm_model"] == "qwen72b"
+    assert data["llm_api_base"] == "http://123.249.37.244:7778/v1"
+
+
+@pytest.mark.asyncio
+async def test_test_llm_custom_endpoint_without_key(
+    client: AsyncClient,
+    override_db,
+    admin_headers: dict[str, str],
+    fake_litellm,
+    monkeypatch,
+) -> None:
+    """自定义端点（无 key）：acompletion 收到 openai/qwen72b、api_base 与 EMPTY 占位 key."""
+    override_db(_admin_session_mock())
+    _patch_cfg(
+        monkeypatch,
+        RuntimeLlmConfig(llm_model="qwen72b", llm_api_base="http://123.249.37.244:7778/v1"),
+    )
+    fake_litellm.acompletion = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="pong"))]
+        )
+    )
+
+    resp = await client.post(
+        "/api/v1/settings/llm/test", headers=admin_headers, json={"target": "llm"}
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()["data"]
+    assert body["ok"] is True
+    assert body["model"] == "openai/qwen72b"
+    call_kwargs = fake_litellm.acompletion.call_args.kwargs
+    assert call_kwargs["api_base"] == "http://123.249.37.244:7778/v1"
+    assert call_kwargs["api_key"] == "EMPTY"
 
 
 # ── POST /settings/llm/test（管理员）──

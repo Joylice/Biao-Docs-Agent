@@ -54,6 +54,8 @@ class RuntimeLlmConfig:
 
     deepseek_api_key: str | None = None
     dashscope_api_key: str | None = None
+    llm_model: str | None = None
+    llm_api_base: str | None = None
     embedding_api_base: str | None = None
     embedding_model: str | None = None
     embedding_api_key: str | None = None
@@ -81,8 +83,8 @@ def invalidate_runtime_cache() -> None:
     _runtime_cache = None
 
 
-def validate_embedding_api_base(url: str) -> None:
-    """SSRF 防护：校验 embedding_api_base 不得指向内网/本机目标.
+def _validate_api_base(url: str, field: str) -> None:
+    """SSRF 防护公共实现：校验 http(s) 地址不得指向内网/本机目标.
 
     规则（两档）：
     - 仅允许 http/https scheme；
@@ -96,7 +98,7 @@ def validate_embedding_api_base(url: str) -> None:
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise ValidationError("embedding_api_base 必须为合法的 http/https 地址")
+        raise ValidationError(f"{field} 必须为合法的 http/https 地址")
 
     host = parsed.hostname
     try:
@@ -105,7 +107,7 @@ def validate_embedding_api_base(url: str) -> None:
         lowered = host.lower()
         is_local = lowered in _LOCAL_HOSTNAMES or lowered.endswith(".localhost")
         if is_local and not settings.debug:
-            raise ValidationError("embedding_api_base 不允许指向 localhost（本机目标）") from None
+            raise ValidationError(f"{field} 不允许指向 localhost（本机目标）") from None
         return  # 普通域名：放行（DNS rebinding 残余风险见 docstring）
 
     if settings.debug and ip.is_loopback:
@@ -118,7 +120,17 @@ def validate_embedding_api_base(url: str) -> None:
         or ip.is_reserved
         or ip.is_multicast
     ):
-        raise ValidationError("embedding_api_base 不允许指向内网/本机地址")
+        raise ValidationError(f"{field} 不允许指向内网/本机地址")
+
+
+def validate_embedding_api_base(url: str) -> None:
+    """SSRF 防护：校验 embedding_api_base 不得指向内网/本机目标."""
+    _validate_api_base(url, "embedding_api_base")
+
+
+def validate_llm_api_base(url: str) -> None:
+    """SSRF 防护：校验 llm_api_base 不得指向内网/本机目标."""
+    _validate_api_base(url, "llm_api_base")
 
 
 def _decrypt_or_empty(token: str | None) -> str:
@@ -154,6 +166,8 @@ async def get_settings_view(db: AsyncSession) -> dict[str, Any]:
         return {
             "deepseek_api_key": "",
             "dashscope_api_key": "",
+            "llm_model": settings.llm_model,
+            "llm_api_base": "",
             "embedding_api_base": settings.embedding_api_base,
             "embedding_model": settings.embedding_model,
             "embedding_api_key": "",
@@ -168,6 +182,8 @@ async def get_settings_view(db: AsyncSession) -> dict[str, Any]:
     return {
         "deepseek_api_key": mask_secret(deepseek),
         "dashscope_api_key": mask_secret(dashscope),
+        "llm_model": row.llm_model or settings.llm_model,
+        "llm_api_base": row.llm_api_base or "",
         "embedding_api_base": row.embedding_api_base or settings.embedding_api_base,
         "embedding_model": row.embedding_model or settings.embedding_model,
         "embedding_api_key": mask_secret(embedding_key),
@@ -206,6 +222,22 @@ async def update_llm_settings(db: AsyncSession, payload: LlmSettingsUpdate) -> l
         if new_dashscope != _decrypt_or_empty(row.dashscope_api_key_enc):
             changed.append("dashscope_api_key")
         row.dashscope_api_key_enc = encrypt_secret(new_dashscope) if new_dashscope else None
+
+    # 自定义 LLM 主模型（三态：None=保持、""=清除回退 env、非空=更新）
+    if payload.llm_model is not None:
+        new_llm_model = payload.llm_model.strip() or None
+        if new_llm_model != row.llm_model:
+            changed.append("llm_model")
+        row.llm_model = new_llm_model
+
+    # 自定义 LLM 服务地址（三态；非空做 SSRF 校验）
+    if payload.llm_api_base is not None:
+        new_llm_base = payload.llm_api_base.strip() or None
+        if new_llm_base:
+            validate_llm_api_base(new_llm_base)
+        if new_llm_base != row.llm_api_base:
+            changed.append("llm_api_base")
+        row.llm_api_base = new_llm_base
 
     new_base = payload.embedding_api_base.strip() or None
     if new_base:
@@ -258,6 +290,8 @@ async def get_runtime_config() -> RuntimeLlmConfig | None:
             cfg = RuntimeLlmConfig(
                 deepseek_api_key=_decrypt_or_empty(row.deepseek_api_key_enc) or None,
                 dashscope_api_key=_decrypt_or_empty(row.dashscope_api_key_enc) or None,
+                llm_model=row.llm_model,
+                llm_api_base=row.llm_api_base,
                 embedding_api_base=row.embedding_api_base,
                 embedding_model=row.embedding_model,
                 embedding_api_key=_decrypt_or_empty(row.embedding_api_key_enc) or None,
@@ -281,6 +315,41 @@ async def is_mock_enabled(mock: bool | None = None) -> bool:
     return bool(cfg is not None and cfg.llm_mock)
 
 
+async def resolve_llm_target() -> tuple[str, str | None, dict[str, str]]:
+    """解析运行时 LLM 调用目标：返回 (litellm_model, api_base, extra_kwargs).
+
+    页面"切换模型"生效路径（llm_service 与连通性测试共用，单一来源）：
+    - 库内 llm_model 优先（页面配置）；空则回退 env settings.llm_model（现状）
+    - 模型名无 provider 前缀时自动补 ``openai/``（OpenAI 兼容端点通用前缀；
+      litellm>=1.97 实测 ``openai_like/`` 解析成功但实际调用报 Unmapped provider）
+    - 自定义端点（llm_api_base 非空）：不透传 DeepSeek/DashScope 云端密钥
+      （防密钥外泄至第三方端点，安全考虑）；无 key 端点用 ``"EMPTY"`` 占位
+      （vLLM/Ollama 等无认证 OpenAI 兼容服务通用做法，避免 litellm 报缺 key）
+    - 非自定义端点：按模型前缀匹配库内密钥（deepseek/qwen 前缀）
+    """
+    cfg = await get_runtime_config()
+    if cfg is None or not cfg.llm_model:
+        # 回退 env：保持现有行为（按前缀匹配密钥）
+        model = settings.llm_model
+        key = cfg.api_key_for(model) if cfg else None
+        kwargs: dict[str, str] = {"api_key": key} if key else {}
+        return model, None, kwargs
+
+    model = cfg.llm_model
+    if "/" not in model:
+        model = f"openai/{model}"
+    kwargs: dict[str, str] = {}
+    if cfg.llm_api_base:
+        # 自定义端点：仅传地址，不转发云端密钥
+        kwargs["api_base"] = cfg.llm_api_base
+        kwargs["api_key"] = "EMPTY"
+    else:
+        key = cfg.api_key_for(cfg.llm_model)
+        if key:
+            kwargs["api_key"] = key
+    return model, cfg.llm_api_base, kwargs
+
+
 # ── 连通性测试（POST /settings/llm/test）──
 
 
@@ -292,10 +361,11 @@ async def test_connection(target: str) -> dict[str, Any]:
 
 
 async def _test_llm() -> dict[str, Any]:
-    cfg = await get_runtime_config()
-    model = settings.llm_primary
-    api_key = cfg.api_key_for(model) if cfg else None
-    if settings.llm_mock or (cfg is not None and cfg.llm_mock) or not api_key:
+    if await is_mock_enabled():
+        return {"ok": False, "error": _NOT_CONFIGURED_ERROR}
+    model, _api_base, kwargs = await resolve_llm_target()
+    # 回退 env 场景必须命中密钥才能测；自定义端点（resolve 已注入 EMPTY 占位）允许无 key
+    if not kwargs.get("api_key"):
         return {"ok": False, "error": _NOT_CONFIGURED_ERROR}
     try:
         from litellm import acompletion
@@ -306,7 +376,7 @@ async def _test_llm() -> dict[str, Any]:
                 model=model,
                 messages=[{"role": "user", "content": "ping"}],
                 max_tokens=8,
-                api_key=api_key,
+                **kwargs,
             )
         latency_ms = int((time.perf_counter() - start) * 1000)
         return {"ok": True, "model": model, "latency_ms": latency_ms}

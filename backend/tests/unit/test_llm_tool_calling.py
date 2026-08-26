@@ -55,7 +55,10 @@ class TestToolLoop:
         fake_litellm = MagicMock()
         fake_litellm.acompletion = fake_acompletion
         monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
-        monkeypatch.setattr("app.services.llm.llm_service._api_key_kwargs", AsyncMock(return_value={}))
+        monkeypatch.setattr(
+            "app.services.infra.settings_service.get_runtime_config",
+            AsyncMock(return_value=None),
+        )
 
         executor = AsyncMock(return_value='[{"content": "素材"}]')
         text, calls = await chat_with_tools(
@@ -92,7 +95,10 @@ class TestToolLoop:
         fake_litellm = MagicMock()
         fake_litellm.acompletion = fake_acompletion
         monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
-        monkeypatch.setattr("app.services.llm.llm_service._api_key_kwargs", AsyncMock(return_value={}))
+        monkeypatch.setattr(
+            "app.services.infra.settings_service.get_runtime_config",
+            AsyncMock(return_value=None),
+        )
 
         executor = AsyncMock(side_effect=RuntimeError("boom"))
         text, calls = await chat_with_tools(
@@ -120,7 +126,10 @@ class TestToolLoop:
         fake_litellm = MagicMock()
         fake_litellm.acompletion = fake_acompletion
         monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
-        monkeypatch.setattr("app.services.llm.llm_service._api_key_kwargs", AsyncMock(return_value={}))
+        monkeypatch.setattr(
+            "app.services.infra.settings_service.get_runtime_config",
+            AsyncMock(return_value=None),
+        )
 
         executor = AsyncMock(return_value="[]")
         text, calls = await chat_with_tools(

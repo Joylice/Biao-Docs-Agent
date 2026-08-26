@@ -18,6 +18,9 @@ class LlmSettingsUpdate(BaseModel):
 
     deepseek_api_key: str | None = None
     dashscope_api_key: str | None = None
+    # 自定义 LLM 主模型与服务地址（可选，与密钥同三态：None=保持原值、""=清除回退 env、非空=更新）
+    llm_model: str | None = None
+    llm_api_base: str | None = None
     embedding_api_base: str
     embedding_model: str
     embedding_api_key: str | None = None
