@@ -197,25 +197,28 @@
 
       <div class="ctx-menu__divider" />
 
-      <!-- AI 功能（P4 占位） -->
+      <!-- AI 功能（2026-08-26 启用：润色/翻译/续写 → 父页面 assist-selection 选区处理） -->
       <div class="ctx-menu__section">
         <div
-          class="ctx-menu__item ctx-menu__item--disabled"
-          title="P4 实现"
+          class="ctx-menu__item"
+          :class="{ 'ctx-menu__item--disabled': !canAiAction }"
+          @click="handleAi('polish')"
         >
           <EditOutlined class="ctx-menu__icon" />
           <span>AI 润色</span>
         </div>
         <div
-          class="ctx-menu__item ctx-menu__item--disabled"
-          title="P4 实现"
+          class="ctx-menu__item"
+          :class="{ 'ctx-menu__item--disabled': !canAiAction }"
+          @click="handleAi('translate')"
         >
           <TranslationOutlined class="ctx-menu__icon" />
           <span>AI 翻译</span>
         </div>
         <div
-          class="ctx-menu__item ctx-menu__item--disabled"
-          title="P4 实现"
+          class="ctx-menu__item"
+          :class="{ 'ctx-menu__item--disabled': !canAiAction }"
+          @click="handleAi('expand')"
         >
           <RocketOutlined class="ctx-menu__icon" />
           <span>AI 续写</span>
@@ -241,7 +244,7 @@
  * @emits insert-link 触发链接插入流程（父组件处理）
  * @emits find 将选中文本填入查找替换面板
  */
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { Editor, ChainedCommands } from '@tiptap/core'
 import {
   ScissorOutlined,
@@ -271,13 +274,27 @@ import { TEXT_COLOR_PRESETS } from './extensions/text-color'
 const props = defineProps<{
   /** 编辑器实例 */
   editor: Editor | undefined
+  /** 是否可编辑（只读/无权限时 AI 与编辑菜单保持禁用） */
+  editable?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'insert-image'): void
   (e: 'insert-link'): void
   (e: 'find', text: string): void
+  /** AI 选区操作（父页面 WordEditorPage 处理；润色/翻译/续写） */
+  (e: 'ai-action', action: 'polish' | 'translate' | 'expand'): void
 }>()
+
+/** AI 操作是否可用：编辑器可编辑且有选中文字 */
+const canAiAction = computed(() => props.editable !== false && hasSelection.value)
+
+/** AI 菜单点击：无选区/只读时忽略，否则上抛父页面处理 */
+const handleAi = (action: 'polish' | 'translate' | 'expand') => {
+  if (!canAiAction.value) return
+  emit('ai-action', action)
+  menuVisible.value = false
+}
 
 /* ---------------- 菜单状态 ---------------- */
 

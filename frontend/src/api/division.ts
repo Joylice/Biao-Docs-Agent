@@ -71,6 +71,24 @@ export const saveChapterContent = (
     payload,
   )
 
-/** AI 辅助编写 */
-export const assistChapter = (projectId: string, data: AssistRequest) =>
-  api.post<ApiResponse<{ content: string }>>(`/projects/${projectId}/chapters/assist`, data)
+/** AI 辅助编写（匹配后端 /chapter-assignments/{assignment_id}/assist-generate） */
+export const assistChapter = (
+  projectId: string,
+  assignmentId: string,
+  data: AssistRequest,
+) =>
+  api.post<ApiResponse<{ content: string; stopped: boolean; mode: string }>>(
+    `/projects/${projectId}/chapter-assignments/${assignmentId}/assist-generate`,
+    data,
+  )
+
+/** 选区 AI 处理（2026-08-26：润色/扩写/缩写/翻译选中文字，项目成员可调，不落库） */
+export const assistSelection = (
+  projectId: string,
+  chapterNo: string,
+  data: { text: string; action: 'polish' | 'expand' | 'condense' | 'translate' },
+) =>
+  api.post<ApiResponse<{ content: string }>>(
+    `/projects/${projectId}/chapters/${chapterNo}/assist-selection`,
+    data,
+  )

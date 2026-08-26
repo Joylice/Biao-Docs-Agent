@@ -209,14 +209,70 @@
 
     <!-- 主体：三栏布局 -->
     <div class="word-page__body">
-      <!-- 左侧：大纲导航面板 -->
-      <WordEditorOutline
-        v-model:visible="outlineVisible"
-        :editor="editorInstance"
-      />
+      <!-- 左侧：目录/大纲切换面板 -->
+      <div
+        v-if="leftPanelVisible"
+        class="word-page__left-panel"
+      >
+        <div class="word-page__left-tabs">
+          <div
+            class="word-page__left-tab"
+            :class="{ 'word-page__left-tab--active': leftPanelTab === 'navigator' }"
+            @click="leftPanelTab = 'navigator'"
+          >
+            目录
+          </div>
+          <div
+            class="word-page__left-tab"
+            :class="{ 'word-page__left-tab--active': leftPanelTab === 'outline' }"
+            @click="leftPanelTab = 'outline'"
+          >
+            大纲
+          </div>
+          <a-button
+            size="small"
+            type="text"
+            class="word-page__left-close"
+            @click="leftPanelVisible = false"
+          >
+            <template #icon>
+              <CloseOutlined />
+            </template>
+          </a-button>
+        </div>
+        <div class="word-page__left-content">
+          <ChapterNavigator
+            v-if="leftPanelTab === 'navigator'"
+            :project-id="projectId"
+            :current-chapter-no="chapterNo"
+            @navigate="handleChapterNavigate"
+          />
+          <WordEditorOutline
+            v-else
+            v-model:visible="outlineVisible"
+            :editor="editorInstance"
+          />
+        </div>
+      </div>
+      <!-- 左侧面板关闭时的展开按钮 -->
+      <div
+        v-else
+        class="word-page__left-expand"
+        @click="leftPanelVisible = true"
+      >
+        <MenuUnfoldOutlined />
+      </div>
 
       <!-- 中间：A4 纸面编辑区 + 浮动组件 -->
       <div class="word-page__editor-area">
+        <!-- 权限状态提示横幅 -->
+        <a-alert
+          v-if="!loading && permissionHint.text"
+          :type="permissionHint.type"
+          :message="permissionHint.text"
+          show-icon
+          class="word-page__permission-hint"
+        />
         <!-- 水平标尺（视图选项卡控制显隐） -->
         <WordEditorRuler
           v-if="rulerVisible"
@@ -240,20 +296,20 @@
           />
         </a-spin>
 
-        <!-- AI 辅助编写（只读模式下隐藏） -->
+        <!-- AI 辅助编写（只读模式下隐藏；整章追加/覆盖仅 assignee，选区 AI 见顶部/右键菜单） -->
         <div v-if="!isReadOnly" class="word-page__assist">
           <a-input
             v-model:value="assistPrompt"
-            placeholder="输入 AI 辅助指令，如：补充技术架构说明、优化语言表达..."
+            placeholder="输入 AI 辅助指令（章节负责人可用），如：补充技术架构说明、优化语言表达..."
             allow-clear
-            :disabled="!canEdit"
+            :disabled="!canEdit || !isAssignee"
             @press-enter="handleAssist"
           >
             <template #addonAfter>
               <a-button
                 type="primary"
                 :loading="assisting"
-                :disabled="!canEdit"
+                :disabled="!canEdit || !isAssignee"
                 @click="handleAssist"
               >
                 AI 辅助
@@ -263,7 +319,7 @@
           <a-radio-group
             v-model:value="assistMode"
             size="small"
-            :disabled="!canEdit"
+            :disabled="!canEdit || !isAssignee"
           >
             <a-radio-button value="append">
               追加
@@ -296,9 +352,11 @@
         <!-- 右键菜单（自行挂 contextmenu 事件到 editor.view.dom） -->
         <WordEditorContextMenu
           :editor="editorInstance"
+          :editable="canEdit"
           @insert-image="triggerImageUpload"
           @insert-link="triggerLinkInsert"
           @find="openFindFromText"
+          @ai-action="handleContextAi"
         />
       </div>
 
@@ -427,12 +485,13 @@
 import { ref, computed, unref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { ArrowLeftOutlined, LoadingOutlined, DownloadOutlined, PrinterOutlined, UnorderedListOutlined, SettingOutlined, CommentOutlined, HistoryOutlined, RobotOutlined, EditOutlined, ExpandOutlined, CompressOutlined, TranslationOutlined, BgColorsOutlined } from '@ant-design/icons-vue'
+import { ArrowLeftOutlined, LoadingOutlined, DownloadOutlined, PrinterOutlined, UnorderedListOutlined, SettingOutlined, CommentOutlined, HistoryOutlined, RobotOutlined, EditOutlined, ExpandOutlined, CompressOutlined, TranslationOutlined, BgColorsOutlined, CloseOutlined, MenuUnfoldOutlined } from '@ant-design/icons-vue'
 import type { Editor } from '@tiptap/core'
 import WordEditor from './WordEditor.vue'
 import WordEditorToolbar from './WordEditorToolbar.vue'
 import WordEditorStatusBar from './WordEditorStatusBar.vue'
 import WordEditorOutline from './WordEditorOutline.vue'
+import ChapterNavigator from './ChapterNavigator.vue'
 import WordEditorSearchPanel from './WordEditorSearchPanel.vue'
 import WordEditorTableToolbar from './WordEditorTableToolbar.vue'
 import WordEditorImageToolbar from './WordEditorImageToolbar.vue'
@@ -499,21 +558,41 @@ const isOwner = computed(() => isProjectOwner(projectOwnerId.value))
 const isAssignee = computed(
   () => !!currentTask.value && currentTask.value.assignee_id === currentUserId.value,
 )
+const isMember = ref(false)
 /**
- * 编辑权限：
- * - 无分工任务 → 只读（仅 owner 可看）
- * - owner → 不可编制任何章节
- * - assignee 且状态为 in_progress/rejected → 可编辑
- * - 其他 → 只读
+ * 编辑权限（2026-08-26 按产品确认放宽）：
+ * - 无分工任务 → 只读
+ * - 项目负责人（owner）→ 只读（分配者/审核者视角，不参与编制）
+ * - 项目成员（含 assignee 及其他成员）且有分工记录 → 可编辑
+ * - 非项目成员 → 只读（后端 403 兜底，前端仅控制 UI）
  */
 const canEdit = computed(() => {
   if (!currentTask.value) return false
   if (isOwner.value) return false
-  if (isAssignee.value && ['in_progress', 'rejected'].includes(currentTask.value.status)) return true
-  return false
+  if (!isMember.value) return false
+  return true
 })
 /** 只读模式：不可编辑 或 路由标记 readonly */
 const isReadOnly = computed(() => !canEdit.value || routeReadonly.value)
+
+/** 权限状态描述（用于编辑区顶部提示横幅） */
+const permissionHint = computed<{ type: 'success' | 'error' | 'warning' | 'info'; text: string }>(() => {
+  if (routeReadonly.value) return { type: 'info', text: '只读预览模式' }
+  if (!currentTask.value) return { type: 'warning', text: '该章节暂无分工记录，仅可查看' }
+  if (isOwner.value) return { type: 'info', text: '项目负责人仅可查看，章节内容由项目成员编制' }
+  if (!isMember.value) return { type: 'warning', text: '您不是项目成员，仅可查看' }
+  if (isAssignee.value) {
+    const status = currentTask.value.status
+    if (status === 'pending') return { type: 'info', text: '章节可编辑（作为负责人，可先领取任务跟进状态）' }
+    if (status === 'in_progress') return { type: 'success', text: '章节编制中，内容将自动保存' }
+    if (status === 'rejected') return { type: 'error', text: '章节被打回，请修改后重新提交' }
+    if (status === 'submitted') return { type: 'info', text: '已提交审核，等待项目负责人审核' }
+    if (status === 'approved') return { type: 'success', text: '审核已通过，内容已锁定' }
+  }
+  const status = currentTask.value.status
+  if (status === 'approved') return { type: 'success', text: '审核已通过，内容已锁定' }
+  return { type: 'success', text: '您作为项目成员可编辑本章节，内容将自动保存' }
+})
 
 /* ---------------- 加载 / 保存（useChapterPersistence） ---------------- */
 const {
@@ -532,9 +611,10 @@ const {
   chapterNo,
   getEditorHtml: () => editorRef.value?.getHTML() ?? '',
   isReadOnly: () => isReadOnly.value,
-  onLoaded: ({ projectOwnerId: ownerId, currentTask: task }) => {
+  onLoaded: ({ projectOwnerId: ownerId, currentTask: task, isProjectMember }) => {
     projectOwnerId.value = ownerId
     currentTask.value = task
+    isMember.value = isProjectMember
   },
 })
 
@@ -566,7 +646,7 @@ const canAccept = computed(
     currentTask.value?.status === 'pending',
 )
 const canSubmit = computed(
-  () => canEdit.value && currentTask.value?.status === 'in_progress',
+  () => isAssignee.value && currentTask.value?.status === 'in_progress',
 )
 const canApprove = computed(() => isOwner.value && currentTask.value?.status === 'submitted')
 const canReject = computed(() => isOwner.value && currentTask.value?.status === 'submitted')
@@ -644,7 +724,20 @@ const assistMode = ref<'append' | 'overwrite'>('append')
 const assisting = ref(false)
 
 const handleAssist = async () => {
-  if (!assistPrompt.value.trim() || !chapterNo) return
+  if (!assistPrompt.value.trim()) return
+  if (!currentTask.value) {
+    message.error('未找到当前章节的分工记录，请先在分工页推送分工')
+    return
+  }
+  if (!isAssignee.value) {
+    message.error('仅章节负责人可使用 AI 辅助功能')
+    return
+  }
+  if (!['in_progress', 'rejected'].includes(currentTask.value.status)) {
+    message.error('请先领取任务后再使用 AI 辅助')
+    return
+  }
+
   assisting.value = true
   try {
     const payload: AssistRequest = {
@@ -652,9 +745,11 @@ const handleAssist = async () => {
       prompt: assistPrompt.value,
       mode: assistMode.value,
     }
-    const { data } = await assistChapter(projectId, payload)
+    console.log('[AI辅助] 请求参数:', { assignmentId: currentTask.value.id, payload })
+    const { data } = await assistChapter(projectId, currentTask.value.id, payload)
+    console.log('[AI辅助] 响应:', data)
     const newContent = data.data?.content
-    if (typeof newContent === 'string') {
+    if (typeof newContent === 'string' && newContent.trim()) {
       const html = markdownToHtml(newContent)
       const inst = editorInstance.value
       if (inst) {
@@ -664,11 +759,27 @@ const handleAssist = async () => {
           inst.chain().focus().setContent(html).run()
         }
       }
-      message.success('AI 辅助完成')
+      message.success('AI 辅助完成，内容已插入')
       assistPrompt.value = ''
+    } else {
+      message.warning('AI 未生成有效内容，请调整提示词后重试')
     }
-  } catch {
-    message.error('AI 辅助失败')
+  } catch (err: any) {
+    console.error('[AI辅助] 失败:', err)
+    const status = err?.response?.status
+    const body = err?.response?.data
+    const msg = body?.message || err?.message
+    let friendlyMsg = 'AI 辅助失败'
+    if (status === 400) {
+      friendlyMsg = `请求参数错误：${msg || '请检查输入'}`
+    } else if (status === 403) {
+      friendlyMsg = `权限不足：${msg || '仅章节负责人可使用'}`
+    } else if (status === 5011) {
+      friendlyMsg = `AI 服务异常：${msg || '请稍后重试或联系管理员'}`
+    } else if (msg) {
+      friendlyMsg = msg
+    }
+    message.error(friendlyMsg, 5)
   } finally {
     assisting.value = false
   }
@@ -754,6 +865,11 @@ const handleAiAction = async (action: 'polish' | 'expand' | 'condense' | 'transl
   }
 }
 
+/** 右键菜单 AI 动作（润色/翻译/续写）→ 复用选区处理链路 */
+const handleContextAi = async (action: 'polish' | 'translate' | 'expand') => {
+  await handleAiAction(action)
+}
+
 /** AI 自动排版 */
 const handleAutoFormat = () => {
   const success = autoFormat()
@@ -783,6 +899,16 @@ const {
   toggleVersionHistory,
 } = useEditorPanels()
 
+/* ---------------- 左侧目录/大纲面板 ---------------- */
+const leftPanelVisible = ref(true)
+const leftPanelTab = ref<'navigator' | 'outline'>('navigator')
+
+/** 章节导航跳转（由 ChapterNavigator 触发） */
+const handleChapterNavigate = (chapterNo: string) => {
+  // 路由跳转由 ChapterNavigator 内部处理，这里仅做日志/状态同步
+  console.log('[章节导航] 跳转到:', chapterNo)
+}
+
 /* ---------------- 图片上传 composable ---------------- */
 const { uploadImage, uploadProgress, uploading } = useImageUpload(
   ref<string | undefined>(projectId),
@@ -793,7 +919,12 @@ const formatBrush = useFormatBrush(editorForComposables)
 provide('formatBrush', formatBrush)
 
 /* ---------------- AI 辅助 composable ---------------- */
-const aiAssistant = useAiAssistant(() => editorInstance.value, projectId, chapterNo)
+const aiAssistant = useAiAssistant(
+  () => editorInstance.value,
+  projectId,
+  chapterNo,
+  () => currentTask.value?.id,
+)
 const { loading: aiLoading, applyAiAction, autoFormat } = aiAssistant
 
 /* ---------------- 字号增减 ---------------- */
@@ -1155,6 +1286,74 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+/* 左侧面板容器 */
+.word-page__left-panel {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated, #1f1f1f);
+  border-right: 1px solid var(--border-color, #303030);
+}
+
+.word-page__left-tabs {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border-color, #303030);
+  flex-shrink: 0;
+  height: 40px;
+}
+
+.word-page__left-tab {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-secondary, #999);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  margin-bottom: -1px;
+}
+
+.word-page__left-tab:hover {
+  color: var(--text-primary, #fff);
+}
+
+.word-page__left-tab--active {
+  color: var(--primary-color, #1890ff);
+  border-bottom-color: var(--primary-color, #1890ff);
+  font-weight: 500;
+}
+
+.word-page__left-close {
+  margin-left: auto;
+  color: var(--text-secondary, #999);
+}
+
+.word-page__left-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 左侧面板关闭时的展开按钮 */
+.word-page__left-expand {
+  width: 24px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elevated, #1f1f1f);
+  border-right: 1px solid var(--border-color, #303030);
+  cursor: pointer;
+  color: var(--text-secondary, #999);
+  transition: color 0.15s;
+}
+
+.word-page__left-expand:hover {
+  color: var(--primary-color, #1890ff);
+}
+
 /* 编辑区容器 */
 .word-page__editor-area {
   flex: 1;
@@ -1162,6 +1361,15 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex-direction: column;
+}
+
+/* 权限状态提示横幅 */
+.word-page__permission-hint {
+  margin: 8px 16px 0;
+  flex-shrink: 0;
+}
+.word-page__permission-hint :deep(.ant-alert-message) {
+  font-size: 13px;
 }
 
 /* spin 包裹层撑满 */

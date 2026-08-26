@@ -46,6 +46,39 @@ class AssistGenerateBody(BaseModel):
     mode: Literal["append", "overwrite"] = "append"
 
 
+class AssistSelectionBody(BaseModel):
+    """选区 AI 处理请求体（2026-08-26）：text 选中文字，action 处理类型.
+
+    与 AssistGenerateBody 的区别：只处理选中文字、不落库、不依赖分工记录
+    （项目成员均可使用），解决整章辅助接口无法用于"润色选区"的问题。
+    """
+
+    text: str = Field(..., min_length=1, max_length=20000)
+    action: Literal["polish", "expand", "condense", "translate"]
+
+
+# 选区 AI 处理提示词模板（与前端 useAiAssistant.AI_ACTION_CONFIG 语义对齐，
+# 后端维护一份权威模板，避免提示词改动需重新发布前端）
+_AI_SELECTION_PROMPTS: dict[str, str] = {
+    "polish": (
+        "请润色以下文字，优化语言表达，保持原意，使文字更加流畅、专业。"
+        "只输出处理后的结果，不要添加任何解释或前缀：\n\n{text}"
+    ),
+    "expand": (
+        "请扩写以下内容，增加细节和说明，使内容更加丰富完整。"
+        "只输出处理后的结果，不要添加任何解释或前缀：\n\n{text}"
+    ),
+    "condense": (
+        "请精简以下内容，保留核心信息，使文字更加简洁。"
+        "只输出处理后的结果，不要添加任何解释或前缀：\n\n{text}"
+    ),
+    "translate": (
+        "请将以下内容翻译成英文（如果原文是英文则翻译成中文）。"
+        "只输出翻译结果，不要添加任何解释或前缀：\n\n{text}"
+    ),
+}
+
+
 class AnnotationBody(BaseModel):
     """章节批注请求体（阶段 4）."""
 
@@ -466,3 +499,40 @@ async def save_chapter_content(
             "content_html": assignment.content_html,
         }
     )
+
+
+@router.post("/{project_id}/chapters/{chapter_no}/assist-selection")
+async def assist_selection(
+    project_id: uuid.UUID,
+    chapter_no: str,
+    body: AssistSelectionBody,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """选区文字 AI 处理（润色/扩写/缩写/翻译）— 2026-08-26.
+
+    项目成员可调（含非 assignee），不依赖分工记录、不落库；
+    只对选中文字做 LLM 处理并返回结果，由前端替换选区。
+    mock 模式降级返回原文（避免占位文本污染文档）。
+    """
+    await _check_project_member(db, project_id, user_id)
+    assignment = await division_service.get_assignment_by_chapter(db, project_id, chapter_no)
+    if assignment is None:
+        raise NotFoundError("章节分工")
+
+    from app.services.infra.settings_service import is_mock_enabled
+    from app.services.llm.llm_service import call_llm_text
+
+    if await is_mock_enabled():
+        return success(data={"content": body.text})
+
+    try:
+        content = await call_llm_text(
+            "你是投标技术文档写作助手，擅长中文技术文档的润色、扩写、缩写与翻译，"
+            "输出直接可用，不含解释性文字。",
+            _AI_SELECTION_PROMPTS[body.action].format(text=body.text),
+            temperature=0.4,
+        )
+    except Exception as e:
+        raise BizError(code=5011, message=f"AI 处理失败: {e}") from None
+    return success(data={"content": content.strip()})

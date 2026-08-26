@@ -385,7 +385,7 @@ const handleAssist = async () => {
   if (!props.task || !assistPrompt.value.trim()) return
   assisting.value = true
   try {
-    const { data } = await assistChapter(props.projectId, {
+    const { data } = await assistChapter(props.projectId, props.task.id, {
       chapter_no: props.task.chapter_no,
       prompt: assistPrompt.value,
       mode: assistMode.value,

@@ -14,8 +14,15 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { markdownToHtml, htmlToMarkdown } from '@/components/editor/utils/markdown-converter'
-import { fetchChapterContent, saveChapterContent, fetchChapterAssignments, fetchProject } from '@/api'
+import {
+  fetchChapterContent,
+  saveChapterContent,
+  fetchChapterAssignments,
+  fetchProject,
+  fetchProjectMembers,
+} from '@/api'
 import type { AssignmentNode, AssignmentItem } from '@/types'
+import { currentUserId } from '@/stores/currentUser'
 import type { SaveStatus } from '@/components/editor/WordEditorStatusBar.vue'
 
 /** 加载完成回调数据（供页面装配任务状态等） */
@@ -28,6 +35,8 @@ export interface ChapterLoadData {
   currentTask: AssignmentItem | null
   /** 分工树原始节点（页面可能还需要） */
   assignments: AssignmentNode[]
+  /** 当前用户是否为项目成员（决定编辑权限） */
+  isProjectMember: boolean
 }
 
 /** 自动保存防抖时长（ms） */
@@ -191,10 +200,11 @@ export function useChapterPersistence(
   const loadChapter = async () => {
     loading.value = true
     try {
-      const [contentRes, assignmentsRes, projectRes] = await Promise.all([
+      const [contentRes, assignmentsRes, projectRes, membersRes] = await Promise.all([
         fetchChapterContent(projectId, chapterNo),
         fetchChapterAssignments(projectId),
         fetchProject(projectId),
+        fetchProjectMembers(projectId),
       ])
       const data = contentRes.data.data
       // content_html 优先；缺失时将 markdown 转 HTML 供富文本编辑
@@ -206,8 +216,16 @@ export function useChapterPersistence(
       chapterTitle.value = title
 
       const ownerId = projectRes.data.data?.owner_id || ''
+      const memberIds = (membersRes.data.data?.items ?? []).map((m) => m.user_id)
+      const isProjectMember = memberIds.includes(currentUserId.value)
       const currentTask = flattenAssignments(items).find((t) => t.chapter_no === chapterNo) || null
-      onLoaded?.({ chapterTitle: title, projectOwnerId: ownerId, currentTask, assignments: items })
+      onLoaded?.({
+        chapterTitle: title,
+        projectOwnerId: ownerId,
+        currentTask,
+        assignments: items,
+        isProjectMember,
+      })
     } catch {
       message.error('章节内容加载失败')
     } finally {

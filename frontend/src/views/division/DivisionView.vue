@@ -75,12 +75,16 @@
       <div class="division-view__toolbar">
         <a-space wrap>
           <a-select
+            v-if="isOwner"
             v-model:value="filterAssignee"
             placeholder="全部负责人"
             allow-clear
             style="width: 180px"
             :options="assigneeFilterOptions"
           />
+          <a-tag v-else color="processing">
+            仅显示我的任务
+          </a-tag>
           <a-tag color="blue">
             共 {{ filteredItems.length }} 个章节
           </a-tag>
@@ -360,6 +364,11 @@ const assigneeFilterOptions = computed(() => {
 })
 
 const filteredItems = computed(() => {
+  // 项目成员（非 owner）：只看属于自己的任务
+  if (!isOwner.value) {
+    return items.value.filter((item) => item.assignee_id === currentUserId.value)
+  }
+  // owner：按筛选人过滤，未筛选时显示全部
   if (!filterAssignee.value) return items.value
   return items.value.filter((item) => item.assignee_id === filterAssignee.value)
 })
@@ -488,22 +497,90 @@ const handleAssign = async () => {
     assignee_id: draftAssignees.value[row.chapter_no] as string,
   }))
   if (payload.length === 0) return
+
+  // 推送前校验：确保所有条目 chapter_no/title/assignee_id 不为空
+  const invalid = payload.find((item) => !item.chapter_no || !item.title || !item.assignee_id)
+  if (invalid) {
+    console.error('[分工推送] 无效条目:', invalid)
+    message.error(`章节「${invalid.chapter_no || '未知'}」信息不完整（标题或负责人为空），无法推送`)
+    return
+  }
+
+  // 校验 assignee_id 格式是否为合法 UUID
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  const invalidUuid = payload.find((item) => !uuidRegex.test(item.assignee_id))
+  if (invalidUuid) {
+    console.error('[分工推送] 无效 assignee_id:', invalidUuid)
+    message.error(`章节「${invalidUuid.chapter_no}」的负责人ID格式错误，请重新选择负责人`)
+    return
+  }
+
   assigning.value = true
   try {
+    console.log('[分工推送] 开始推送，payload:', JSON.stringify(payload, null, 2))
     // 后端幂等 upsert，响应同为树形结构
-    const { data } = await upsertChapterAssignments(projectId, payload)
+    const { data, status } = await upsertChapterAssignments(projectId, payload)
+    console.log('[分工推送] 响应 status:', status, 'data:', data)
     if (data.code === 0) {
-      const tree: AssignmentNode[] = data.data?.items || []
-      assignTree.value = tree
-      syncDraftBaseline(tree)
+      // 推送成功后统一从后端重新加载分工列表（内部已含 syncDraftBaseline），
+      // 避免 upsert 返回树与 list 接口结构不一致导致的状态不同步
       await fetchAssignments()
       message.success(`已推送 ${payload.length} 个章节的分工任务`)
     } else {
-      message.error(data.message || '分工推送失败')
+      console.error('[分工推送] 后端返回业务错误 code:', data.code, 'message:', data.message)
+      const detail = `错误码: ${data.code}，消息: ${data.message || '未知错误'}`
+      message.error(`分工推送失败：${detail}`, 5)
     }
-  } catch (err) {
-    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
-    message.error(msg || '分工推送失败')
+  } catch (err: any) {
+    console.error('[分工推送] 请求异常:', err)
+    console.error('[分工推送] 异常 response:', err?.response)
+    console.error('[分工推送] 异常 request:', err?.request)
+
+    const status = err?.response?.status
+    const body = err?.response?.data
+    const msg = body?.message
+    const code = body?.code
+
+    // 构建详细错误信息
+    let detail = ''
+    if (status) {
+      detail += `HTTP状态码: ${status}\n`
+    }
+    if (code) {
+      detail += `业务错误码: ${code}\n`
+    }
+    if (msg) {
+      detail += `错误消息: ${msg}\n`
+    }
+    if (err?.message) {
+      detail += `异常消息: ${err.message}\n`
+    }
+    if (!detail) {
+      detail = '未知错误，请查看浏览器控制台日志'
+    }
+
+    // 针对常见错误码给出更友好的提示
+    let friendlyMsg = '分工推送失败'
+    if (code === 4004) {
+      friendlyMsg = `负责人不是项目成员：${msg || '请先将该用户添加为项目成员'}`
+    } else if (code === 4000) {
+      friendlyMsg = `分工数据不完整：${msg || '请检查章节标题和负责人是否已填写'}`
+    } else if (status === 500) {
+      friendlyMsg = `服务器内部错误（500）：${msg || '请联系管理员查看后端日志'}`
+    } else if (status === 401 || status === 403) {
+      friendlyMsg = `权限不足（${status}）：请确认您是项目负责人且已登录`
+    } else if (msg) {
+      friendlyMsg = msg
+    }
+
+    // 显示错误，包含详细信息
+    message.error({
+      content: `${friendlyMsg}\n\n${detail}`,
+      duration: 8,
+    })
+
+    // 同时在控制台输出完整的 payload 方便排查
+    console.error('[分工推送] 失败时的 payload:', JSON.stringify(payload, null, 2))
   } finally {
     assigning.value = false
   }

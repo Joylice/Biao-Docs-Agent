@@ -1,15 +1,17 @@
 /**
  * AI 辅助编辑 composable
- * - 选中文字 AI 操作（润色/扩写/缩写/翻译/纠错）
+ * - 选中文字 AI 操作（润色/扩写/缩写/翻译）——走 assist-selection 端点（项目成员可用）
  * - AI 自动排版（一键美化格式）
- * - AI 标题生成
- * - AI 摘要生成
+ * - AI 标题生成 / 摘要生成（走 assist-generate 整章接口，需 assignmentId）
  *
- * 基于现有的 assistChapter API 实现
+ * 2026-08-26 修复：
+ * - applyAiAction 原走 assist-generate（返回整章内容）并插入选区 → 改为 assist-selection
+ *   端点（只处理选中文字，前端替换选区，不污染文档）
+ * - generateTitle/generateSummary 原少传 assignmentId 参数（URL 为 undefined）→ 修复
  */
 import { ref } from 'vue'
 import type { Editor } from '@tiptap/core'
-import { assistChapter } from '@/api'
+import { assistChapter, assistSelection } from '@/api'
 import type { AssistRequest } from '@/types'
 
 /** AI 操作类型 */
@@ -59,11 +61,13 @@ const AI_ACTION_CONFIG: Record<AiActionType, { label: string; prompt: string }> 
  * @param editor 编辑器实例获取函数
  * @param projectId 项目 ID
  * @param chapterNo 章节编号
+ * @param assignmentId 分工记录ID（后端AI辅助接口需要），支持字符串或返回字符串的函数
  */
 export function useAiAssistant(
   editor: () => Editor | undefined,
   projectId: string,
   chapterNo: string,
+  assignmentId?: string | (() => string | undefined),
 ) {
   /* 加载状态 */
   const loading = ref(false)
@@ -81,7 +85,7 @@ export function useAiAssistant(
   }
 
   /**
-   * 对选中文字执行 AI 操作
+   * 对选中文字执行 AI 操作（2026-08-26 改走 assist-selection 端点）
    * @param action 操作类型
    * @param replace 是否替换原选中内容（默认替换）
    */
@@ -96,24 +100,23 @@ export function useAiAssistant(
     if (!selectedText) {
       return null
     }
+    // 后端 assist-selection 仅支持 4 种动作；其余（correct/formal/simplify）映射到 polish
+    const backendAction: 'polish' | 'expand' | 'condense' | 'translate' =
+      action === 'expand' || action === 'condense' || action === 'translate'
+        ? action
+        : 'polish'
 
     loading.value = true
     currentAction.value = action
 
     try {
-      const config = AI_ACTION_CONFIG[action]
-      const prompt = `${config.prompt}\n\n${selectedText}`
-
-      const payload: AssistRequest = {
-        chapter_no: chapterNo,
-        prompt,
-        mode: 'append',
-      }
-
-      const { data } = await assistChapter(projectId, payload)
+      const { data } = await assistSelection(projectId, chapterNo, {
+        text: selectedText,
+        action: backendAction,
+      })
       const result = data.data?.content ?? ''
 
-      if (result && replace) {
+      if (result && replace && result !== selectedText) {
         // 替换选中内容
         const { from, to } = ed.state.selection
         ed.chain().focus().deleteRange({ from, to }).insertContent(result).run()
@@ -130,35 +133,41 @@ export function useAiAssistant(
 
   /**
    * AI 自动排版（一键美化格式）
-   * 前端实现：统一字体、字号、行距、段落格式
+   * 前端实现：统一正文字体/字号/行距/首行缩进（标题样式不动）
    */
   const autoFormat = (): boolean => {
     const ed = editor()
     if (!ed) return false
 
     try {
-      // 遍历所有段落，统一格式
-      ed.state.doc.descendants((node) => {
-        if (node.type.name === 'paragraph') {
-          // 统一段落格式：宋体、12pt、1.5倍行距、首行缩进2字符
-          // 注意：不修改标题样式
-        }
-      })
-
-      // 统一正文字体和字号（对非标题段落）
       const tr = ed.state.tr
+      let changed = false
       ed.state.doc.descendants((node, pos) => {
         if (node.type.name === 'paragraph' && node.content.size > 0) {
-          // 设置段落属性
-          tr.setNodeMarkup(pos, undefined, {
-            ...node.attrs,
-            lineHeight: '1.5',
-            textIndent: '2em',
-          })
+          const attrs = { ...node.attrs }
+          // 统一行距 1.5 与首行缩进 2 字符（正文段落）
+          if (attrs.lineHeight !== '1.5') {
+            attrs.lineHeight = '1.5'
+            changed = true
+          }
+          if (attrs.textIndent !== '2em') {
+            attrs.textIndent = '2em'
+            changed = true
+          }
+          // 统一字号 12pt（小三≈12pt 正文）；标题段落不改
+          const mark = node.marks.find((m) => m.type.name === 'fontSize')
+          if (!mark || (mark as { attrs?: { fontSize?: string } }).attrs?.fontSize !== '12pt') {
+            if (node.marks.some((m) => m.type.name === 'fontSize')) {
+              // 已有字号标记 → 统一为 12pt
+              tr.removeMark(pos, pos + node.nodeSize, ed.schema.marks.fontSize)
+            }
+            tr.addMark(pos, pos + node.nodeSize, ed.schema.marks.fontSize.create({ fontSize: '12pt' }))
+            changed = true
+          }
         }
       })
 
-      if (tr.docChanged) {
+      if (changed) {
         ed.view.dispatch(tr)
       }
 
@@ -190,7 +199,9 @@ export function useAiAssistant(
         prompt,
         mode: 'append',
       }
-      const { data } = await assistChapter(projectId, payload)
+      const aid = typeof assignmentId === 'function' ? assignmentId() : assignmentId
+      if (!aid) return null
+      const { data } = await assistChapter(projectId, aid, payload)
       return data.data?.content ?? null
     } catch {
       return null
@@ -217,7 +228,9 @@ export function useAiAssistant(
         prompt,
         mode: 'append',
       }
-      const { data } = await assistChapter(projectId, payload)
+      const aid = typeof assignmentId === 'function' ? assignmentId() : assignmentId
+      if (!aid) return null
+      const { data } = await assistChapter(projectId, aid, payload)
       return data.data?.content ?? null
     } catch {
       return null

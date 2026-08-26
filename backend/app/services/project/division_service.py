@@ -213,12 +213,26 @@ async def list_assignments(db: AsyncSession, project_id: uuid.UUID) -> list[dict
         if own is None and not children:
             continue
         if own is None:
+            # 章级展开为子节后章行做聚合：若全部子节为同一负责人则回填
+            # assignee_id/assignee_name，前端下拉框推送后保持选中（二次推送体验）
+            child_assignees = {c["assignee_id"] for c in children if c.get("assignee_id")}
+            uniform_assignee = child_assignees.pop() if len(child_assignees) == 1 else None
+            uniform_name = None
+            if uniform_assignee:
+                uniform_name = next(
+                    (
+                        c["assignee_name"]
+                        for c in children
+                        if c.get("assignee_id") == uniform_assignee
+                    ),
+                    None,
+                )
             own = {
                 "id": None,
                 "chapter_no": no,
                 "title": str(chapter.get("title", "")),
-                "assignee_id": None,
-                "assignee_name": None,
+                "assignee_id": uniform_assignee,
+                "assignee_name": uniform_name,
                 "submitted_by_name": None,
                 "assigned_by": None,
                 "status": _aggregate_status(children),

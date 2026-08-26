@@ -182,3 +182,122 @@ class TestSaveChapterContent:
         assert resp.status_code == 200
         assert assignment.content == ""
         session.commit.assert_awaited()
+
+
+# ── POST /chapters/{no}/assist-selection（2026-08-26 选区 AI）──
+
+
+class TestAssistSelection:
+    """选区 AI 处理：项目成员可调（不依赖 assignee）、不落库、mock 降级返回原文."""
+
+    @staticmethod
+    def _url() -> str:
+        return f"/api/v1/projects/{PROJECT_ID}/chapters/1/assist-selection"
+
+    @pytest.mark.asyncio
+    async def test_member_polish_success(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """项目成员润色选区：mock call_llm_text 返回处理结果 → 200 content."""
+        override_db([_result(_project()), _result(_member_row()), _result(_assignment())])
+        monkeypatch.setattr(
+            "app.services.infra.settings_service.is_mock_enabled", AsyncMock(return_value=False)
+        )
+        from app.services.llm import llm_service
+
+        async def fake_call_llm_text(system_prompt, user_prompt, temperature=0.7, mock=None):
+            assert "润色" in system_prompt
+            assert "原始文字" in user_prompt
+            return "润色后的文字"
+
+        monkeypatch.setattr(llm_service, "call_llm_text", fake_call_llm_text)
+
+        resp = await client.post(
+            self._url(),
+            json={"text": "原始文字", "action": "polish"},
+            headers=_headers(MEMBER_ID),
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"] == {"content": "润色后的文字"}
+
+    @pytest.mark.asyncio
+    async def test_member_can_use_without_being_assignee(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """关键契约：非 assignee 的项目成员也可调用（区别于 assist-generate 的 assignee 限制）."""
+        override_db([_result(_project()), _result(_member_row()), _result(_assignment())])
+        monkeypatch.setattr(
+            "app.services.infra.settings_service.is_mock_enabled", AsyncMock(return_value=False)
+        )
+        from app.services.llm import llm_service
+
+        async def fake_call_llm_text(system_prompt, user_prompt, temperature=0.7, mock=None):
+            return "翻译结果"
+
+        monkeypatch.setattr(llm_service, "call_llm_text", fake_call_llm_text)
+
+        resp = await client.post(
+            self._url(),
+            json={"text": "hello world", "action": "translate"},
+            headers=_headers(MEMBER_ID),
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["content"] == "翻译结果"
+
+    @pytest.mark.asyncio
+    async def test_non_member_403(self, client: AsyncClient, override_db) -> None:
+        override_db([_result(_project()), _result(None)])
+        resp = await client.post(
+            self._url(),
+            json={"text": "x", "action": "polish"},
+            headers=_headers(uuid.uuid4()),
+        )
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_chapter_not_found_4004(self, client: AsyncClient, override_db) -> None:
+        override_db([_result(_project()), _result(None)])
+        resp = await client.post(
+            self._url(),
+            json={"text": "x", "action": "polish"},
+            headers=_headers(OWNER_ID),
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == 4004
+
+    @pytest.mark.asyncio
+    async def test_invalid_action_422(self, client: AsyncClient, override_db) -> None:
+        override_db([_result(_project()), _result(_assignment())])
+        resp = await client.post(
+            self._url(),
+            json={"text": "x", "action": "summarize"},
+            headers=_headers(MEMBER_ID),
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_mock_mode_returns_original_text(
+        self, client: AsyncClient, override_db, monkeypatch
+    ) -> None:
+        """mock 模式降级：返回原文，避免占位文本污染文档."""
+        override_db([_result(_project()), _result(_member_row()), _result(_assignment())])
+        monkeypatch.setattr(
+            "app.services.infra.settings_service.is_mock_enabled", AsyncMock(return_value=True)
+        )
+        from app.services.llm import llm_service
+
+        async def boom(*args, **kwargs):
+            raise AssertionError("mock 模式下不应调用 LLM")
+
+        monkeypatch.setattr(llm_service, "call_llm_text", boom)
+
+        resp = await client.post(
+            self._url(),
+            json={"text": "原始文字", "action": "polish"},
+            headers=_headers(MEMBER_ID),
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"] == {"content": "原始文字"}
