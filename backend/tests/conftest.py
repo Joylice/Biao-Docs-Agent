@@ -29,6 +29,15 @@ workflow_runtime._init_checkpointer_impl = workflow_runtime.init_checkpointer  #
 workflow_runtime.init_checkpointer = _skip_checkpointer_init  # type: ignore[method-assign]
 
 
+async def _skip_workflow_recovery() -> dict:
+    """测试桩：跳过启动期工作流对账（无 PostgreSQL，且避免误改共享单例状态）."""
+    return {}
+
+
+workflow_runtime._recover_running_workflows_impl = workflow_runtime.recover_running_workflows  # type: ignore[attr-defined]
+workflow_runtime.recover_running_workflows = _skip_workflow_recovery  # type: ignore[method-assign]
+
+
 @pytest.fixture(scope="session")
 def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
     """为整个测试会话创建事件循环."""

@@ -45,6 +45,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     init_minio()
     # 工作流 checkpointer：AsyncPostgresSaver + 独立连接池（thread_id=project_id）
     await workflow_runtime.init_checkpointer()
+    # 启动期对账（P1-2.1）：修正重启残留的 status=running 工作流
+    await workflow_runtime.recover_running_workflows()
     yield
     # 清理资源
     await workflow_runtime.shutdown_checkpointer()

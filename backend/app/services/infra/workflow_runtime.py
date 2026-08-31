@@ -20,6 +20,7 @@ from langgraph.types import Command
 
 from app.agents.graph import compile_workflow, get_async_postgres_saver
 from app.core.config import settings
+from app.core.database import async_session_factory
 from app.core.exceptions import BizError
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,57 @@ async def shutdown_checkpointer() -> None:
             logger.warning("关闭 checkpointer 连接池失败", exc_info=True)
     _pool = None
     _saver = None
+
+
+async def recover_running_workflows() -> dict[str, str]:
+    """启动期对账（P1-2.1）：修正重启残留的 status=running 记录.
+
+    api 进程重启后内存 _running 清空、在途 asyncio 任务丢失，DB 中
+    status=running 成为永久残留（幂等保护 4009 会误拒新启动）。恢复规则：
+    - checkpointer 快照有 pending interrupt → waiting（图实际停在 HITL，
+      可正常 resume 继续）；
+    - 快照 current_phase=done → done；
+    - 其他（执行中断途丢失）→ failed + error 提示。
+    checkpointer 未初始化时跳过（无快照可依，避免误标失败）。
+    返回 {project_id: 最终 status}。
+    """
+    if _saver is None:
+        logger.warning("checkpointer 未初始化，跳过 running 工作流对账")
+        return {}
+    from sqlalchemy import select
+
+    from app.models.proposal import ProposalWorkflow
+
+    recovered: dict[str, str] = {}
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(ProposalWorkflow).where(ProposalWorkflow.status == "running")
+        )
+        rows = result.scalars().all()
+        for wf in rows:
+            try:
+                snapshot = await get_state(wf.project_id)
+            except Exception:
+                logger.warning(
+                    "恢复对账读取快照失败 project_id=%s，标记 failed", wf.project_id, exc_info=True
+                )
+                wf.status = "failed"
+                wf.error = "服务重启导致工作流中断（快照不可读），请重新启动生成"
+                recovered[str(wf.project_id)] = "failed"
+                continue
+            if pending_interrupt(snapshot) is not None:
+                wf.status = "waiting"
+            elif (snapshot.values or {}).get("current_phase") == "done":
+                wf.status = "done"
+            else:
+                wf.status = "failed"
+                wf.error = "服务重启导致工作流中断，请重新启动生成"
+            recovered[str(wf.project_id)] = wf.status
+        if rows:
+            await db.commit()
+    if recovered:
+        logger.info("启动对账完成，修正 running 残留工作流 %d 条: %s", len(recovered), recovered)
+    return recovered
 
 
 def set_saver(saver: Any) -> None:
