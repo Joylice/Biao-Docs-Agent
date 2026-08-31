@@ -172,13 +172,21 @@ Write-Host "[5/8] Retag :$Version -> :latest (compose uses latest)..." -Foregrou
 # ---------- 6. compose up ----------
 if (-not $SkipCompose) {
     Write-Host "[6/8] Compose validate + up..." -ForegroundColor Cyan
-    $testOut = & $py $panelApi compose-test --name $cmpName --path $cmpPath 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        if ($testOut -match "记录已存在|ErrRecordExist") {
-            Write-Host "    compose-test skipped (record exists; normal for iteration)" -ForegroundColor Yellow
-        } else {
-            Write-Host $testOut -ForegroundColor Red
-            throw "compose validate failed"
+    # 先查编排记录：已存在（迭代场景）跳过 compose-test——1Panel 对已存在记录 test 必报
+    # "记录已存在"，且其中文消息经管道编码后为乱码（GBK/UTF8 错位），关键字匹配不可靠
+    $searchOut = & $py $panelApi compose-search --name $cmpName 2>&1
+    $recordExists = ($LASTEXITCODE -eq 0) -and ($searchOut -match [regex]::Escape($cmpName))
+    if ($recordExists) {
+        Write-Host "    compose-test skipped (record exists; normal for iteration)" -ForegroundColor Yellow
+    } else {
+        $testOut = & $py $panelApi compose-test --name $cmpName --path $cmpPath 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            if ($testOut -match "记录已存在|ErrRecordExist|exist|already") {
+                Write-Host "    compose-test skipped (record exists; normal for iteration)" -ForegroundColor Yellow
+            } else {
+                Write-Host $testOut -ForegroundColor Red
+                throw "compose validate failed"
+            }
         }
     }
     & $py $panelApi compose-up --name $cmpName --path $cmpPath

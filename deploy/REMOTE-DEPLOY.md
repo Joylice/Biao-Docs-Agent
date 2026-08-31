@@ -84,6 +84,9 @@ python deploy\panel_api.py tag bidagent-web:20260831     bidagent-web:latest
 | 4 | 迁移失败 `value too long for type character varying(32)` | revision `0016_annotation_edit_version_rollback` 35 字符 > varchar(32) | 首次已用一次性容器预建 varchar(128) 版本表；后续迁移自动复用 |
 | 5 | api 首次启动崩 `proposal_workflows does not exist` | 数据库未初始化（迁移未跑） | api `command` 已前置 `alembic upgrade head`（幂等，每次启动自动迁移） |
 | 6 | 面板 API 报 `IP whitelist is empty` | API 接口模式的 IP 白名单为空 | 设置 → 安全 → API 接口 → 配置 IP 白名单 |
+| 7 | 编排 up 后容器没换新代码 | compose up 只比较镜像 **tag 不比较 digest**，服务器已有旧 `latest` 时不重建容器 | 1Panel 编排「deploy → 操作 → up」或先删 deploy 容器再 up；脚本已内建该流程 |
+| 8 | 面板偶发 `SQLITE_BUSY`（load/tag/compose 500） | 1Panel 后端 SQLite 瞬态写锁（并发编排/镜像任务） | `panel_api.py` 已对 load/tag/compose-up 内建 BUSY 重试 + 长读超时，重跑即收敛 |
+| 9 | `compose-test` 报 `记录已存在` 且脚本退出 | 迭代发版时编排记录已存在，1Panel 拒绝重复 test；中文消息管道编码乱码致关键字匹配失效 | 脚本已改为**先查记录**：存在则跳过 test 直接 up（EXIT=0） |
 
 ## 七、服务器端文件布局（参照）
 
