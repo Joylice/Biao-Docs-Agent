@@ -187,6 +187,30 @@ export async function backendHealthy(apiCtx: APIRequestContext): Promise<boolean
   }
 }
 
+/**
+ * 确认项目全部评分点（对齐产品流程：解析确认页逐条 PUT confirmed=true 后启动工作流）。
+ * 2026-08-25 严格模式：parse_tender_node 仅读取 confirmed=true 的评分点，
+ * 未确认评分点启动工作流会直接 error（无评分点），驱动类用例必须先确认。
+ */
+export async function confirmAllScorePoints(
+  apiCtx: APIRequestContext,
+  user: AuthedUser,
+  projectId: string,
+): Promise<void> {
+  const resp = await apiCtx.get(api(`/projects/${projectId}/score-points`), {
+    headers: bearer(user),
+  });
+  expect(resp.status(), `评分点列表获取失败: ${await resp.text()}`).toBe(200);
+  const points = ((await resp.json()) as BizResponse<Array<{ id: string }>>).data;
+  for (const sp of points) {
+    const upd = await apiCtx.put(api(`/projects/${projectId}/score-points/${sp.id}`), {
+      headers: bearer(user),
+      data: { confirmed: true },
+    });
+    expect(upd.status(), `确认评分点失败: ${await upd.text()}`).toBe(200);
+  }
+}
+
 /** 获取一次工作流状态快照 */
 export async function getWorkflowStatus(
   apiCtx: APIRequestContext,

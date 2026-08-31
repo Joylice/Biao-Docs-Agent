@@ -13,6 +13,7 @@ import {
   api,
   backendHealthy,
   bearer,
+  confirmAllScorePoints,
   createProject,
   llmMockEnabled,
   registerAndLogin,
@@ -29,11 +30,18 @@ test.beforeEach(async ({ api: apiCtx }) => {
 });
 
 /** API 驱动工作流到 confirm_outline 挂起（大纲待确认态） */
+function projectAbbr(name: string): string {
+  if (!name) return '';
+  return name.length > 6 ? `${name.slice(0, 6)}…` : name;
+}
+
 async function driveToOutlineConfirm(
   apiCtx: APIRequestContext,
   user: AuthedUser,
   projectId: string,
 ): Promise<void> {
+  // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+  await confirmAllScorePoints(apiCtx, user, projectId);
   await apiCtx.post(api(`/projects/${projectId}/workflow/start`), { headers: bearer(user) });
   await waitForWorkflowStatus(
     apiCtx,
@@ -148,8 +156,8 @@ test.describe('工作台双视图（阶段 C）', () => {
     await page.goto('/');
     await expect(page).toHaveURL(/\/workbench$/);
     await expect(page.getByText('我的待办')).toBeVisible({ timeout: 30_000 });
-    // 待办条目为文本 span（项目名 · 章号 标题），非 title 属性
-    const todo = page.getByText(`${project.name} · 1 mock`, { exact: true });
+    // 待办条目为文本 span（章号 标题 · 项目名截断），非 title 属性；对齐 WorkbenchView 渲染格式
+    const todo = page.getByText(`1 mock · ${projectAbbr(project.name)}`, { exact: true });
     await expect(todo).toBeVisible({ timeout: 30_000 });
 
     // 2. 待办条目点击 → 直达该项目分工页

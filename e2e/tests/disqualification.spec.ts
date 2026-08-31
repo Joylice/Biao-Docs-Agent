@@ -187,6 +187,8 @@ test.describe('废标条款识别：前端风险展示', () => {
     await expect(page.getByText('废标风险', { exact: true }).first()).toBeVisible({
       timeout: 30_000,
     });
+    // antd tab-pane 惰性渲染：默认激活「评分点」Tab，先点击「废标风险」Tab 再断言条款
+    await page.getByRole('tab', { name: '废标风险' }).click();
     await expect(page.getByText('项目经理资质不符按废标处理')).toBeVisible();
     await expect(page.getByText('已确认').first()).toBeVisible();
 

@@ -26,6 +26,7 @@ import {
   test,
   waitForDocumentStatus,
   waitForWorkflowStatus,
+  confirmAllScorePoints,
   expect,
   type AuthedUser,
 } from '../fixtures/auth';
@@ -93,6 +94,8 @@ async function driveToOutline(
   user: AuthedUser,
   projectId: string,
 ): Promise<{ chapter_no: string; title: string }> {
+  // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+  await confirmAllScorePoints(apiCtx, user, projectId);
   await apiCtx.post(api(`/projects/${projectId}/workflow/start`), { headers: bearer(user) });
   await waitForWorkflowStatus(
     apiCtx,
@@ -650,6 +653,8 @@ test.describe('2 级目录 + 提交人 + 意见回派（阶段 5）', () => {
     // 确认大纲 → 章节生成 → 审阅挂起
     const confirm = await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
       headers: bearer(owner),
+      // 2026-08-25 起默认分工驱动（start_generation=False）；本用例验证自动生成链路，显式开启
+      data: { start_generation: true },
     });
     expect(confirm.status()).toBe(200);
     await waitForWorkflowStatus(
@@ -693,6 +698,8 @@ test.describe('版本库：快照 / 下载 / 归档（阶段 6）', () => {
   /** 驱动到 review_request 挂起（chapters 非空，满足快照前置） */
   async function driveToReview(apiCtx: APIRequestContext, user: AuthedUser, projectId: string) {
     await uploadParsedTender(apiCtx, user, projectId);
+    // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流
+    await confirmAllScorePoints(apiCtx, user, projectId);
     await apiCtx.post(api(`/projects/${projectId}/workflow/start`), { headers: bearer(user) });
     await waitForWorkflowStatus(
       apiCtx,
@@ -713,6 +720,8 @@ test.describe('版本库：快照 / 下载 / 归档（阶段 6）', () => {
     );
     await apiCtx.post(api(`/projects/${projectId}/workflow/confirm-outline`), {
       headers: bearer(user),
+      // 2026-08-25 起默认分工驱动（start_generation=False）；本链路验证章节自动生成，显式开启
+      data: { start_generation: true },
     });
     return waitForWorkflowStatus(
       apiCtx,

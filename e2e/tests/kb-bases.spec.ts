@@ -17,6 +17,7 @@ import {
   api,
   backendHealthy,
   bearer,
+  confirmAllScorePoints,
   type BizResponse,
   createProject,
   llmMockEnabled,
@@ -249,6 +250,8 @@ test.describe('知识库库级挂载', () => {
     const base = await createKbBase(apiCtx, owner, 'personal', `E2E挂载库-${Date.now()}`);
 
     // 驱动到大纲待确认
+    // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+    await confirmAllScorePoints(apiCtx, owner, project.id);
     await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(owner) });
     await waitForWorkflowStatus(
       apiCtx,
@@ -271,7 +274,7 @@ test.describe('知识库库级挂载', () => {
     // 携带 mounted_kb_ids 确认大纲 → 200 且章节生成正常推进到审阅挂起
     const confirm = await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
       headers: bearer(owner),
-      data: { mounted_kb_ids: [base.id] },
+      data: { mounted_kb_ids: [base.id], start_generation: true },
     });
     expect(confirm.status(), `确认大纲失败: ${await confirm.text()}`).toBe(200);
     const review = await waitForWorkflowStatus(

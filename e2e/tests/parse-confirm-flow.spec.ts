@@ -15,6 +15,7 @@ import {
   api,
   backendHealthy,
   bearer,
+  confirmAllScorePoints,
   type BizResponse,
   createProject,
   llmMockEnabled,
@@ -89,13 +90,18 @@ test.describe('UI：招标解析 → 确认评分点 → 大纲 → 生成', () 
     }, user.accessToken);
     await page.goto(`/projects/${project.id}/parse`);
 
-    // 1. 解析页展示智能解析的评分点（内嵌确认页）
-    await expect(page.getByRole('button', { name: '确认并生成大纲' })).toBeVisible({
+    // 1. 解析页展示智能解析的评分点（内嵌确认页；按钮名为「生成大纲」，2026-08-25 起确认后进入分工驱动）
+    await expect(page.getByRole('button', { name: '生成大纲' })).toBeVisible({
       timeout: 30_000,
     });
 
+    // 1.1 勾选首条评分点确认（严格模式：canGenerate = confirmedCount > 0；排除测量行）
+    const firstScoreRow = page.locator('.ant-table-tbody tr.ant-table-row').first();
+    await expect(firstScoreRow).toBeVisible({ timeout: 30_000 });
+    await firstScoreRow.locator('.ant-checkbox-input').last().check();
+
     // 2. 确认：前端自动 start workflow → 等待 interrupt → confirm-score-points
-    await page.getByRole('button', { name: '确认并生成大纲' }).click();
+    await page.getByRole('button', { name: '生成大纲' }).click();
 
     // 3. 跳转方案生成页，大纲生成完成后出现「确认大纲」主按钮（mock 秒级；
     //    确认态底部「开始生成」已收敛为大纲卡「确认大纲」单一入口）
@@ -104,11 +110,12 @@ test.describe('UI：招标解析 → 确认评分点 → 大纲 → 生成', () 
       timeout: 60_000,
     });
 
-    // 4. 确认大纲（confirm-outline）→ 章节产出完成 → 进入审阅入口出现
+    // 4. 确认大纲（confirm-outline，2026-08-25 起默认分工驱动）→ 生成页出现「前往分工编制」引导
     await page.getByRole('button', { name: '确认大纲' }).click();
-    await expect(page.getByRole('button', { name: '进入审阅' })).toBeVisible({
-      timeout: 90_000,
+    await expect(page.getByText('大纲已确认，请前往分工页进行章节编制')).toBeVisible({
+      timeout: 30_000,
     });
+    await expect(page.getByRole('button', { name: '前往分工编制' })).toBeVisible();
   });
 
   test('大纲编辑草稿：树形编辑后刷新可恢复（防抖保存 + 恢复弹窗）', async ({
@@ -122,6 +129,8 @@ test.describe('UI：招标解析 → 确认评分点 → 大纲 → 生成', () 
     await uploadParsedTender(apiCtx, user, project.id);
 
     // API 驱动工作流到 confirm_outline（大纲编辑态）
+    // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+    await confirmAllScorePoints(apiCtx, user, project.id);
     await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
     await waitForWorkflowStatus(
       apiCtx,
@@ -152,9 +161,9 @@ test.describe('UI：招标解析 → 确认评分点 → 大纲 → 生成', () 
     }, user.accessToken);
     await page.goto(`/projects/${project.id}/generate`);
 
-    // 1. 大纲编辑卡与左侧大纲树就绪（mock 大纲单章，左侧树显示「1 mock」）
+    // 1. 大纲编辑卡就绪（confirm_outline 态仅编辑卡、无左侧 sider；mock 大纲单章 title="mock"）
     await expect(page.getByText('大纲编辑')).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('.gen-sider')).toContainText('1 mock', { timeout: 30_000 });
+    await expect(page.getByPlaceholder('章节标题').first()).toHaveValue('mock', { timeout: 30_000 });
 
     // 2. 树形编辑：改章节标题 + 添加子节并输入标题
     await page.getByPlaceholder('章节标题').first().fill('定制章节标题');
@@ -229,6 +238,8 @@ test.describe('UI：招标解析 → 确认评分点 → 大纲 → 生成', () 
     await uploadParsedTender(apiCtx, user, project.id);
 
     // API 驱动工作流到 review_request（章节全部生成后挂起审阅）
+    // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+    await confirmAllScorePoints(apiCtx, user, project.id);
     await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
     await waitForWorkflowStatus(
       apiCtx,
@@ -249,6 +260,8 @@ test.describe('UI：招标解析 → 确认评分点 → 大纲 → 生成', () 
     );
     await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
       headers: bearer(user),
+      // 2026-08-25 起默认分工驱动（start_generation=False）；本用例验证自动生成链路，显式开启
+      data: { start_generation: true },
     });
     await waitForWorkflowStatus(
       apiCtx,
@@ -269,13 +282,13 @@ test.describe('UI：招标解析 → 确认评分点 → 大纲 → 生成', () 
     }, user.accessToken);
     await page.goto(`/projects/${project.id}/parse`);
 
-    // 1. 解析页展示「确认并生成大纲」
-    await expect(page.getByRole('button', { name: '确认并生成大纲' })).toBeVisible({
+    // 1. 解析页展示「生成大纲」（2026-08-25 起按钮名收敛）
+    await expect(page.getByRole('button', { name: '生成大纲' })).toBeVisible({
       timeout: 30_000,
     });
 
     // 2. 点击后立即给出引导提示（而非 60s 轮询空转），且不跳转
-    await page.getByRole('button', { name: '确认并生成大纲' }).click();
+    await page.getByRole('button', { name: '生成大纲' }).click();
     await expect(page.getByText(/工作流已进入后续阶段/)).toBeVisible({ timeout: 15_000 });
     await expect(page).toHaveURL(/\/parse$/);
   });

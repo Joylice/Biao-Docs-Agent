@@ -20,6 +20,7 @@ import {
   api,
   backendHealthy,
   bearer,
+  confirmAllScorePoints,
   type BizResponse,
   createProject,
   llmMockEnabled,
@@ -149,6 +150,8 @@ async function driveToOutlineInterrupt(
   user: AuthedUser,
   projectId: string,
 ): Promise<void> {
+  // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+  await confirmAllScorePoints(apiCtx, user, projectId);
   await apiCtx.post(api(`/projects/${projectId}/workflow/start`), { headers: bearer(user) });
   await waitForWorkflowStatus(
     apiCtx,
@@ -177,7 +180,7 @@ async function confirmNestedOutlineIdle(
 ): Promise<void> {
   const confirm = await apiCtx.post(api(`/projects/${projectId}/workflow/confirm-outline`), {
     headers: bearer(user),
-    data: { outline: NESTED_OUTLINE },
+    data: { outline: NESTED_OUTLINE, start_generation: true },
   });
   expect(confirm.status(), `确认大纲失败: ${await confirm.text()}`).toBe(200);
   await waitForWorkflowStatus(
@@ -237,7 +240,7 @@ test.describe('子节级分工全链路（阶段 B）', () => {
     await driveToOutlineInterrupt(apiCtx, owner, project.id);
     await confirmNestedOutlineIdle(apiCtx, owner, project.id);
 
-    // 1. owner 分配子节 1.1 → 章聚合行（id/assignee=null）+ children=['1.1']
+    // 1. owner 分配子节 1.1 → 章聚合行（id=null，单一负责人回填 assignee）+ children=['1.1']
     const assign = await apiCtx.post(api(`/projects/${project.id}/chapter-assignments`), {
       headers: bearer(owner),
       data: [{ chapter_no: '1.1', title: '项目背景', assignee_id: member.userId }],
@@ -247,7 +250,7 @@ test.describe('子节级分工全链路（阶段 B）', () => {
     const ch1 = tree.find((t) => t.chapter_no === '1');
     expect(ch1, '章聚合行应存在').toBeDefined();
     expect(ch1!.id, '无自身分工的章行 id 应为 null').toBeNull();
-    expect(ch1!.assignee_id).toBeNull();
+    expect(ch1!.assignee_id, '子节统一负责人应回填至聚合行').toBe(member.userId);
     expect(ch1!.children.map((c) => c.chapter_no)).toEqual(['1.1']);
     expect(ch1!.total).toBe(1);
     expect(ch1!.approved_count).toBe(0);
@@ -286,7 +289,7 @@ test.describe('子节级分工全链路（阶段 B）', () => {
       'submitted',
     );
 
-    // 5. UI：成员分工页「我的任务」展示子节 1.1 待审核
+    // 5. UI：成员分工页看板「已提审」泳道展示子节 1.1（卡片含编号/负责人/标题）
     try {
       await page.goto('/login', { timeout: 10_000 });
     } catch {
@@ -297,9 +300,12 @@ test.describe('子节级分工全链路（阶段 B）', () => {
       localStorage.setItem('access_token', token);
     }, member.accessToken);
     await page.goto(`/projects/${project.id}/division`);
-    const task = page.locator('.task-item').filter({ hasText: '1.1 项目背景' });
+    const task = page
+      .locator('.kanban__column')
+      .filter({ hasText: '已提审' })
+      .locator('.kanban__card')
+      .filter({ hasText: /1\.1.*项目背景/ });
     await expect(task).toBeVisible({ timeout: 30_000 });
-    await expect(task).toContainText('待审核');
 
     // 6. owner 审核通过 → 子节 approved；章聚合行 approved_count=1
     const approve = await apiCtx.post(
@@ -323,8 +329,12 @@ test.describe('子节级分工全链路（阶段 B）', () => {
     expect(after.approved_count).toBe(1);
     await page.reload();
     await expect(
-      page.locator('.task-item').filter({ hasText: '1.1 项目背景' }),
-    ).toContainText('已通过', { timeout: 30_000 });
+      page
+        .locator('.kanban__column')
+        .filter({ hasText: '已通过' })
+        .locator('.kanban__card')
+        .filter({ hasText: /1\.1.*项目背景/ }),
+    ).toBeVisible({ timeout: 30_000 });
   });
 
   test('章级分配自动展开为全部子节（替换旧分工并重置 pending）', async ({

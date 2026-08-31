@@ -15,6 +15,7 @@ import {
   api,
   backendHealthy,
   bearer,
+  confirmAllScorePoints,
   type AuthedUser,
   type BizResponse,
   createProject,
@@ -92,6 +93,8 @@ async function driveToReview(
   user: AuthedUser,
   projectId: string,
 ): Promise<WorkflowStatus> {
+  // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+  await confirmAllScorePoints(apiCtx, user, projectId);
   await apiCtx.post(api(`/projects/${projectId}/workflow/start`), { headers: bearer(user) });
   await waitForWorkflowStatus(
     apiCtx,
@@ -113,6 +116,8 @@ async function driveToReview(
   );
   const outline = await apiCtx.post(api(`/projects/${projectId}/workflow/confirm-outline`), {
     headers: bearer(user),
+    // 2026-08-25 起默认分工驱动（start_generation=False）；本链路验证章节自动生成，显式开启
+    data: { start_generation: true },
   });
   expect(outline.status()).toBe(200);
   return waitForWorkflowStatus(

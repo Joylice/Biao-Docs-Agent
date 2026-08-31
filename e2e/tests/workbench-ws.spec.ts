@@ -29,6 +29,12 @@ interface WsMessage {
   [k: string]: unknown;
 }
 
+/** 与 WorkbenchView.vue projectAbbr 同规则：超 6 字符截断加省略号（待办条目文本匹配用） */
+function projectAbbr(name: string): string {
+  if (!name) return '';
+  return name.length > 6 ? `${name.slice(0, 6)}…` : name;
+}
+
 /** owner 建项目并添加 member（分配前置：assignee 必须是项目成员） */
 async function setupProjectWithMember(
   apiCtx: APIRequestContext,
@@ -143,7 +149,7 @@ test.describe('阶段 C：工作台待办用户级 WebSocket 实时推送', () =
     // 才投递（vite dev 无 nginx try_files 单跳语义），过早重置会把落盘导航误计为重载
     await page.waitForLoadState('networkidle');
     mainFrameNavigations = 0; // 排除 goto 自身及 SPA fallback 的导航计数
-    const todo = page.getByText(`${project.name} · 1 E2E实时推送`, { exact: true });
+    const todo = page.getByText(`1 E2E实时推送 · ${projectAbbr(project.name)}`, { exact: true });
     await expect(todo).toHaveCount(0); // 分配前无该待办
 
     const wsHandle = await userWsOpened;

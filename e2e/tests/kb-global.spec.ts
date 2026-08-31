@@ -97,7 +97,21 @@ test.describe('全局资料库', () => {
 
   test('全局检索命中已索引资料', async ({ api: apiCtx }) => {
     const user = await registerAndLogin(apiCtx, 'kb-global-search');
-    const docId = await uploadGlobalMaterial(apiCtx, user);
+    // mock embedding 为文本 hash 确定性伪向量：仅「文档文本 == 查询词」时向量一致（相似度 1.0）必命中。
+    // 全局库跨用例共享（历史同名资料会挤占 top_k 席位），故用唯一检索词上传并查询同一 token。
+    const token = `ISO27001-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const resp = await apiCtx.post(api('/kb/materials'), {
+      headers: bearer(user),
+      multipart: {
+        file: {
+          name: 'global-unique.pdf',
+          mimeType: MATERIAL.mime,
+          buffer: buildMinimalPdf(token),
+        },
+      },
+    });
+    expect(resp.status(), `上传唯一检索词资料失败: ${await resp.text()}`).toBe(200);
+    const docId = ((await resp.json()) as BizResponse<{ id: string }>).data.id;
 
     // 等待 worker 向量化（uploaded → indexed / failed）；未就绪则 skip（非断言失败）
     const deadline = Date.now() + 60_000;
@@ -123,8 +137,7 @@ test.describe('全局资料库', () => {
 
     const search = await apiCtx.get(api('/kb/materials/search'), {
       headers: bearer(user),
-      // top_k 拉满：全局库跨用例共享，历史同名资料可能占满前 5 席位
-      params: { q: 'ISO27001 certification', top_k: 20 },
+      params: { q: token, top_k: 5 },
     });
     expect(search.status(), `全局检索失败: ${await search.text()}`).toBe(200);
     const body = (await search.json()) as BizResponse<{
@@ -132,7 +145,7 @@ test.describe('全局资料库', () => {
       total: number;
     }>;
     expect(body.data.total).toBeGreaterThan(0);
-    // 断言本次上传文档命中（title 同名历史资料无法区分，不作断言）
+    // 文档文本与查询词一致（向量相同），必排在结果首位
     expect(body.data.items.map((i) => i.doc_id)).toContain(docId);
   });
 

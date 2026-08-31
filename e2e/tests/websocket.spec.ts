@@ -21,6 +21,7 @@ import {
   api,
   backendHealthy,
   bearer,
+  confirmAllScorePoints,
   type BizResponse,
   createProject,
   llmMockEnabled,
@@ -254,6 +255,8 @@ test.describe('WebSocket 流式推送', () => {
 
     await uploadParsedTender(apiCtx, user, project.id);
 
+    // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+    await confirmAllScorePoints(apiCtx, user, project.id);
     await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
     await waitForWorkflowStatus(
       apiCtx,
@@ -274,6 +277,8 @@ test.describe('WebSocket 流式推送', () => {
     );
     await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
       headers: bearer(user),
+      // 2026-08-25 起默认分工驱动（start_generation=False）；本用例验证自动生成事件流，显式开启
+      data: { start_generation: true },
     });
     await waitForWorkflowStatus(
       apiCtx,

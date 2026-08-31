@@ -140,7 +140,8 @@ test.describe('注册登录', () => {
       return;
     }
 
-    await page.getByPlaceholder('邮箱').fill(user.email);
+    // 登录页已从纯邮箱登录演进为用户名登录（后端兼容 username+email，前端仅 username 输入框）
+    await page.getByPlaceholder('用户名').fill(user.email);
     await page.getByPlaceholder('密码').fill(user.password);
     // antd 两字中文按钮会在中间插入空格（accessible name 为 "登 录"），用正则匹配
     await page.getByRole('button', { name: /登\s*录/ }).click();

@@ -19,6 +19,7 @@ import {
   api,
   backendHealthy,
   bearer,
+  confirmAllScorePoints,
   type BizResponse,
   createProject,
   llmMockEnabled,
@@ -75,6 +76,8 @@ async function driveToReview(
   user: AuthedUser,
   projectId: string,
 ): Promise<WorkflowStatus> {
+  // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+  await confirmAllScorePoints(apiCtx, user, projectId);
   await apiCtx.post(api(`/projects/${projectId}/workflow/start`), { headers: bearer(user) });
 
   await waitForWorkflowStatus(
@@ -98,6 +101,8 @@ async function driveToReview(
   );
   const outline = await apiCtx.post(api(`/projects/${projectId}/workflow/confirm-outline`), {
     headers: bearer(user),
+    // 2026-08-25 起默认分工驱动（start_generation=False）；本链路验证章节自动生成，显式开启
+    data: { start_generation: true },
   });
   expect(outline.status()).toBe(200);
 
@@ -138,6 +143,8 @@ test.describe('方案生成闭环', () => {
     const project = await createProject(apiCtx, user);
     await uploadParsedTender(apiCtx, user, project.id);
 
+    // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+    await confirmAllScorePoints(apiCtx, user, project.id);
     await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
     await waitForWorkflowStatus(
       apiCtx,
@@ -177,6 +184,8 @@ test.describe('方案生成闭环', () => {
     const project = await createProject(apiCtx, user);
     await uploadParsedTender(apiCtx, user, project.id);
 
+    // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+    await confirmAllScorePoints(apiCtx, user, project.id);
     await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
     await waitForWorkflowStatus(
       apiCtx,
@@ -208,7 +217,7 @@ test.describe('方案生成闭环', () => {
     ];
     const resp = await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
       headers: bearer(user),
-      data: { outline: edited, mounted_doc_ids: [] },
+      data: { outline: edited, mounted_doc_ids: [], start_generation: true },
     });
     expect(resp.status(), `确认编辑后大纲失败: ${await resp.text()}`).toBe(200);
 
@@ -234,6 +243,8 @@ test.describe('方案生成闭环', () => {
     const project = await createProject(apiCtx, user);
     await uploadParsedTender(apiCtx, user, project.id);
 
+    // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+    await confirmAllScorePoints(apiCtx, user, project.id);
     await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
     await waitForWorkflowStatus(
       apiCtx,
@@ -308,6 +319,8 @@ test.describe('方案生成闭环', () => {
     const project = await createProject(apiCtx, user);
     await uploadParsedTender(apiCtx, user, project.id);
 
+    // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+    await confirmAllScorePoints(apiCtx, user, project.id);
     await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
     await waitForWorkflowStatus(
       apiCtx,
@@ -336,6 +349,8 @@ test.describe('方案生成闭环', () => {
     // 确认大纲 → 章节生成 → review 挂起
     await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
       headers: bearer(user),
+      // 2026-08-25 起默认分工驱动（start_generation=False）；本用例验证自动生成链路，显式开启
+      data: { start_generation: true },
     });
     await waitForWorkflowStatus(
       apiCtx,
@@ -381,6 +396,8 @@ test.describe('方案生成闭环', () => {
     const project = await createProject(apiCtx, user);
     await uploadParsedTender(apiCtx, user, project.id);
 
+    // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+    await confirmAllScorePoints(apiCtx, user, project.id);
     await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
     await waitForWorkflowStatus(
       apiCtx,
@@ -416,6 +433,8 @@ test.describe('方案生成闭环', () => {
     expect(outlineStatus.outline[0].covered_clauses).toBeDefined();
     const outline = await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
       headers: bearer(user),
+      // 2026-08-25 起默认分工驱动（start_generation=False）；本用例验证自动生成链路，显式开启
+      data: { start_generation: true },
     });
     expect(outline.status()).toBe(200);
     const outlineBody = (await outline.json()) as BizResponse<{
@@ -551,6 +570,8 @@ test.describe('方案生成闭环', () => {
     const project = await createProject(apiCtx, user);
     await uploadParsedTender(apiCtx, user, project.id);
 
+    // 严格模式（2026-08-25）：先逐条确认评分点再启动工作流，否则 parse 节点直接 error
+    await confirmAllScorePoints(apiCtx, user, project.id);
     await apiCtx.post(api(`/projects/${project.id}/workflow/start`), { headers: bearer(user) });
     await waitForWorkflowStatus(
       apiCtx,
@@ -614,7 +635,7 @@ test.describe('方案生成闭环', () => {
     // 人工确认调整后大纲 → 章节按新结构生成 → review 挂起
     const confirmResp = await apiCtx.post(api(`/projects/${project.id}/workflow/confirm-outline`), {
       headers: bearer(user),
-      data: { outline: applyBody.data.outline, mounted_doc_ids: [] },
+      data: { outline: applyBody.data.outline, mounted_doc_ids: [], start_generation: true },
     });
     expect(confirmResp.status(), `确认调整后大纲失败: ${await confirmResp.text()}`).toBe(200);
     const review = await waitForWorkflowStatus(
