@@ -57,7 +57,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { fetchChapterContent } from '@/api'
-import { markdownToHtml } from '@/components/editor/utils/markdown-converter'
+import { markdownToHtml } from '@/utils/markdown-converter'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 

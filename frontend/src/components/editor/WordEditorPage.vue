@@ -500,26 +500,19 @@ import WordEditorRuler from './WordEditorRuler.vue'
 import WordEditorProperties from './WordEditorProperties.vue'
 import WordEditorComments from './WordEditorComments.vue'
 import WordEditorVersionHistory from './WordEditorVersionHistory.vue'
-import { markdownToHtml } from './utils/markdown-converter'
 import { exportToWord, printDocument } from './utils/word-export'
 import { insertToc, updateToc } from './utils/toc-generator'
-import {
-  acceptAssignment,
-  submitAssignment,
-  approveAssignment,
-  rejectAssignment,
-  assistChapter,
-} from '@/api'
-import type { AssignmentItem, AssistRequest } from '@/types'
-import { currentUserId } from '@/stores/currentUser'
+import type { AssignmentItem } from '@/types'
 import { usePermission } from '@/composables/usePermission'
+import { useTaskWorkflow } from '@/composables/useTaskWorkflow'
 import { useHotkeys } from '@/composables/useHotkeys'
 import { useImageUpload } from '@/composables/useImageUpload'
 import { useFormatBrush } from '@/composables/useFormatBrush'
 import { useAiAssistant } from '@/composables/useAiAssistant'
 import { useChapterPersistence } from '@/composables/useChapterPersistence'
 import { useEditorPanels } from '@/composables/useEditorPanels'
-import { FONT_SIZE_OPTIONS } from './extensions/font-size'
+import { useEditorAiAssist } from '@/composables/useEditorAiAssist'
+import { useEditorTextUtils } from '@/composables/useEditorTextUtils'
 import { provide } from 'vue'
 
 /* ---------------- 路由参数 ---------------- */
@@ -546,53 +539,36 @@ watch(
   { immediate: true },
 )
 
-/* ---------------- 任务状态（从分工树中查找当前章节） ---------------- */
-const { isProjectOwner } = usePermission()
+/* ---------------- 任务状态机（useTaskWorkflow） ---------------- */
+const routeReadonly = computed(() => route.query.readonly === '1')
 const projectOwnerId = ref('')
 const currentTask = ref<AssignmentItem | null>(null)
-
-/** 路由 readonly 参数：分工页跳转时标记非本人章节为只读 */
-const routeReadonly = computed(() => route.query.readonly === '1')
-
-const isOwner = computed(() => isProjectOwner(projectOwnerId.value))
-const isAssignee = computed(
-  () => !!currentTask.value && currentTask.value.assignee_id === currentUserId.value,
-)
 const isMember = ref(false)
-/**
- * 编辑权限（2026-08-26 按产品确认放宽）：
- * - 无分工任务 → 只读
- * - 项目负责人（owner）→ 只读（分配者/审核者视角，不参与编制）
- * - 项目成员（含 assignee 及其他成员）且有分工记录 → 可编辑
- * - 非项目成员 → 只读（后端 403 兜底，前端仅控制 UI）
- */
+
+// 本地计算 canEdit（用于传递给 useChapterPersistence）
+const { isProjectOwner } = usePermission()
 const canEdit = computed(() => {
   if (!currentTask.value) return false
-  if (isOwner.value) return false
+  if (isProjectOwner(projectOwnerId.value)) return false
   if (!isMember.value) return false
   return true
 })
-/** 只读模式：不可编辑 或 路由标记 readonly */
-const isReadOnly = computed(() => !canEdit.value || routeReadonly.value)
 
-/** 权限状态描述（用于编辑区顶部提示横幅） */
-const permissionHint = computed<{ type: 'success' | 'error' | 'warning' | 'info'; text: string }>(() => {
-  if (routeReadonly.value) return { type: 'info', text: '只读预览模式' }
-  if (!currentTask.value) return { type: 'warning', text: '该章节暂无分工记录，仅可查看' }
-  if (isOwner.value) return { type: 'info', text: '项目负责人仅可查看，章节内容由项目成员编制' }
-  if (!isMember.value) return { type: 'warning', text: '您不是项目成员，仅可查看' }
-  if (isAssignee.value) {
-    const status = currentTask.value.status
-    if (status === 'pending') return { type: 'info', text: '章节可编辑（作为负责人，可先领取任务跟进状态）' }
-    if (status === 'in_progress') return { type: 'success', text: '章节编制中，内容将自动保存' }
-    if (status === 'rejected') return { type: 'error', text: '章节被打回，请修改后重新提交' }
-    if (status === 'submitted') return { type: 'info', text: '已提交审核，等待项目负责人审核' }
-    if (status === 'approved') return { type: 'success', text: '审核已通过，内容已锁定' }
-  }
-  const status = currentTask.value.status
-  if (status === 'approved') return { type: 'success', text: '审核已通过，内容已锁定' }
-  return { type: 'success', text: '您作为项目成员可编辑本章节，内容将自动保存' }
-})
+// 立即初始化 taskWorkflow（传入 loadChapter，虽然 loadChapter 还未定义，但 useTaskWorkflow 不会立即调用它）
+let taskWorkflow: ReturnType<typeof useTaskWorkflow>
+let _loadChapterForTask: (() => Promise<void>) | null = null
+
+// 在 useChapterPersistence 后设置 loadChapter 回调
+const setLoadChapter = (fn: () => Promise<void>) => {
+  _loadChapterForTask = fn
+  taskWorkflow = useTaskWorkflow({
+    projectId,
+    currentTask,
+    projectOwnerId,
+    isMember,
+    loadChapter: fn,
+  })
+}
 
 /* ---------------- 加载 / 保存（useChapterPersistence） ---------------- */
 const {
@@ -610,184 +586,73 @@ const {
   projectId,
   chapterNo,
   getEditorHtml: () => editorRef.value?.getHTML() ?? '',
-  isReadOnly: () => isReadOnly.value,
+  isReadOnly: () => !canEdit.value || routeReadonly.value,
   onLoaded: ({ projectOwnerId: ownerId, currentTask: task, isProjectMember }) => {
     projectOwnerId.value = ownerId
     currentTask.value = task
     isMember.value = isProjectMember
+    // 确保 taskWorkflow 已初始化
+    if (!taskWorkflow && _loadChapterForTask) {
+      taskWorkflow = useTaskWorkflow({
+        projectId,
+        currentTask,
+        projectOwnerId,
+        isMember,
+        loadChapter: _loadChapterForTask,
+      })
+    }
   },
 })
 
-const taskStatusText = computed(() => {
-  const map: Record<string, string> = {
-    pending: '待领取',
-    in_progress: '编制中',
-    rejected: '被打回',
-    submitted: '已提审',
-    approved: '已通过',
-  }
-  return map[currentTask.value?.status || ''] || ''
+// 设置 loadChapter 回调（在 useChapterPersistence 之后）
+setLoadChapter(loadChapter)
+
+/* ---------------- 从 taskWorkflow 解构状态和方法 ---------------- */
+// 注意：需要确保 taskWorkflow 已初始化（在 setLoadChapter 后访问）
+const taskState = computed(() => taskWorkflow || null)
+
+const isAssignee = computed(() => taskState.value?.isAssignee.value ?? false)
+const isReadOnly = computed(() => taskState.value?.isReadOnly.value ?? true)
+const permissionHint = computed(() => taskState.value?.permissionHint.value ?? { type: 'info', text: '' })
+const taskStatusText = computed(() => taskState.value?.taskStatusText.value ?? '')
+const taskStatusColor = computed(() => taskState.value?.taskStatusColor.value ?? 'default')
+const canAccept = computed(() => taskState.value?.canAccept.value ?? false)
+const canSubmit = computed(() => taskState.value?.canSubmit.value ?? false)
+const canApprove = computed(() => taskState.value?.canApprove.value ?? false)
+const canReject = computed(() => taskState.value?.canReject.value ?? false)
+const accepting = computed(() => taskState.value?.accepting.value ?? false)
+const submittingTask = computed(() => taskState.value?.submittingTask.value ?? false)
+const approving = computed(() => taskState.value?.approving.value ?? false)
+const rejectingTask = computed(() => taskState.value?.rejectingTask.value ?? false)
+const showRejectModal = computed({
+  get: () => taskState.value?.showRejectModal.value ?? false,
+  set: (val) => { if (taskState.value) taskState.value.showRejectModal.value = val }
 })
-
-const taskStatusColor = computed(() => {
-  const map: Record<string, string> = {
-    pending: 'default',
-    in_progress: 'processing',
-    rejected: 'error',
-    submitted: 'warning',
-    approved: 'success',
-  }
-  return map[currentTask.value?.status || ''] || 'default'
+const rejectComment = computed({
+  get: () => taskState.value?.rejectComment.value ?? '',
+  set: (val) => { if (taskState.value) taskState.value.rejectComment.value = val }
 })
-
-const canAccept = computed(
-  () =>
-    isAssignee.value &&
-    currentTask.value?.status === 'pending',
-)
-const canSubmit = computed(
-  () => isAssignee.value && currentTask.value?.status === 'in_progress',
-)
-const canApprove = computed(() => isOwner.value && currentTask.value?.status === 'submitted')
-const canReject = computed(() => isOwner.value && currentTask.value?.status === 'submitted')
-
-// 任务操作状态
-const accepting = ref(false)
-const submittingTask = ref(false)
-const approving = ref(false)
-const rejectingTask = ref(false)
-const showRejectModal = ref(false)
-const rejectComment = ref('')
-
-const handleAccept = async () => {
-  if (!currentTask.value) return
-  accepting.value = true
-  try {
-    await acceptAssignment(projectId, currentTask.value.id)
-    message.success('已领取任务')
-    await loadChapter()
-  } catch {
-    message.error('领取失败')
-  } finally {
-    accepting.value = false
-  }
-}
-
+const handleAccept = async () => taskState.value?.handleAccept()
 const handleSubmit = async () => {
-  if (!currentTask.value) return
   await saveNow()
-  submittingTask.value = true
-  try {
-    await submitAssignment(projectId, currentTask.value.id)
-    message.success('已提交审核')
-    await loadChapter()
-  } catch {
-    message.error('提交失败')
-  } finally {
-    submittingTask.value = false
-  }
+  await taskState.value?.handleSubmit()
 }
+const handleApprove = async () => taskState.value?.handleApprove()
+const handleReject = async () => taskState.value?.handleReject()
 
-const handleApprove = async () => {
-  if (!currentTask.value) return
-  approving.value = true
-  try {
-    await approveAssignment(projectId, currentTask.value.id)
-    message.success('审核通过')
-    await loadChapter()
-  } catch {
-    message.error('操作失败')
-  } finally {
-    approving.value = false
-  }
-}
-
-const handleReject = async () => {
-  if (!currentTask.value) return
-  rejectingTask.value = true
-  try {
-    await rejectAssignment(projectId, currentTask.value.id, rejectComment.value || '审核不通过')
-    message.success('已打回')
-    showRejectModal.value = false
-    rejectComment.value = ''
-    await loadChapter()
-  } catch {
-    message.error('操作失败')
-  } finally {
-    rejectingTask.value = false
-  }
-}
-
-/* ---------------- AI 辅助 ---------------- */
-const assistPrompt = ref('')
-const assistMode = ref<'append' | 'overwrite'>('append')
-const assisting = ref(false)
-
-const handleAssist = async () => {
-  if (!assistPrompt.value.trim()) return
-  if (!currentTask.value) {
-    message.error('未找到当前章节的分工记录，请先在分工页推送分工')
-    return
-  }
-  if (!isAssignee.value) {
-    message.error('仅章节负责人可使用 AI 辅助功能')
-    return
-  }
-  if (!['in_progress', 'rejected'].includes(currentTask.value.status)) {
-    message.error('请先领取任务后再使用 AI 辅助')
-    return
-  }
-
-  assisting.value = true
-  try {
-    const payload: AssistRequest = {
-      chapter_no: chapterNo,
-      prompt: assistPrompt.value,
-      mode: assistMode.value,
-    }
-    console.log('[AI辅助] 请求参数:', { assignmentId: currentTask.value.id, payload })
-    const { data } = await assistChapter(projectId, currentTask.value.id, payload)
-    console.log('[AI辅助] 响应:', data)
-    const newContent = data.data?.content
-    if (typeof newContent === 'string' && newContent.trim()) {
-      const html = markdownToHtml(newContent)
-      const inst = editorInstance.value
-      if (inst) {
-        if (assistMode.value === 'append') {
-          inst.chain().focus().insertContent(html).run()
-        } else {
-          inst.chain().focus().setContent(html).run()
-        }
-      }
-      message.success('AI 辅助完成，内容已插入')
-      assistPrompt.value = ''
-    } else {
-      message.warning('AI 未生成有效内容，请调整提示词后重试')
-    }
-  } catch (err) {
-    console.error('[AI辅助] 失败:', err)
-    const e = err as {
-      response?: { status?: number; data?: { message?: string } }
-      message?: string
-    }
-    const status = e?.response?.status
-    const body = e?.response?.data
-    const msg = body?.message || e?.message
-    let friendlyMsg = 'AI 辅助失败'
-    if (status === 400) {
-      friendlyMsg = `请求参数错误：${msg || '请检查输入'}`
-    } else if (status === 403) {
-      friendlyMsg = `权限不足：${msg || '仅章节负责人可使用'}`
-    } else if (status === 5011) {
-      friendlyMsg = `AI 服务异常：${msg || '请稍后重试或联系管理员'}`
-    } else if (msg) {
-      friendlyMsg = msg
-    }
-    message.error(friendlyMsg, 5)
-  } finally {
-    assisting.value = false
-  }
-}
+/* ---------------- AI 辅助（useEditorAiAssist） ---------------- */
+const {
+  assistPrompt,
+  assistMode,
+  assisting,
+  handleAssist,
+} = useEditorAiAssist({
+  projectId,
+  chapterNo,
+  getEditor: () => editorInstance.value,
+  getCurrentTask: () => currentTask.value,
+  getIsAssignee: () => isAssignee.value,
+})
 
 /** 导出为 Word .doc 文件 */
 const handleExportWord = () => {
@@ -931,55 +796,10 @@ const aiAssistant = useAiAssistant(
 )
 const { loading: aiLoading, applyAiAction, autoFormat } = aiAssistant
 
-/* ---------------- 字号增减 ---------------- */
-
-/**
- * 增大字号：在 FONT_SIZE_OPTIONS（从大到小排列）中找到当前字号，
- * 取上一个（更大）的 value 调用 setFontSize。
- */
-const increaseFontSize = () => {
-  const ed = editorInstance.value
-  if (!ed) return
-  const current = ed.getAttributes('textStyle').fontSize as string | null | undefined
-  const idx = current
-    ? FONT_SIZE_OPTIONS.findIndex((o) => o.value === current)
-    : -1
-  if (idx === -1) {
-    // 当前字号不在预设中：取首个大于当前 px 的选项
-    const currentPx = current ? parseFloat(current) : 14
-    const next = FONT_SIZE_OPTIONS.find((o) => parseFloat(o.value) > currentPx)
-    if (next) ed.chain().focus().setFontSize(next.value).run()
-    return
-  }
-  if (idx > 0) {
-    ed.chain().focus().setFontSize(FONT_SIZE_OPTIONS[idx - 1].value).run()
-  }
-}
-
-/**
- * 减小字号：在 FONT_SIZE_OPTIONS 中取下一个（更小）的 value。
- */
-const decreaseFontSize = () => {
-  const ed = editorInstance.value
-  if (!ed) return
-  const current = ed.getAttributes('textStyle').fontSize as string | null | undefined
-  const idx = current
-    ? FONT_SIZE_OPTIONS.findIndex((o) => o.value === current)
-    : -1
-  if (idx === -1) {
-    const currentPx = current ? parseFloat(current) : 14
-    for (let i = FONT_SIZE_OPTIONS.length - 1; i >= 0; i--) {
-      if (parseFloat(FONT_SIZE_OPTIONS[i].value) < currentPx) {
-        ed.chain().focus().setFontSize(FONT_SIZE_OPTIONS[i].value).run()
-        return
-      }
-    }
-    return
-  }
-  if (idx < FONT_SIZE_OPTIONS.length - 1) {
-    ed.chain().focus().setFontSize(FONT_SIZE_OPTIONS[idx + 1].value).run()
-  }
-}
+/* ---------------- 字号增减（useEditorTextUtils） ---------------- */
+const { increaseFontSize, decreaseFontSize } = useEditorTextUtils(
+  () => editorInstance.value,
+)
 
 /* ---------------- 快捷键系统 ---------------- */
 useHotkeys([

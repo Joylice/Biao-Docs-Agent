@@ -119,9 +119,9 @@ import {
   ZoomInOutlined,
   ZoomOutOutlined,
 } from '@ant-design/icons-vue'
+import type { SaveStatus } from '@/types/editor'
 
-/** 保存状态机（与 WordEditorPage 保持一致） */
-export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+export type { SaveStatus }
 
 const props = defineProps<{
   /** 编辑器实例 */

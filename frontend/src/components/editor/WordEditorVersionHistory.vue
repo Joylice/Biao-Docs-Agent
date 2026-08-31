@@ -170,7 +170,7 @@ import {
   DeleteOutlined,
 } from '@ant-design/icons-vue'
 import { useVersionHistory, type DiffSegment } from '@/composables/useVersionHistory'
-import { htmlToMarkdown } from './utils/markdown-converter'
+import { htmlToMarkdown } from '@/utils/markdown-converter'
 
 const props = defineProps<{
   editor?: Editor

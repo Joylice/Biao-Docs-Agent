@@ -11,11 +11,6 @@ export const useProjectStore = defineStore('project', () => {
   const loading = ref(false)
   const error = ref('')
 
-  const isOwner = computed(() => {
-    // owner_id 需要从项目详情获取；currentUser store 中的用户 ID 由外部比对
-    return false // 占位，实际由组件通过 usePermission composable 判定
-  })
-
   const memberOptions = computed(() =>
     members.value.map((m) => ({
       value: m.user_id,
@@ -64,7 +59,6 @@ export const useProjectStore = defineStore('project', () => {
     members,
     loading,
     error,
-    isOwner,
     memberOptions,
     loadProject,
     loadMembers,

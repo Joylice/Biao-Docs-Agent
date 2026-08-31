@@ -367,8 +367,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { message, Empty } from 'ant-design-vue'
 import {
   DownloadOutlined,
@@ -376,21 +376,13 @@ import {
   CommentOutlined,
   HistoryOutlined,
 } from '@ant-design/icons-vue'
-import {
-  fetchWorkflowStatus,
-  confirmReview,
-  fetchChapterAssignments,
-  fetchDisqualificationRisks as fetchDisqualificationRisksApi,
-  fetchChapterContent,
-} from '@/api'
-import type { WorkflowStatus, AnnotationItem } from '@/types'
+import type { AnnotationItem } from '@/types'
 import { currentUserId } from '@/stores/currentUser'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 import WordEditor from '@/components/editor/WordEditor.vue'
-import { markdownToHtml } from '@/components/editor/utils/markdown-converter'
 import ReviewChapterList from './components/ReviewChapterList.vue'
 import ReviewProgressBar from './components/ReviewProgressBar.vue'
 import ReviewActionPanel from './components/ReviewActionPanel.vue'
@@ -399,39 +391,40 @@ import ReviewVersionCompare from './components/ReviewVersionCompare.vue'
 import ReviewExportModal from './components/ReviewExportModal.vue'
 import AnnotationEditModal from './components/AnnotationEditModal.vue'
 import { useAnnotations } from './composables/useAnnotations'
-
-interface OutlineNode { chapter_no: string; title: string; sections?: string[] }
-interface RiskItem {
-  clause_no: string
-  title: string
-  severity: string
-  risk_category: string
-  recommendation: string
-}
+import { useReviewState } from './composables/useReviewState'
+import { useReviewNavigation } from './composables/useReviewNavigation'
+import { useReviewActions } from './composables/useReviewActions'
 
 const route = useRoute()
-const router = useRouter()
 const projectId = route.params.projectId as string
 
-// 状态
-const loading = ref(false)
-const loadError = ref('')
-const chapters = ref<Record<string, string>>({})
-const chapterHtmlMap = ref<Record<string, string>>({})
-const contentLoading = ref(false)
-const outline = ref<OutlineNode[]>([])
-const submitters = ref<Record<string, string>>({})
-const expandedKeys = ref<string[]>([])
-const activeChapter = ref('')
-const reviewFeedback = ref<Record<string, string>>({})
-const approving = ref(false)
-const exportStatus = ref('')
-const exportStorageKey = ref('')
+/* ==================== 状态层（按依赖顺序初始化） ==================== */
 
-// UI 状态
-const rightTab = ref<'action' | 'annotation' | 'version'>('action')
+// 1. 基础状态
+const {
+  loading,
+  loadError,
+  chapters,
+  outline,
+  reviewFeedback,
+  exportStatus,
+  exportStorageKey,
+  disqualificationRisks,
+  polling,
+  fetchStatus,
+  applyStatus,
+  pollUntil,
+  stopPolling,
+  fetchSubmitters,
+  fetchDisqualificationRisks,
+  chapterKeys,
+  chapterStatuses,
+  approvedCount,
+  rejectedCount,
+  submitterOf,
+} = useReviewState(projectId)
 
-// 批注
+// 2. 批注
 const {
   annotationsLoading,
   newAnnotation,
@@ -447,77 +440,61 @@ const {
   setSelection,
 } = useAnnotations(projectId)
 
-// 批注UI状态
+// 3. 导航（依赖 state + annotations）
+const {
+  activeChapter,
+  expandedKeys,
+  chapterHtmlMap,
+  contentLoading,
+  viewMode,
+  fullContentRef,
+  activeChapterTitle,
+  activeChapterRisks,
+  currentHtml,
+  currentChapterMarkdown,
+  selectChapter,
+  loadChapterHtml,
+  clearHtmlCache,
+  stopFullObserver,
+} = useReviewNavigation({
+  projectId,
+  getChapters: () => chapters.value,
+  getOutline: () => outline.value,
+  getRisks: () => disqualificationRisks.value,
+  loadAnnotations,
+})
+
+// 4. 操作（依赖 state + navigation）
+const {
+  approving,
+  exportModalVisible,
+  handleApprove,
+  handleReject,
+  handleExport,
+  handleExported,
+  goToGenerate,
+} = useReviewActions({
+  projectId,
+  getActiveChapter: () => activeChapter.value,
+  getReviewFeedback: () => reviewFeedback.value,
+  setReviewFeedback: (v) => { reviewFeedback.value = v },
+  setExportStatus: (v) => { exportStatus.value = v },
+  setExportStorageKey: (v) => { exportStorageKey.value = v },
+  pollUntil,
+})
+
+/* ==================== UI 状态 ==================== */
+const rightTab = ref<'action' | 'annotation' | 'version'>('action')
 const annotationFilter = ref<'open' | 'resolved' | 'all'>('open')
 const activeAnnotationId = ref<string | null>(null)
 const wordEditorRef = ref<InstanceType<typeof WordEditor> | null>(null)
-
-// 版本子Tab
 const versionSubTab = ref<'list' | 'compare'>('list')
 const versionCompareRef = ref<InstanceType<typeof ReviewVersionCompare> | null>(null)
-
-// 预览模式
-const viewMode = ref<'single' | 'full'>('single')
-const fullContentRef = ref<HTMLElement | null>(null)
-let fullObserver: IntersectionObserver | null = null
-
-// 导出弹窗
-const exportModalVisible = ref(false)
-
-/** 版本列表（从 ReviewVersionSection 获取） */
-const versionList = computed(() => versionSectionRef.value?.versions || [])
-
-/** 当前章节的 Markdown 内容（用于版本比对） */
-const currentChapterMarkdown = computed(() => chapters.value[activeChapter.value] || '')
-
-// 废标风险
-const disqualificationRisks = ref<Record<string, RiskItem[]>>({})
-
 const versionSectionRef = ref<InstanceType<typeof ReviewVersionSection> | null>(null)
 const annotationEditRef = ref<InstanceType<typeof AnnotationEditModal> | null>(null)
 
-const chapterKeys = computed(() => Object.keys(chapters.value))
-const polling = computed(() => pollTimer !== null)
-const activeChapterTitle = computed(
-  () => outline.value.find((c) => c.chapter_no === activeChapter.value)?.title || '',
-)
-const activeChapterRisks = computed<RiskItem[]>(
-  () => disqualificationRisks.value[activeChapter.value] || [],
-)
-
-/** 当前章节的富文本HTML内容 */
-const currentHtml = computed(() => chapterHtmlMap.value[activeChapter.value] || '')
-
-const submitterOf = (chapterNo: string): string => submitters.value[chapterNo] || 'AI 生成/未分配'
-
-/** 各章节批注数量 */
-const annotationCounts = computed<Record<string, number>>(() => {
-  const counts: Record<string, number> = {}
-  chapterKeys.value.forEach((no) => {
-    counts[no] = annotationCountOf(no)
-  })
-  return counts
-})
-
-/** 有批注的章节数 */
-const annotatedCount = computed(
-  () => chapterKeys.value.filter((no) => annotationCountOf(no) > 0).length,
-)
-
-/** 章节审阅状态：approved / rejected / pending */
-const chapterStatuses = computed<Record<string, string>>(() => {
-  const statuses: Record<string, string> = {}
-  chapterKeys.value.forEach((no) => {
-    if (reviewFeedback.value[no]) {
-      statuses[no] = 'rejected'
-    } else if (exportStatus.value === 'done') {
-      statuses[no] = 'approved'
-    } else {
-      statuses[no] = 'pending'
-    }
-  })
-  return statuses
-})
+/* ==================== 计算属性 ==================== */
+const versionList = computed(() => versionSectionRef.value?.versions || [])
 
 const currentChapterStatus = computed(() => chapterStatuses.value[activeChapter.value] || 'pending')
 const currentStatusText = computed(() => {
@@ -529,19 +506,24 @@ const currentStatusColor = computed(() => {
   return map[currentChapterStatus.value] || 'default'
 })
 
-/** 当前章节批注列表 */
-const currentAnnotations = computed(() => annotationListOf(activeChapter.value))
+const annotationCounts = computed<Record<string, number>>(() => {
+  const counts: Record<string, number> = {}
+  chapterKeys.value.forEach((no) => { counts[no] = annotationCountOf(no) })
+  return counts
+})
 
-/** 未解决批注数 */
+const annotatedCount = computed(
+  () => chapterKeys.value.filter((no) => annotationCountOf(no) > 0).length,
+)
+
+const currentAnnotations = computed(() => annotationListOf(activeChapter.value))
 const openAnnotationCount = computed(
   () => currentAnnotations.value.filter((a) => a.status !== 'resolved').length,
 )
-/** 已解决批注数 */
 const resolvedAnnotationCount = computed(
   () => currentAnnotations.value.filter((a) => a.status === 'resolved').length,
 )
 
-/** 筛选后的批注列表 */
 const filteredAnnotations = computed(() => {
   if (annotationFilter.value === 'all') return currentAnnotations.value
   return currentAnnotations.value.filter((a) =>
@@ -549,7 +531,6 @@ const filteredAnnotations = computed(() => {
   )
 })
 
-/** 传递给 WordEditor 的批注标记 */
 const annotationMarks = computed(() =>
   currentAnnotations.value
     .filter((a) => a.selection && a.selection.from != null && a.selection.to != null)
@@ -561,77 +542,21 @@ const annotationMarks = computed(() =>
     })),
 )
 
-/** 当前选中的文字（用于添加批注时显示提示） */
 const currentSelectionText = computed(() => currentSelection.value?.text || '')
 
-/** 富文本选区变化 */
+/* ==================== 方法 ==================== */
 const onSelectionChange = (sel: { from: number; to: number; text: string } | null) => {
   setSelection(sel)
 }
 
-/** 点击批注：高亮定位到正文对应位置 */
 const locateAnnotation = (item: AnnotationItem) => {
   activeAnnotationId.value = item.id
   if (item.selection && wordEditorRef.value) {
     wordEditorRef.value.scrollToPosition(item.selection.from)
   }
-  // 3秒后取消高亮
   setTimeout(() => {
     if (activeAnnotationId.value === item.id) activeAnnotationId.value = null
   }, 3000)
-}
-
-const approvedCount = computed(
-  () => chapterKeys.value.filter((no) => chapterStatuses.value[no] === 'approved').length,
-)
-const rejectedCount = computed(
-  () => chapterKeys.value.filter((no) => chapterStatuses.value[no] === 'rejected').length,
-)
-
-/** 选择章节：切换内容 + URL同步 + 加载批注 */
-const selectChapter = async (chapterNo: string) => {
-  activeChapter.value = chapterNo
-  // URL 同步
-  router.replace({ query: { ...route.query, chapter: chapterNo } })
-
-  if (viewMode.value === 'full') {
-    // 全文模式：滚动到对应章节
-    const el = document.getElementById(`chapter-${chapterNo}`)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-    return
-  }
-
-  // 单章模式：加载批注和富文本内容
-  loadAnnotations(chapterNo)
-  await loadChapterHtml(chapterNo)
-}
-
-/** 加载章节富文本HTML内容 */
-const loadChapterHtml = async (chapterNo: string) => {
-  if (chapterHtmlMap.value[chapterNo]) return
-  contentLoading.value = true
-  try {
-    // 优先调用章节内容API获取content_html
-    const res = await fetchChapterContent(projectId, chapterNo)
-    const data = res.data?.data
-    if (data?.content_html) {
-      chapterHtmlMap.value[chapterNo] = data.content_html
-    } else if (data?.content) {
-      chapterHtmlMap.value[chapterNo] = markdownToHtml(data.content)
-    } else if (chapters.value[chapterNo]) {
-      // 降级：使用workflow status中的Markdown
-      chapterHtmlMap.value[chapterNo] = markdownToHtml(chapters.value[chapterNo])
-    }
-  } catch {
-    // 降级：使用workflow status中的Markdown
-    if (chapters.value[chapterNo]) {
-      chapterHtmlMap.value[chapterNo] = markdownToHtml(chapters.value[chapterNo])
-    }
-  } finally {
-    contentLoading.value = false
-  }
 }
 
 const formatTime = (time: string): string => {
@@ -640,186 +565,42 @@ const formatTime = (time: string): string => {
   return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-/** 全文模式：加载所有章节的富文本内容 */
-const loadAllChapterHtml = async () => {
-  for (const no of chapterKeys.value) {
-    if (!chapterHtmlMap.value[no]) {
-      await loadChapterHtml(no)
-    }
-  }
-}
-
-/** 启动全文模式滚动观察 */
-const startFullObserver = () => {
-  if (fullObserver) return
-  fullObserver = new IntersectionObserver(
-    (entries) => {
-      // 找到最靠近视口顶部的可见章节
-      const visible = entries
-        .filter((e) => e.isIntersecting)
-        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
-      if (visible.length > 0) {
-        const id = visible[0].target.id
-        const chapterNo = id.replace('chapter-', '')
-        if (chapterNo && chapterNo !== activeChapter.value) {
-          activeChapter.value = chapterNo
-          router.replace({ query: { ...route.query, chapter: chapterNo } })
-        }
-      }
-    },
-    { rootMargin: '-80px 0px -60% 0px', threshold: 0 },
-  )
-  // 观察所有章节容器
-  chapterKeys.value.forEach((no) => {
-    const el = document.getElementById(`chapter-${no}`)
-    if (el) fullObserver?.observe(el)
-  })
-}
-
-/** 停止全文模式滚动观察 */
-const stopFullObserver = () => {
-  if (fullObserver) {
-    fullObserver.disconnect()
-    fullObserver = null
-  }
-}
-
-// 预览模式切换
-watch(viewMode, async (mode) => {
-  if (mode === 'full') {
-    await loadAllChapterHtml()
-    nextTick(() => startFullObserver())
-  } else {
-    stopFullObserver()
-    // 切回单章模式时加载当前章节内容
-    if (activeChapter.value) {
-      loadAnnotations(activeChapter.value)
-      await loadChapterHtml(activeChapter.value)
-    }
-  }
-})
-
-// 轮询
-let pollTimer: number | null = null
-const stopPolling = () => { if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null } }
-
-const applyStatus = (data: WorkflowStatus) => {
-  chapters.value = data.chapters || {}
-  outline.value = (data.outline || []) as OutlineNode[]
-  reviewFeedback.value = data.review_feedback || {}
-  exportStatus.value = data.export_status || ''
-  exportStorageKey.value = data.export_storage_key || ''
-  // 清空HTML缓存，内容可能已更新
-  chapterHtmlMap.value = {}
-  if (!activeChapter.value) {
-    // 优先从URL获取章节
-    const queryChapter = route.query.chapter as string
-    const keys = Object.keys(chapters.value)
-    activeChapter.value = queryChapter && keys.includes(queryChapter) ? queryChapter : keys[0] || ''
-  }
-  if (expandedKeys.value.length === 0) {
-    expandedKeys.value = outline.value.map((c) => c.chapter_no)
-  }
-}
-
-const fetchStatus = async (): Promise<WorkflowStatus | undefined> => {
-  const res = await fetchWorkflowStatus(projectId)
-  return res.data?.data
-}
-
-const fetchSubmitters = async () => {
-  try {
-    const res = await fetchChapterAssignments(projectId)
-    const items = (res.data?.data?.items || []) as { chapter_no: string; submitted_by_name?: string }[]
-    const map: Record<string, string> = {}
-    for (const it of items) { if (it.submitted_by_name) map[it.chapter_no] = it.submitted_by_name }
-    submitters.value = map
-  } catch { /* 降级 */ }
-}
-
-const fetchDisqualificationRisks = async () => {
-  try {
-    const res = await fetchDisqualificationRisksApi(projectId)
-    disqualificationRisks.value = res.data?.data?.risks || {}
-  } catch { disqualificationRisks.value = {} }
-}
-
 const handleRolledBack = async (restored: number) => {
   const data = await fetchStatus()
-  if (data) { applyStatus(data) }
+  if (data) {
+    applyStatus(
+      data,
+      () => activeChapter.value,
+      (v) => { activeChapter.value = v },
+      () => expandedKeys.value,
+      (v) => { expandedKeys.value = v },
+      () => route.query.chapter as string,
+    )
+    clearHtmlCache()
+  }
   message.success(`回滚成功，已恢复 ${restored} 个章节内容`)
-  // 重新加载当前章节内容
   if (activeChapter.value) await loadChapterHtml(activeChapter.value)
 }
 
-const pollUntil = (until: (data: WorkflowStatus) => boolean, onDone?: (data: WorkflowStatus) => void) => {
-  stopPolling()
-  let attempts = 0
-  pollTimer = window.setInterval(async () => {
-    attempts += 1
-    try {
-      const data = await fetchStatus()
-      if (!data) return
-      applyStatus(data)
-      if (data.error) { stopPolling(); message.error(data.error); return }
-      if (until(data)) { stopPolling(); onDone?.(data) }
-      else if (attempts >= 90) { stopPolling(); message.warning('等待超时，请稍后手动刷新') }
-    } catch { /* 重试 */ }
-  }, 2000)
-}
-
-/** 审阅通过（当前章节） */
-const handleApprove = async () => {
-  approving.value = true
-  try {
-    const res = await confirmReview(projectId, { action: 'approved' })
-    if (res.data?.code !== 0) { message.error(res.data?.message || '审阅确认失败'); return }
-    message.success('审阅通过，正在生成导出文档...')
-    pollUntil((data) => data.export_status === 'done', () => message.success('导出完成，可下载文档'))
-  } catch { message.error('审阅确认失败') }
-  finally { approving.value = false }
-}
-
-/** 打回当前章节 */
-const handleReject = async (comment: string) => {
-  approving.value = true
-  try {
-    const res = await confirmReview(projectId, {
-      action: 'feedback',
-      feedback: { [activeChapter.value]: comment },
-    })
-    if (res.data?.code !== 0) { message.error(res.data?.message || '打回失败'); return }
-    reviewFeedback.value = { ...reviewFeedback.value, [activeChapter.value]: comment }
-    message.success(`章节 ${activeChapter.value} 已打回修改`)
-  } catch (err) {
-    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
-    message.error(msg || '打回失败')
-  } finally {
-    approving.value = false
-  }
-}
-
-const handleExport = () => {
-  exportModalVisible.value = true
-}
-
-const handleExported = (storageKey: string) => {
-  exportStorageKey.value = storageKey
-  exportStatus.value = 'done'
-}
-
-const goToGenerate = () => router.push({ name: 'Generate', params: { projectId } })
-
+/* ==================== 生命周期 ==================== */
 onMounted(async () => {
   loading.value = true
   loadError.value = ''
   try {
     const data = await fetchStatus()
-    if (data) applyStatus(data)
+    if (data) {
+      applyStatus(
+        data,
+        () => activeChapter.value,
+        (v) => { activeChapter.value = v },
+        () => expandedKeys.value,
+        (v) => { expandedKeys.value = v },
+        () => route.query.chapter as string,
+      )
+    }
     await fetchSubmitters()
     await versionSectionRef.value?.load()
     await fetchDisqualificationRisks()
-    // 加载当前章节内容和批注
     if (activeChapter.value) {
       await loadChapterHtml(activeChapter.value)
       loadAnnotations(activeChapter.value)
