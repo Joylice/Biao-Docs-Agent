@@ -53,6 +53,11 @@ jobs:
         run: |
           cd backend && alembic upgrade head
           cd backend && pytest tests --cov=app --cov-report=term-missing --cov-fail-under=70 -q
+      - name: Key modules coverage ≥ 80% (agents / proposal / infra)
+        run: |
+          cd backend && pytest tests \
+            --cov=app.agents --cov=app.services.proposal --cov=app.services.infra \
+            --cov-report=term-missing --cov-fail-under=80 -q
 
   frontend-checks:
     name: Frontend lint + build
@@ -62,10 +67,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: pnpm
       - name: Install
         run: cd frontend && pnpm install --frozen-lockfile
@@ -92,6 +97,12 @@ jobs:
         run: |
           pip install pip-audit
           pip-audit -r backend/requirements.txt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - name: Frontend dependency audit
         run: |
           cd frontend && pnpm install --frozen-lockfile --ignore-scripts
