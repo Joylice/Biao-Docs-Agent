@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BizError, ForbiddenError, ValidationError
+from app.core.sorting import natural_sort_key, numbered_sections
 from app.models.project import Project, ProjectMember
 from app.models.proposal import (
     ChapterAnnotation,
@@ -16,8 +17,6 @@ from app.models.proposal import (
     ProposalSkeleton,
 )
 from app.models.user import User
-from app.services.document.export_service import natural_sort_key
-from app.services.proposal.chapter_service import numbered_sections
 
 ASSIGNMENT_STATUSES = ("pending", "in_progress", "submitted", "approved", "rejected")
 

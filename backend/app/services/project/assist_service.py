@@ -241,3 +241,53 @@ async def assist_generate(
             if sec["section_id"] == subsection_no:
                 return {"content": sec["content"], "stopped": stopped, "mode": mode}
     return {"content": final_content, "stopped": stopped, "mode": mode}
+
+
+# ───────────────────────── 选区 AI 处理 ─────────────────────────
+
+# 选区 AI 处理提示词模板（后端权威维护，避免提示词改动需重新发布前端）
+_AI_SELECTION_PROMPTS: dict[str, str] = {
+    "polish": (
+        "请润色以下文字，优化语言表达，保持原意，使文字更加流畅、专业。"
+        "只输出处理后的结果，不要添加任何解释或前缀：\n\n{text}"
+    ),
+    "expand": (
+        "请扩写以下内容，增加细节和说明，使内容更加丰富完整。"
+        "只输出处理后的结果，不要添加任何解释或前缀：\n\n{text}"
+    ),
+    "condense": (
+        "请精简以下内容，保留核心信息，使文字更加简洁。"
+        "只输出处理后的结果，不要添加任何解释或前缀：\n\n{text}"
+    ),
+    "translate": (
+        "请将以下内容翻译成英文（如果原文是英文则翻译成中文）。"
+        "只输出翻译结果，不要添加任何解释或前缀：\n\n{text}"
+    ),
+}
+
+
+async def assist_selection(
+    text: str,
+    action: str,
+) -> str:
+    """选区文字 AI 处理（润色/扩写/缩写/翻译）— 不落库，返回处理结果.
+
+    mock 模式降级返回原文（避免占位文本污染文档）。
+    """
+    from app.services.infra.settings_service import is_mock_enabled
+    from app.services.llm.llm_service import call_llm_text
+
+    if await is_mock_enabled():
+        return text
+
+    template = _AI_SELECTION_PROMPTS.get(action)
+    if template is None:
+        raise BizError(code=4220, message=f"不支持的 AI 操作: {action}")
+
+    content = await call_llm_text(
+        "你是投标技术文档写作助手，擅长中文技术文档的润色、扩写、缩写与翻译，"
+        "输出直接可用，不含解释性文字。",
+        template.format(text=text),
+        temperature=0.4,
+    )
+    return content.strip()

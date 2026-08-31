@@ -7,13 +7,16 @@ Checkpointer：
   （不与 app 的 SQLAlchemy AsyncSession 混用），由 app lifespan 初始化/释放；
 - thread_id = str(project_id)；
 - 测试可通过 set_saver(InMemorySaver()) 注入替代。
+
+Phase 3 拆分：章节内容操作 → workflow_content_service，
+大纲草稿 → workflow_outline_service，意见回派 → workflow_feedback_service。
+以下保留 re-export 保持向后兼容（API 层 workflow_runtime.xxx 无需改动）.
 """
 
 import asyncio
 import contextlib
 import logging
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.types import Command
@@ -22,6 +25,23 @@ from app.agents.graph import compile_workflow, get_async_postgres_saver
 from app.core.config import settings
 from app.core.database import async_session_factory
 from app.core.exceptions import BizError
+
+# Phase 3 re-exports — 保持 API 层 workflow_runtime.xxx 调用兼容
+from app.services.infra.workflow_content_service import (  # noqa: F401
+    export_workflow,
+    generate_chapter_draft,
+    save_section_edit,
+    sync_approved_chapter,
+)
+from app.services.infra.workflow_feedback_service import (  # noqa: F401
+    list_project_member_ids,
+    redispatch_feedback,
+)
+from app.services.infra.workflow_outline_service import (  # noqa: F401
+    clear_outline_draft,
+    get_outline_draft,
+    save_outline_draft,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +82,6 @@ async def init_checkpointer() -> None:
     except Exception:
         logger.exception("工作流 checkpointer 初始化失败（工作流接口将不可用）")
         if pool is not None:
-            # 池已打开但初始化失败：先关闭已打开的池，避免连接泄漏
             with contextlib.suppress(Exception):
                 await pool.close()
         return
@@ -267,436 +286,6 @@ async def rewrite_chapter(project_id: uuid.UUID | str, chapter_no: str, comment:
     )
     await update_state(project_id, {"chapters": {chapter_no: new_content}})
     return new_content
-
-
-async def save_section_edit(
-    db,
-    project_id: uuid.UUID | str,
-    chapter_no: str,
-    content: str,
-) -> None:
-    """人工编辑章节/子节直接落库：state（chapters + 摘要重算）与 DB 同步.
-
-    与 rewrite_chapter 的差异：不经 LLM，内容来自人工编辑；落库 status=review
-    （对齐 write_node 的 _upsert_section 字段口径）。支持子节编号（如 1.1）：
-    子节行更新后按自然序拼接同章子节行重建父章全文回写 state。
-    章级编辑若大纲含嵌套子节则同步切分刷新子节行（子节真源一致）。
-    DB 提交由 API 层统一 commit。
-    """
-    from sqlalchemy import select
-
-    from app.agents.nodes import _persist_chapter_content, _upsert_section
-    from app.models.proposal import ProposalSection
-    from app.services.document.export_service import natural_sort_key
-    from app.services.proposal.chapter_service import extract_chapter_summary
-
-    snapshot = await get_state(project_id)
-    values = snapshot.values or {}
-    chapters = values.get("chapters", {})
-    outline = values.get("outline", [])
-    is_subsection = "." in chapter_no
-    parent_no = chapter_no.rsplit(".", 1)[0] if is_subsection else chapter_no
-
-    if is_subsection:
-        if parent_no not in chapters:
-            raise BizError(code=4004, message=f"章节 {parent_no} 尚未生成，无法保存子节")
-        # 子节标题取大纲嵌套树（缺失时保留既有行标题）
-        title = ""
-        chapter = next((c for c in outline if str(c.get("chapter_no", "")) == parent_no), None)
-        if chapter:
-            from app.services.proposal.chapter_service import numbered_sections
-
-            title = next(
-                (
-                    t
-                    for no, t in numbered_sections(chapter.get("sections", []) or [], parent_no)
-                    if no == chapter_no
-                ),
-                "",
-            )
-        await _upsert_section(db, str(project_id), chapter_no, title, content, status="review")
-        # 自然序拼接同章子节行重建父章全文（1.1 < 1.2 < 2）
-        sec_result = await db.execute(
-            select(ProposalSection).where(
-                ProposalSection.project_id == uuid.UUID(str(project_id)),
-                ProposalSection.section_id.startswith(f"{parent_no}."),
-            )
-        )
-        sec_rows = sorted(sec_result.scalars().all(), key=lambda s: natural_sort_key(s.section_id))
-        merged = "\n\n".join(s.content_md for s in sec_rows if s.content_md)
-        target_no, target_content = parent_no, merged or content
-    else:
-        if chapter_no not in chapters:
-            raise BizError(code=4004, message=f"章节 {chapter_no} 尚未生成，无法保存")
-        target_no, target_content = chapter_no, content
-
-    # 标题取大纲（章节均来自大纲生成）；缺失时保留既有摘要中的标题
-    title = next((c.get("title", "") for c in outline if c.get("chapter_no") == target_no), "")
-    if not title:
-        title = (values.get("chapter_summaries", {}).get(target_no) or {}).get("title", "")
-
-    summaries = dict(values.get("chapter_summaries", {}))
-    summaries[target_no] = {"title": title, "summary": extract_chapter_summary(target_content)}
-    await update_state(
-        project_id,
-        {"chapters": {target_no: target_content}, "chapter_summaries": summaries},
-    )
-    if not is_subsection:
-        chapter = next((c for c in outline if c.get("chapter_no") == chapter_no), None)
-        await _persist_chapter_content(
-            db,
-            str(project_id),
-            chapter_no,
-            title,
-            content,
-            status="review",
-            sections_tree=(chapter or {}).get("sections", []),
-        )
-
-
-async def sync_approved_chapter(
-    db,
-    project_id: uuid.UUID | str,
-    chapter_no: str,
-    content: str,
-    content_html: str | None = None,
-) -> None:
-    """分工审核通过后回写正式方案：state.chapters + proposal_sections + 摘要.
-
-    与 save_section_edit 的差异：分工驱动模式下 chapters 初始为空，不要求章节已存在；
-    内容来自分工人员编制（assignment.content，Markdown 与富文本双字段），
-    落库 status=approved（区别于 write_node 的 draft / 人工编辑的 review）。
-    支持子节编号：子节回写仅更新子节行，父章全文由同章子节行自然序拼接重建。
-    DB 提交由 API 层统一 commit。
-    """
-    from sqlalchemy import select
-
-    from app.agents.nodes import _persist_chapter_content, _upsert_section
-    from app.models.proposal import ProposalSection
-    from app.services.document.export_service import natural_sort_key
-    from app.services.proposal.chapter_service import extract_chapter_summary
-
-    snapshot = await get_state(project_id)
-    values = snapshot.values or {}
-    chapters = dict(values.get("chapters", {}))
-    outline = values.get("outline", [])
-    summaries = dict(values.get("chapter_summaries", {}))
-    is_subsection = "." in chapter_no
-    parent_no = chapter_no.rsplit(".", 1)[0] if is_subsection else chapter_no
-
-    if is_subsection:
-        # 子节标题取大纲嵌套树（缺失时保留既有行标题）
-        title = ""
-        chapter = next((c for c in outline if str(c.get("chapter_no", "")) == parent_no), None)
-        if chapter:
-            from app.services.proposal.chapter_service import numbered_sections
-
-            title = next(
-                (
-                    t
-                    for no, t in numbered_sections(chapter.get("sections", []) or [], parent_no)
-                    if no == chapter_no
-                ),
-                "",
-            )
-        await _upsert_section(
-            db, str(project_id), chapter_no, title, content, status="approved"
-        )
-        # 自然序拼接同章子节行重建父章全文（1.1 < 1.2 < 2）
-        sec_result = await db.execute(
-            select(ProposalSection).where(
-                ProposalSection.project_id == uuid.UUID(str(project_id)),
-                ProposalSection.section_id.startswith(f"{parent_no}."),
-            )
-        )
-        sec_rows = sorted(sec_result.scalars().all(), key=lambda s: natural_sort_key(s.section_id))
-        merged = "\n\n".join(s.content_md for s in sec_rows if s.content_md)
-        target_no, target_content = parent_no, merged or content
-    else:
-        target_no, target_content = chapter_no, content
-
-    # 标题取大纲（章节均来自大纲生成）；缺失时保留既有摘要中的标题
-    title = next((c.get("title", "") for c in outline if c.get("chapter_no") == target_no), "")
-    if not title:
-        title = (summaries.get(target_no) or {}).get("title", "")
-
-    summaries[target_no] = {"title": title, "summary": extract_chapter_summary(target_content)}
-    chapters[target_no] = target_content
-    await update_state(
-        project_id,
-        {"chapters": chapters, "chapter_summaries": summaries},
-    )
-    if not is_subsection:
-        chapter = next((c for c in outline if c.get("chapter_no") == chapter_no), None)
-        await _persist_chapter_content(
-            db,
-            str(project_id),
-            chapter_no,
-            title,
-            content,
-            status="approved",
-            sections_tree=(chapter or {}).get("sections", []),
-        )
-    else:
-        # 子节回写：父章行也要落库（保持 proposal_sections 章级真源一致）
-        await _persist_chapter_content(
-            db,
-            str(project_id),
-            target_no,
-            title,
-            target_content,
-            status="approved",
-            sections_tree=(
-                next((c for c in outline if c.get("chapter_no") == target_no), None) or {}
-            ).get("sections", []),
-        )
-
-
-async def generate_chapter_draft(project_id: uuid.UUID | str, chapter_no: str) -> str:
-    """分工编制：LLM 生成章节初稿并回写 state + proposal_sections（status=draft）.
-
-    复用图内同一 generate_chapter 链路（RAG 检索 + 脱敏 + mock 降级）；
-    与图内 write 节点的差异：不推进工作流阶段，仅产出初稿供人工编制。
-    子节编号（如 1.1）：生成整章后切分，仅返回目标子节片段（AI 仍章级产出）。
-    """
-    from app.agents.nodes import _persist_chapter_content
-    from app.core.database import async_session_factory
-    from app.services.infra.kb_base_service import resolve_mount_doc_ids
-    from app.services.proposal.chapter_service import (
-        extract_chapter_summary,
-        generate_chapter,
-        split_chapter_to_sections,
-    )
-
-    snapshot = await get_state(project_id)
-    values = snapshot.values or {}
-    outline = values.get("outline", [])
-    is_subsection = "." in chapter_no
-    target_no = chapter_no.rsplit(".", 1)[0] if is_subsection else chapter_no
-    chapter = next((c for c in outline if str(c.get("chapter_no", "")) == target_no), None)
-    if chapter is None:
-        raise BizError(code=4004, message=f"章节 {chapter_no} 不在大纲中，无法生成初稿")
-
-    # 挂载配置合并：知识库级 ∪ 文档级（均 None = 项目全量）
-    async with async_session_factory() as db:
-        doc_ids = await resolve_mount_doc_ids(
-            db, values.get("mounted_kb_ids"), values.get("mounted_doc_ids")
-        )
-
-    content = await generate_chapter(
-        chapter=chapter,
-        score_points=values.get("score_points", []),
-        tech_requirements=values.get("tech_requirements", []),
-        project_id=uuid.UUID(str(project_id)),
-        doc_ids=doc_ids,
-    )
-    if not content:
-        raise BizError(code=5001, message="章节初稿生成失败：LLM 返回为空")
-
-    title = chapter.get("title", "")
-    summaries = dict(values.get("chapter_summaries", {}))
-    summaries[target_no] = {"title": title, "summary": extract_chapter_summary(content)}
-    await update_state(
-        project_id,
-        {"chapters": {target_no: content}, "chapter_summaries": summaries},
-    )
-    async with async_session_factory() as db:
-        await _persist_chapter_content(
-            db,
-            str(project_id),
-            target_no,
-            title,
-            content,
-            status="draft",
-            sections_tree=chapter.get("sections", []),
-        )
-        await db.commit()
-    if is_subsection:
-        # 返回目标子节片段；切分未命中时降级返回整章（不阻塞编制）
-        for sec in split_chapter_to_sections(content, chapter.get("sections", []) or [], target_no):
-            if sec["section_id"] == chapter_no:
-                return sec["content"]
-    return content
-
-
-async def export_workflow(project_id: uuid.UUID | str) -> dict:
-    """导出 Word — 复用图内 export 节点（export_to_word + 落库 + 事件），结果回写 state."""
-    snapshot = await get_state(project_id)
-    values = dict(snapshot.values or {})
-    if not values.get("chapters"):
-        raise BizError(code=4005, message="章节尚未生成，无法导出")
-
-    from app.agents.nodes import export_node
-
-    values.setdefault("project_id", str(project_id))
-    updates = await export_node(values)
-    if updates.get("error"):
-        raise BizError(code=5010, message=updates["error"])
-    await update_state(project_id, updates)
-    return {
-        "export_status": updates.get("export_status", "done"),
-        "export_storage_key": updates.get("export_storage_key", ""),
-    }
-
-
-# ───────────────────────── 大纲二次编辑草稿 ─────────────────────────
-
-
-async def save_outline_draft(
-    db,
-    project_id: uuid.UUID,
-    outline: list[dict],
-    mounted_doc_ids: list[str] | None = None,
-    mounted_kb_ids: list[str] | None = None,
-) -> None:
-    """保存大纲二次编辑草稿到 proposal_skeletons.draft（行不存在则创建，upsert）.
-
-    draft 结构：{"outline": [...], "mounted_doc_ids": [...], "mounted_kb_ids": [...]}；
-    两个挂载列表为字符串列表（None=未设置挂载，保持项目全量检索语义）。
-    """
-    from sqlalchemy import select
-
-    from app.models.proposal import ProposalSkeleton
-
-    result = await db.execute(
-        select(ProposalSkeleton).where(ProposalSkeleton.project_id == project_id)
-    )
-    skeleton = result.scalar_one_or_none()
-    if not skeleton:
-        skeleton = ProposalSkeleton(project_id=project_id, tree=[])
-        db.add(skeleton)
-    skeleton.draft = {
-        "outline": outline,
-        "mounted_doc_ids": mounted_doc_ids,
-        "mounted_kb_ids": mounted_kb_ids,
-    }
-    skeleton.draft_updated_at = datetime.now(UTC)
-    await db.flush()
-
-
-async def get_outline_draft(db, project_id: uuid.UUID) -> dict | None:
-    """读取大纲二次编辑草稿；无草稿（或行不存在）返回 None."""
-    from sqlalchemy import select
-
-    from app.models.proposal import ProposalSkeleton
-
-    result = await db.execute(
-        select(ProposalSkeleton).where(ProposalSkeleton.project_id == project_id)
-    )
-    skeleton = result.scalar_one_or_none()
-    if not skeleton or not skeleton.draft:
-        return None
-    return {
-        "outline": skeleton.draft.get("outline", []),
-        "mounted_doc_ids": skeleton.draft.get("mounted_doc_ids"),
-        "mounted_kb_ids": skeleton.draft.get("mounted_kb_ids"),
-        "updated_at": skeleton.draft_updated_at,
-    }
-
-
-async def clear_outline_draft(db, project_id: uuid.UUID) -> None:
-    """清除大纲二次编辑草稿（确认成功后调用，幂等）."""
-    from sqlalchemy import select
-
-    from app.models.proposal import ProposalSkeleton
-
-    result = await db.execute(
-        select(ProposalSkeleton).where(ProposalSkeleton.project_id == project_id)
-    )
-    skeleton = result.scalar_one_or_none()
-    if skeleton:
-        skeleton.draft = None
-        skeleton.draft_updated_at = None
-        await db.flush()
-
-
-# ───────────────────────── 成员收集与审阅意见回派（批次 1c 自 api 下沉） ─────────────────────────
-
-
-async def list_project_member_ids(db, project_id: uuid.UUID) -> list[uuid.UUID]:
-    """项目成员 user_id 列表（confirm-outline 用户级推送目标收集）."""
-    from sqlalchemy import select
-
-    from app.models.project import ProjectMember
-
-    result = await db.execute(
-        select(ProjectMember.user_id).where(ProjectMember.project_id == project_id)
-    )
-    return list(result.scalars().all())
-
-
-async def redispatch_feedback(
-    db, project_id: uuid.UUID, feedback: dict[str, str]
-) -> tuple[dict[str, str], list[dict]]:
-    """审阅意见回派章节/子节负责人（阶段 5）.
-
-    feedback 键支持章级/子节编号或标题匹配（子节编号/标题来自大纲嵌套树）：
-    - 命中分工 → assignment 置 rejected + 意见落库
-      （assignee 在分工页「我的任务」看到打回可重编）；
-    - 子节无分工时降级匹配父章分工；
-    - 无分工章节 → 保留原 rewrite 链路。
-    返回 (未被回派的剩余 feedback, 待推送的 task_reviewed 事件列表)，
-    事件推送由 api 层执行；仅 flush 不 commit（BUG-1：api 层在 resume 前显式提交）。
-    """
-    if not feedback:
-        return {}, []
-    from sqlalchemy import select
-
-    from app.models.proposal import ChapterAssignment
-    from app.services.proposal.chapter_service import numbered_sections
-
-    snapshot = await get_state(project_id)
-    outline = (snapshot.values or {}).get("outline", []) or []
-    nos: set[str] = set()
-    title_to_no: dict[str, str] = {}
-    for c in outline:
-        no = str(c.get("chapter_no", ""))
-        nos.add(no)
-        title_to_no[str(c.get("title", ""))] = no
-        # 子节编号/标题同样参与匹配（嵌套树推导，与分工编号规则一致）
-        for sub_no, sub_title in numbered_sections(c.get("sections", []) or [], no):
-            nos.add(sub_no)
-            title_to_no.setdefault(sub_title, sub_no)
-    remaining: dict[str, str] = {}
-    events: list[dict] = []
-    for key, comment in feedback.items():
-        chapter_no = key if key in nos else title_to_no.get(key, "")
-        if not chapter_no:
-            remaining[key] = comment
-            continue
-        result = await db.execute(
-            select(ChapterAssignment).where(
-                ChapterAssignment.project_id == project_id,
-                ChapterAssignment.chapter_no == chapter_no,
-            )
-        )
-        assignment = result.scalar_one_or_none()
-        if assignment is None and "." in chapter_no:
-            # 子节无分工 → 降级回派父章负责人（章级分工覆盖子节）
-            parent_no = chapter_no.rsplit(".", 1)[0]
-            result = await db.execute(
-                select(ChapterAssignment).where(
-                    ChapterAssignment.project_id == project_id,
-                    ChapterAssignment.chapter_no == parent_no,
-                )
-            )
-            assignment = result.scalar_one_or_none()
-        if assignment is None:
-            remaining[key] = comment
-            continue
-        assignment.status = "rejected"
-        assignment.review_comment = comment
-        assignment.reviewed_at = datetime.now(UTC)
-        events.append(
-            {
-                "type": "task_reviewed",
-                "chapter_no": chapter_no,
-                "assignee_id": str(assignment.assignee_id),
-                "action": "rejected",
-            }
-        )
-    await db.flush()
-    return remaining, events
 
 
 # ───────────────────────── 后台执行 ─────────────────────────

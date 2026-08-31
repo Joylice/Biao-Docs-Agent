@@ -5,9 +5,12 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redact import redact
+from app.core.sorting import is_nested_sections, numbered_sections  # noqa: F401 — 向后兼容 re-export
+from app.models.proposal import ProposalSection
 from app.services.infra.prompt_loader import load_chapter_prompt
 from app.services.llm.llm_service import call_llm_stream, call_llm_text
 
@@ -59,39 +62,16 @@ def flatten_sections(sections: list) -> list[str]:
 
 
 def _numbered_tree(nodes: list, prefix: str, out: list[tuple[str, str]]) -> None:
-    """嵌套树递归推导编号标题对 [(no, title)]（与 flatten_sections 编号规则一致）."""
-    for i, node in enumerate(nodes, 1):
-        if isinstance(node, str):
-            if node.strip():
-                out.append((f"{prefix}{i}", node.strip()))
-        elif isinstance(node, dict):
-            title = str(node.get("title", "")).strip()
-            if title:
-                out.append((f"{prefix}{i}", title))
-            children = node.get("children") or []
-            if children:
-                _numbered_tree(children, f"{prefix}{i}.", out)
+    """嵌套树递归推导编号标题对 [(no, title)]（与 flatten_sections 编号规则一致）.
+
+    已迁移至 app.core.sorting，此处保留为向后兼容 re-export.
+    """
+    from app.core.sorting import _numbered_tree as _impl
+    _impl(nodes, prefix, out)
 
 
 _HEADING_RE = re.compile(r"^#{2,6}\s+(.*)$")
 _LEADING_NO_RE = re.compile(r"^[\d.]+\s*")
-
-
-def is_nested_sections(sections: list) -> bool:
-    """sections 是否为嵌套树形态（含 dict 节点）；string[] 视为无子节（章级存储）."""
-    return any(isinstance(s, dict) for s in sections or [])
-
-
-def numbered_sections(sections_tree: list, chapter_no: str) -> list[tuple[str, str]]:
-    """嵌套树子节编号平铺 [(no, title)]（no = {chapter_no}.{序号…}）.
-
-    string[] 形态（无子节）返回 []，调用方保持章级语义。
-    """
-    if not is_nested_sections(sections_tree):
-        return []
-    out: list[tuple[str, str]] = []
-    _numbered_tree(sections_tree, f"{chapter_no}.", out)
-    return out
 
 
 def split_chapter_to_sections(content_md: str, sections_tree: list, chapter_no: str) -> list[dict]:
@@ -309,3 +289,68 @@ async def generate_chapter(
     )
 
     return content
+
+
+# ───────────────────────── 章节落库（Phase 4 从 agents/nodes/_shared.py 迁入） ─────────────────────────
+
+
+async def upsert_section(
+    db,
+    project_id: str,
+    section_id: str,
+    title: str,
+    content_md: str,
+    status: str = "draft",
+    citations: list | None = None,
+) -> None:
+    """保存章节到 proposal_sections（upsert）；citations 为引用溯源元数据."""
+    result = await db.execute(
+        select(ProposalSection).where(
+            ProposalSection.project_id == uuid.UUID(project_id),
+            ProposalSection.section_id == section_id,
+        )
+    )
+    section = result.scalar_one_or_none()
+    if not section:
+        section = ProposalSection(
+            project_id=uuid.UUID(project_id),
+            section_id=section_id,
+            title=title,
+            content_md=content_md,
+            status=status,
+        )
+        if citations is not None:
+            section.citations = citations
+        db.add(section)
+    else:
+        section.title = title
+        section.content_md = content_md
+        section.status = status
+        if citations is not None:
+            section.citations = citations
+    await db.flush()
+
+
+async def persist_chapter_content(
+    db,
+    project_id: str,
+    chapter_no: str,
+    title: str,
+    content: str,
+    status: str = "draft",
+    sections_tree: list | None = None,
+    citations: list | None = None,
+) -> None:
+    """章节落库统一入口：章级行（全文）+ 嵌套大纲时切分子节行.
+
+    state.chapters 保持章级全文（检索/摘要用），proposal_sections 子节行为
+    子节真源（子节分工/编辑粒度）；string[] 大纲仅写章级行（向后兼容）。
+    citations：检索命中溯源元数据，写章级行供导出标注。
+    """
+    await upsert_section(
+        db, project_id, chapter_no, title, content, status=status, citations=citations
+    )
+    for sec in split_chapter_to_sections(content, sections_tree or [], chapter_no):
+        await upsert_section(
+            db, project_id, sec["section_id"], sec["title"], sec["content"], status=status
+        )

@@ -1,21 +1,25 @@
-"""节点共享辅助函数 — 工作流元数据与章节/子节落库（对齐 SDD §6）.
+"""节点共享辅助函数 — 常量/纯函数 + DB 操作委托 service 层（Phase 4 重构）.
 
-节点内通过 async_session_factory 打开 DB session（LangGraph 无 DI 注入）。
+Phase 4 变更：_update_workflow / _upsert_section / _persist_chapter_content
+已迁入 service 层（workflow_metadata_service / chapter_service），此处保留
+re-export 保持 monkeypatch 兼容（``_pkg._upsert_section`` 等调用不变）.
+
 HITL 中断点：confirm_score_points / confirm_outline / review。
-
-事务约定（BUG-2 修复）：``async with async_session_factory() as db`` 退出
-仅 close 不 commit，写块必须在退出前显式 ``await db.commit()``，否则
-proposal_skeletons / proposal_sections / reviews 等写入全部静默回滚。
-只读块无需 commit（约定见 core.database.get_db docstring）。
+事务约定：async with async_session_factory() as db 退出仅 close 不 commit，
+写块必须在退出前显式 await db.commit()，否则写入全部静默回滚。
 """
 
 import logging
 import uuid
 
-from sqlalchemy import select
-
 import app.agents.nodes as _pkg  # 运行时经包查找可 patch 名（保持拆分前 monkeypatch 语义）
-from app.models.proposal import ProposalSection, ProposalWorkflow
+
+# Phase 4 re-exports — DB 操作委托 service 层
+from app.services.infra.workflow_metadata_service import update_workflow as _update_workflow_impl  # noqa: F401
+from app.services.proposal.chapter_service import (  # noqa: F401
+    persist_chapter_content as _persist_chapter_content_impl,
+    upsert_section as _upsert_section_impl,
+)
 
 # 日志名保持 app.agents.nodes（与拆包前完全一致）
 logger = logging.getLogger("app.agents.nodes")
@@ -60,7 +64,7 @@ def _is_qualification_req(desc: str) -> bool:
     return any(kw in desc for kw in _QUALIFICATION_KEYWORDS)
 
 
-# ───────────────────────── 内部工具 ─────────────────────────
+# ───────────────────────── DB 操作（委托 service 层） ─────────────────────────
 
 
 async def _update_workflow(
@@ -72,23 +76,10 @@ async def _update_workflow(
     status: str | None = None,
     error: str | None = None,
 ) -> None:
-    """创建或更新项目工作流元数据."""
-    result = await db.execute(
-        select(ProposalWorkflow).where(ProposalWorkflow.project_id == uuid.UUID(project_id))
+    """创建或更新项目工作流元数据（委托 workflow_metadata_service）."""
+    await _update_workflow_impl(
+        db, project_id, phase=phase, progress=progress, status=status, error=error
     )
-    wf = result.scalar_one_or_none()
-    if not wf:
-        wf = ProposalWorkflow(project_id=uuid.UUID(project_id), thread_id=str(project_id))
-        db.add(wf)
-    if phase is not None:
-        wf.phase = phase
-    if progress is not None:
-        wf.progress = progress
-    if status is not None:
-        wf.status = status
-    if error is not None:
-        wf.error = error
-    await db.flush()
 
 
 async def _upsert_section(
@@ -100,32 +91,10 @@ async def _upsert_section(
     status: str = "draft",
     citations: list | None = None,
 ) -> None:
-    """保存章节到 proposal_sections（upsert）；citations 为阶段 E3 引用溯源元数据."""
-    result = await db.execute(
-        select(ProposalSection).where(
-            ProposalSection.project_id == uuid.UUID(project_id),
-            ProposalSection.section_id == section_id,
-        )
+    """保存章节到 proposal_sections（委托 chapter_service）."""
+    await _upsert_section_impl(
+        db, project_id, section_id, title, content_md, status=status, citations=citations
     )
-    section = result.scalar_one_or_none()
-    if not section:
-        section = ProposalSection(
-            project_id=uuid.UUID(project_id),
-            section_id=section_id,
-            title=title,
-            content_md=content_md,
-            status=status,
-        )
-        if citations is not None:
-            section.citations = citations
-        db.add(section)
-    else:
-        section.title = title
-        section.content_md = content_md
-        section.status = status
-        if citations is not None:
-            section.citations = citations
-    await db.flush()
 
 
 async def _persist_chapter_content(
@@ -138,18 +107,14 @@ async def _persist_chapter_content(
     sections_tree: list | None = None,
     citations: list | None = None,
 ) -> None:
-    """章节落库统一入口：章级行（全文）+ 嵌套大纲时切分子节行.
-
-    state.chapters 保持章级全文（检索/摘要用），proposal_sections 子节行为
-    子节真源（子节分工/编辑粒度）；string[] 大纲仅写章级行（向后兼容）。
-    citations（阶段 E3）：检索命中溯源元数据，写章级行供导出标注。
-    """
-    from app.services.proposal.chapter_service import split_chapter_to_sections
-
-    await _pkg._upsert_section(
-        db, project_id, chapter_no, title, content, status=status, citations=citations
+    """章节落库统一入口（委托 chapter_service）."""
+    await _persist_chapter_content_impl(
+        db,
+        project_id,
+        chapter_no,
+        title,
+        content,
+        status=status,
+        sections_tree=sections_tree,
+        citations=citations,
     )
-    for sec in split_chapter_to_sections(content, sections_tree or [], chapter_no):
-        await _pkg._upsert_section(
-            db, project_id, sec["section_id"], sec["title"], sec["content"], status=status
-        )
