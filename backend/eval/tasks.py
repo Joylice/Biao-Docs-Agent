@@ -66,6 +66,12 @@ async def run_extraction(datasets: list[dict], parse_fn=None) -> EvalResult:
         return _skipped("extraction", "数据集为空")
     if not await _model_available(settings.llm_model):
         return _skipped("extraction", "LLM 未配置（非 mock 模式且无 API Key），跳过提取评测")
+    if parse_fn is None and await settings_service.is_mock_enabled():
+        # mock LLM 仅返回占位结构，与 gold 无语义匹配，准召率指标无意义
+        return _skipped(
+            "extraction",
+            "mock 模式 LLM 返回占位数据，提取准召率无意义，跳过（真实评测需配置 API Key）",
+        )
     parse = parse_fn or _default_parse
 
     total_tp = total_fp = total_fn = 0
@@ -122,11 +128,17 @@ async def run_coverage(datasets: list[dict]) -> EvalResult:
 
 
 async def _default_search(dataset: dict, query: str) -> list[str]:
-    """离线灌库检索：数据集文档灌入 kb_chunks → 向量召回+精排 → doc 首现序.
+    """离线灌库检索：数据集文档登记 documents + 灌入 kb_chunks → 向量召回+精排 → doc 首现序.
 
-    评测用独立 project_id/UUID，不触碰业务数据；threshold=-1 不过滤以便统计排名。
+    评测用随机 project_id（documents 走 project_id=NULL 全局素材模式，避开 projects 外键），
+    不触碰业务数据；threshold=-1 不过滤以便统计排名。doc_uuid 由数据集 id+doc_id 确定性生成，
+    插入前先清理旧记录保证重复运行幂等。
     """
+    from sqlalchemy import delete
+
     from app.core.database import async_session_factory
+    from app.models.document import Document
+    from app.models.kb_chunk import KbChunk
     from app.services.llm import rag_service
 
     async with async_session_factory() as session:
@@ -135,6 +147,20 @@ async def _default_search(dataset: dict, query: str) -> list[str]:
         for doc in dataset["docs"]:
             doc_uuid = uuid.uuid5(uuid.NAMESPACE_URL, f"eval:{dataset['id']}:{doc['doc_id']}")
             doc_uuids[doc["doc_id"]] = doc_uuid
+            # 幂等清理旧评测记录（kb_chunks.doc_id 外键指向 documents，先删子表）
+            await session.execute(delete(KbChunk).where(KbChunk.doc_id == doc_uuid))
+            await session.execute(delete(Document).where(Document.id == doc_uuid))
+            # kb_chunks.doc_id 外键约束要求 documents 先行登记；project_id=NULL 为全局素材模式
+            session.add(
+                Document(
+                    id=doc_uuid,
+                    project_id=None,
+                    doc_type="kb_material",
+                    title=doc.get("title", doc["doc_id"]),
+                    storage_key=f"eval/{dataset['id']}/{doc['doc_id']}",
+                    status="indexed",
+                )
+            )
             embeddings = await rag_service.get_embeddings_batch(doc["chunks"])
             await rag_service.embed_and_store(session, doc_uuid, doc["chunks"], embeddings)
         await session.commit()

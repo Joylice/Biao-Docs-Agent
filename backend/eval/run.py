@@ -106,7 +106,14 @@ async def execute(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
-    sys.exit(asyncio.run(execute(parse_args())))
+    # Windows 默认 ProactorEventLoop 与 psycopg async 不兼容（InterfaceError），
+    # 评测为纯计算/短连接场景，统一使用 SelectorEventLoop 运行
+    sys.exit(
+        asyncio.run(
+            execute(parse_args()),
+            loop_factory=lambda: asyncio.SelectorEventLoop(),
+        )
+    )
 
 
 if __name__ == "__main__":

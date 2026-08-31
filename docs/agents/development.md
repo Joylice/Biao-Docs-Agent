@@ -104,7 +104,7 @@ make security-check            # gitleaks + pip-audit + pnpm audit
 
 - 注释解释"为什么"，不解释"是什么"；
 - 设计变更必须同步 SDD 与本文档；API 变更同步 SDD §5；
-- 提示词改动必须跑 `tests/fixtures/prompt_cases.json` 回归。
+- 提示词改动必须跑 `tests/fixtures/prompt_cases.json` 回归，另可跑 `make eval` 一键离线评测（mock 模式跑通回归样本：coverage/retrieval 为真实指标，extraction 在 mock 下自动跳过，需配置 API Key 才有准召率意义；`--check` 用于门禁，skipped 不计失败）。
 
 ## 3. 开发规约
 

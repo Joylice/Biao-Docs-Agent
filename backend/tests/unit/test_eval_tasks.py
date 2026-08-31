@@ -96,8 +96,24 @@ class TestRunExtraction:
         import app.services.document.parse_service as parse_service_mod
 
         monkeypatch.setattr(parse_service_mod, "parse_tender_with_llm", _fake_parse)
-        result = await tasks.run_extraction([_extraction_dataset()])
+        result = await tasks._default_parse("招标文本")
         assert calls == [("招标文本", False)]
+        assert result == [{"clause_no": "3.2.1", "item": "技术方案完整性"}]
+
+    async def test_skip_in_mock_mode_with_default_parse(self):
+        """mock 模式（autouse fixture 开启）且未显式传 parse_fn：占位数据无准召率意义，跳过."""
+        result = await tasks.run_extraction([_extraction_dataset()])
+        assert result.status == "skipped"
+        assert "mock" in result.note
+
+    async def test_mock_mode_with_explicit_parse_fn_still_runs(self):
+        """显式传入 parse_fn（真实/自定义实现）时不受 mock 跳过影响."""
+
+        async def _parse(text):
+            return [{"clause_no": "3.2.1", "item": "技术方案完整性"}]
+
+        result = await tasks.run_extraction([_extraction_dataset()], parse_fn=_parse)
+        assert result.status == "ok"
         assert result.metrics["recall"] == pytest.approx(0.5)
 
 
