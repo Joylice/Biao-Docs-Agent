@@ -65,6 +65,17 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek/deepseek-chat"
     llm_primary: str = "deepseek/deepseek-chat"
     llm_backup: str = "qwen/qwen-plus"
+    # LLM 自定义端点（OpenAI 兼容），为空时使用模型默认端点
+    llm_api_base: str = ""
+    # LLM 自定义端点专用密钥（仅用于 llm_api_base，不回退云端密钥）
+    llm_api_key: str = ""
+    # 云端提供商 API Key（环境变量回退，数据库无配置时使用）
+    deepseek_api_key: str = ""
+    dashscope_api_key: str = ""
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    zhipu_api_key: str = ""
+    moonshot_api_key: str = ""
 
     # ── Embedding ──
     # 默认 DashScope 云端 embedding；模型名必须携带 litellm provider 前缀
@@ -73,6 +84,7 @@ class Settings(BaseSettings):
     embedding_model: str = "dashscope/text-embedding-v3"
     embedding_dimension: int = 1024
     embedding_api_base: str = "http://localhost:11434/v1"
+    embedding_api_key: str = ""
 
     # ── Rerank 精排（云端 API，DashScope gte-rerank 兼容协议）──
     # 默认关闭（opt-in）：未启用/未配置密钥/mock 模式下检索保持原向量序。

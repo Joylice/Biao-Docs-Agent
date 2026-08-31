@@ -362,7 +362,13 @@ async def update_llm_settings(db: AsyncSession, payload: LlmSettingsUpdate) -> l
 
 
 async def get_runtime_config() -> RuntimeLlmConfig | None:
-    """读取库内配置的运行时视图；无行/DB 失败返回 None（调用方回退 env）."""
+    """读取库内配置的运行时视图；无行/DB 失败时回退环境变量配置.
+
+    回退策略（测试环境/发版场景）：
+    - 数据库有 llm_settings 行 → 使用库内配置（用户在页面修改的优先）
+    - 数据库无行/DB 不可达 → 从环境变量构建 RuntimeLlmConfig（BID_LLM_*、BID_*_API_KEY）
+    - 环境变量也全空 → 返回 None（调用方退回 settings 默认值）
+    """
     global _runtime_cache
     now = time.monotonic()
     if _runtime_cache is not None:
@@ -396,8 +402,52 @@ async def get_runtime_config() -> RuntimeLlmConfig | None:
         logger.warning("读取 LLM 页面配置失败，回退环境变量", exc_info=True)
         cfg = None
 
+    # 数据库无配置时，从环境变量构建（测试环境固化配置，发版无需手动设置）
+    if cfg is None:
+        env_cfg = _build_config_from_env()
+        if env_cfg is not None:
+            logger.info("数据库无 LLM 配置，使用环境变量回退配置（model=%s）", env_cfg.llm_model)
+            cfg = env_cfg
+
     _runtime_cache = (now, cfg)
     return cfg
+
+
+def _build_config_from_env() -> RuntimeLlmConfig | None:
+    """从环境变量构建 RuntimeLlmConfig；所有关键字段均为空时返回 None.
+
+    仅检查**显式端点/密钥类**字段（默认值均为 ""）：llm_model / embedding_model /
+    embedding_api_base 有非空默认值，不能作为"已显式配置"的依据，否则 DB 无行时
+    会被默认值误触发回退（破坏原"无行返回 None"语义）。
+    """
+    has_any = any([
+        settings.llm_api_base,
+        settings.llm_api_key,
+        settings.deepseek_api_key,
+        settings.dashscope_api_key,
+        settings.openai_api_key,
+        settings.anthropic_api_key,
+        settings.zhipu_api_key,
+        settings.moonshot_api_key,
+        settings.embedding_api_key,
+    ])
+    if not has_any:
+        return None
+    return RuntimeLlmConfig(
+        deepseek_api_key=settings.deepseek_api_key or None,
+        dashscope_api_key=settings.dashscope_api_key or None,
+        openai_api_key=settings.openai_api_key or None,
+        anthropic_api_key=settings.anthropic_api_key or None,
+        zhipu_api_key=settings.zhipu_api_key or None,
+        moonshot_api_key=settings.moonshot_api_key or None,
+        llm_model=settings.llm_model or None,
+        llm_api_base=settings.llm_api_base or None,
+        llm_api_key=settings.llm_api_key or None,
+        embedding_api_base=settings.embedding_api_base or None,
+        embedding_model=settings.embedding_model or None,
+        embedding_api_key=settings.embedding_api_key or None,
+        llm_mock=bool(settings.llm_mock),
+    )
 
 
 async def is_mock_enabled(mock: bool | None = None) -> bool:
