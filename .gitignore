@@ -1,5 +1,7 @@
 # 环境配置（含密钥，严禁入库）
 .env
+.env.prod
+.env.*.local
 
 # Python
 .venv/
