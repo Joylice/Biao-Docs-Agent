@@ -1,0 +1,128 @@
+# ── 离线部署 compose（服务器无法访问外网镜像仓库时使用）──
+# v2: 修复 1Panel newComposeEnv 写入 1panel.env 而 docker-compose 不自动读取的问题
+# 各服务通过 env_file: 1panel.env 读取 1Panel 注入的密钥变量（BID_JWT_SECRET 等）
+# 端口与生产一致：15432/16379/19000/19001/18000/5173
+
+services:
+  # ── PostgreSQL + pgvector ──
+  postgres:
+    image: docker.1ms.run/pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: bid
+      POSTGRES_PASSWORD: bid
+      POSTGRES_DB: bid
+    ports:
+      - "15432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bid"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Redis ──
+  redis:
+    image: docker.1ms.run/redis:7-alpine
+    ports:
+      - "16379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── MinIO ──
+  minio:
+    image: docker.1ms.run/minio/minio:RELEASE.2024-02-26T09-33-48Z
+    command: server /data --console-address ":9001"
+    env_file:
+      - 1panel.env
+    environment:
+      MINIO_ROOT_USER: ${BID_MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${BID_MINIO_SECRET_KEY}
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    volumes:
+      - miniodata:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── 后端 API ──
+  api:
+    image: bidagent-backend:latest
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    env_file:
+      - 1panel.env
+    environment:
+      BID_DATABASE_URL: postgresql+psycopg://bid:bid@postgres:5432/bid
+      BID_REDIS_URL: redis://redis:6379/0
+      BID_MINIO_ENDPOINT: minio:9000
+      BID_MINIO_PUBLIC_ENDPOINT: 192.168.18.200:19000
+      BID_MINIO_ACCESS_KEY: ${BID_MINIO_ACCESS_KEY}
+      BID_MINIO_SECRET_KEY: ${BID_MINIO_SECRET_KEY}
+      BID_DEBUG: "false"
+      BID_LLM_MOCK: "false"
+      BID_JWT_SECRET: ${BID_JWT_SECRET}
+      BID_CORS_ORIGINS: '["http://192.168.18.200:5173"]'
+      BID_EMBEDDING_MODEL: "dashscope/text-embedding-v3"
+      BID_ADMIN_USER_IDS: "admin@bidagent.com"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
+    ports:
+      - "18000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Arq Worker ──
+  worker:
+    image: bidagent-backend:latest
+    command: arq worker.WorkerSettings
+    env_file:
+      - 1panel.env
+    environment:
+      BID_DATABASE_URL: postgresql+psycopg://bid:bid@postgres:5432/bid
+      BID_REDIS_URL: redis://redis:6379/0
+      BID_MINIO_ENDPOINT: minio:9000
+      BID_MINIO_PUBLIC_ENDPOINT: 192.168.18.200:19000
+      BID_MINIO_ACCESS_KEY: ${BID_MINIO_ACCESS_KEY}
+      BID_MINIO_SECRET_KEY: ${BID_MINIO_SECRET_KEY}
+      BID_DEBUG: "false"
+      BID_LLM_MOCK: "false"
+      BID_JWT_SECRET: ${BID_JWT_SECRET}
+      BID_EMBEDDING_MODEL: "dashscope/text-embedding-v3"
+      BID_ADMIN_USER_IDS: "admin@bidagent.com"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── 前端 ──
+  web:
+    image: bidagent-web:latest
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  miniodata:
