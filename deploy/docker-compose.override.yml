@@ -1,10 +1,10 @@
 # 本地开发/测试覆盖（compose 自动合并）：
-# - BID_LLM_MOCK=false：真实 LLM 调用（DeepSeek），供日常使用；
-# - 跑 E2E 时请临时改回 "true"（E2E 前置 BID_LLM_MOCK=true）后重建容器。
+# - BID_LLM_MOCK=true：LLM mock 模式（E2E 前置条件）；
+# - 日常真实 LLM 调用（DeepSeek）请临时改回 "false" 后重建容器。
 services:
   api:
     environment:
-      BID_LLM_MOCK: "false"
+      BID_LLM_MOCK: "true"
   worker:
     environment:
-      BID_LLM_MOCK: "false"
+      BID_LLM_MOCK: "true"
