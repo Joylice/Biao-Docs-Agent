@@ -61,15 +61,17 @@ def _mock_schema_response(response_format: dict | None) -> dict:
 def _compat_response_format(
     model: str, response_format: dict | None, system_prompt: str
 ) -> tuple[dict | None, str]:
-    """供应商兼容处理：DeepSeek 不支持 strict json_schema，降级 json_object + schema 入 prompt.
+    """供应商兼容处理：非 OpenAI 原生模型不支持 strict json_schema，降级 json_object + schema 入 prompt.
 
-    DeepSeek 兼容接口对 response_format 仅支持 json_object（json_schema 报
-    "This response_format type is unavailable now"）；降级后将 schema 结构
-    写入 system prompt 约束输出，其余模型保持原样透传。
+    DeepSeek / 智谱 / 月之暗面等 OpenAI 兼容接口对 response_format 仅支持
+    json_object（json_schema 报 "This response_format type is unavailable now"
+    或静默返回空）；降级后将 schema 结构写入 system prompt 约束输出，
+    OpenAI 原生模型保持原样透传。
     """
     if not response_format or response_format.get("type") != "json_schema":
         return response_format, system_prompt
-    if not model.startswith("deepseek"):
+    # OpenAI 原生模型（gpt 系列）支持 json_schema，保持原样
+    if model.startswith("openai") or model.startswith("gpt"):
         return response_format, system_prompt
     schema = response_format.get("json_schema", {}).get("schema", {})
     constraint = (

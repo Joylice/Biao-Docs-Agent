@@ -75,7 +75,14 @@
               >
                 重新解析
               </a-button>
-              <a-tag v-if="isStale(record)" color="warning">超时</a-tag>
+              <a-button
+                size="small"
+                type="link"
+                danger
+                @click="handleDelete(record.id, record.title)"
+              >
+                删除
+              </a-button>
             </a-space>
           </template>
         </template>
@@ -144,15 +151,25 @@
             {{ formatTime(record.created_at) }}
           </template>
           <template v-if="column.key === 'action'">
-            <a-button
-              v-if="record.status === 'parsed' || record.status === 'failed' || isStale(record)"
-              size="small"
-              type="link"
-              :loading="reparseId === record.id"
-              @click="handleReparse(record.id)"
-            >
-              重新解析
-            </a-button>
+            <a-space>
+              <a-button
+                v-if="record.status === 'parsed' || record.status === 'failed' || isStale(record)"
+                size="small"
+                type="link"
+                :loading="reparseId === record.id"
+                @click="handleReparse(record.id)"
+              >
+                重新解析
+              </a-button>
+              <a-button
+                size="small"
+                type="link"
+                danger
+                @click="handleDelete(record.id, record.title)"
+              >
+                删除
+              </a-button>
+            </a-space>
           </template>
         </template>
       </a-table>
@@ -191,7 +208,9 @@ import {
   fetchProjectDocuments,
   uploadTenderDocument,
   reparseTenderDocument,
+  deleteProjectDocument,
 } from '@/api'
+import { Modal } from 'ant-design-vue'
 import PageContainer from '@/components/PageContainer.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
@@ -370,6 +389,26 @@ const handleReparse = async (docId: string) => {
   } finally {
     reparseId.value = null
   }
+}
+
+/** 删除招标文件（级联删除关联评分点/技术需求） */
+const handleDelete = (docId: string, title: string) => {
+  Modal.confirm({
+    title: '确认删除',
+    content: `删除「${title}」将同时清除其关联的评分点和技术需求，且不可恢复。确认删除？`,
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await deleteProjectDocument(projectId, docId)
+        message.success('删除成功')
+        await fetchData()
+      } catch {
+        message.error('删除失败，请稍后重试')
+      }
+    },
+  })
 }
 
 onMounted(fetchData)

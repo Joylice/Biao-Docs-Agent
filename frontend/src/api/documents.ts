@@ -100,3 +100,7 @@ export const reindexDocument = (documentId: string) =>
 /** 重新解析招标文件（清除旧评分点 → 状态重置 → 重新入队） */
 export const reparseTenderDocument = (projectId: string, documentId: string) =>
   api.post<ApiResponse<DocumentItem>>(`/projects/${projectId}/documents/${documentId}/reparse`)
+
+/** 删除项目文档（级联删除评分点/技术需求/废标条款） */
+export const deleteProjectDocument = (projectId: string, documentId: string) =>
+  api.delete<ApiResponse<void>>(`/projects/${projectId}/documents/${documentId}`)

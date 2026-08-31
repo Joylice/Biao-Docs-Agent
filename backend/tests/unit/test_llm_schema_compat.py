@@ -1,9 +1,9 @@
-"""llm_service.call_llm_with_schema 供应商兼容测试 — DeepSeek json_schema 降级（三期 S5 验收修复）.
+"""llm_service.call_llm_with_schema 供应商兼容测试 — 非 OpenAI 原生模型 json_schema 降级（三期 S5 验收修复）.
 
-背景：DeepSeek 兼容接口不支持 strict json_schema（返回
-"This response_format type is unavailable now"），仅支持 json_object。
-契约：deepseek 模型 + json_schema → 降级 json_object 且 schema 约束写入 system prompt；
-非 deepseek 模型保持原样。
+背景：DeepSeek / 智谱 / 月之暗面等 OpenAI 兼容接口不支持 strict json_schema
+（返回 "This response_format type is unavailable now" 或静默返回空），仅支持
+json_object。契约：非 OpenAI 原生模型 + json_schema → 降级 json_object 且 schema
+约束写入 system prompt；openai/gpt 原生模型保持原样。
 """
 
 import sys
@@ -94,11 +94,34 @@ class TestDeepseekJsonSchemaDowngrade:
         assert real_mode["response_format"] == {"type": "json_object"}
 
 
-class TestNonDeepseekKeepsJsonSchema:
-    """非 deepseek 模型：json_schema 原样透传."""
+class TestNonOpenAiNativeKeepsJsonSchema:
+    """openai/gpt 原生模型：json_schema 原样透传."""
 
     @pytest.mark.asyncio
     async def test_keeps_json_schema(self, real_mode, monkeypatch) -> None:
-        monkeypatch.setattr(app_settings, "llm_model", "qwen/qwen-plus")
+        monkeypatch.setattr(app_settings, "llm_model", "openai/gpt-4o")
         await call_llm_with_schema("s", "u", response_format=_JSON_SCHEMA_FORMAT, mock=False)
         assert real_mode["response_format"] == _JSON_SCHEMA_FORMAT
+
+    @pytest.mark.asyncio
+    async def test_gpt_short_name_keeps_json_schema(self, real_mode, monkeypatch) -> None:
+        """gpt 前缀（无 openai/ 前缀）同样保持透传."""
+        monkeypatch.setattr(app_settings, "llm_model", "gpt-4o")
+        await call_llm_with_schema("s", "u", response_format=_JSON_SCHEMA_FORMAT, mock=False)
+        assert real_mode["response_format"] == _JSON_SCHEMA_FORMAT
+
+
+class TestCompatModelJsonSchemaDowngrade:
+    """兼容接口模型（qwen/zhipu/moonshot 等）：json_schema 降级为 json_object."""
+
+    @pytest.mark.asyncio
+    async def test_qwen_downgrades(self, real_mode, monkeypatch) -> None:
+        monkeypatch.setattr(app_settings, "llm_model", "qwen/qwen-plus")
+        await call_llm_with_schema("s", "u", response_format=_JSON_SCHEMA_FORMAT, mock=False)
+        assert real_mode["response_format"] == {"type": "json_object"}
+
+    @pytest.mark.asyncio
+    async def test_zhipu_downgrades(self, real_mode, monkeypatch) -> None:
+        monkeypatch.setattr(app_settings, "llm_model", "zhipu/glm-4.6v")
+        await call_llm_with_schema("s", "u", response_format=_JSON_SCHEMA_FORMAT, mock=False)
+        assert real_mode["response_format"] == {"type": "json_object"}

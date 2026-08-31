@@ -307,6 +307,34 @@ async def list_documents(
     return paginated(items_data, total)
 
 
+@router.delete("/{project_id}/documents/{document_id}")
+async def delete_document(
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """删除文档及其关联的评分点/技术需求/废标条款（清理重复/失败文件）."""
+    await _check_project_member(db, project_id, user_id)
+
+    doc = await document_service.delete_document(db, project_id, document_id)
+
+    # 审计埋点：文档删除（security.md §4）
+    await audit.record(
+        db,
+        user_id,
+        "document.delete",
+        project_id=project_id,
+        target_type="document",
+        target_id=str(doc.id),
+        detail={"title": doc.title, "doc_type": doc.doc_type},
+    )
+
+    # 事务约定（BUG-1）：删除 + 审计响应前显式提交
+    await db.commit()
+    return success(data={"id": str(doc.id), "title": doc.title})
+
+
 @router.get("/{project_id}/documents/{document_id}/format-requirements")
 async def get_format_requirements(
     project_id: uuid.UUID,

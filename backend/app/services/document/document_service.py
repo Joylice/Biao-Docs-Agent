@@ -213,3 +213,25 @@ async def replace_doc_clauses(
     for item in items:
         db.add(DisqualificationClause(project_id=project_id, doc_id=document_id, **item))
     await db.flush()
+
+
+async def delete_document(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+) -> Document:
+    """删除文档及其关联的评分点/技术需求/废标条款（仅 flush，不删 MinIO 文件）.
+
+    适用场景：清理重复上传/解析失败的招标文件。MinIO 文件保留（避免误删
+    其他文档引用的对象），由后台定期清理孤儿对象。
+    """
+    doc = await get_document(db, project_id, document_id)
+    # 级联删除关联数据
+    await db.execute(delete(ScorePoint).where(ScorePoint.doc_id == document_id))
+    await db.execute(delete(TechRequirement).where(TechRequirement.doc_id == document_id))
+    await db.execute(
+        delete(DisqualificationClause).where(DisqualificationClause.doc_id == document_id)
+    )
+    await db.delete(doc)
+    await db.flush()
+    return doc
