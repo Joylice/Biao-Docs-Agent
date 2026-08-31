@@ -26,6 +26,13 @@ class LlmSetting(Base):
     llm_model: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # 自定义 LLM OpenAI 兼容服务地址（http/https；无 key 端点可留空 api_key）
     llm_api_base: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # 自定义 LLM 服务端点专用密钥（仅用于 llm_api_base 指向的私有化端点，不透传至云端厂商）
+    llm_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # 主流云端厂商密钥（按模型前缀匹配使用）
+    openai_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    anthropic_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    zhipu_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    moonshot_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
     embedding_api_base: Mapped[str | None] = mapped_column(String(512), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(256), nullable=True)
     embedding_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)

@@ -92,7 +92,7 @@ class PanelClient:
         headers = self._headers()
         headers["Accept-Language"] = "zh"
         headers.update(kwargs.pop("headers", {}) or {})
-        r = requests.request(method, url, timeout=self.timeout, headers=headers, **kwargs)
+        r = requests.request(method, url, timeout=kwargs.pop("timeout", self.timeout), headers=headers, **kwargs)
         if r.status_code != 200:
             raise RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
         try:
@@ -153,16 +153,47 @@ class PanelClient:
             raise RuntimeError(f"上传失败: {d.get('message')}")
         print(f"  [upload] {os.path.basename(local_path)} -> {target_dir} OK")
 
-    def image_load(self, server_path: str) -> None:
-        d = self._request("POST", "/api/v1/containers/image/load",
-                          json={"path": server_path})
-        print(f"  [load] {server_path} OK")
+    def image_load(self, server_path: str, retries: int = 3) -> None:
+        """加载镜像包。面板 SQLite 可能瞬时 BUSY（并发写），重试收敛；大包加载耗时长，放宽读超时."""
+        import time as _t
 
-    def image_tag(self, source: str, target: str) -> None:
-        """source/target 用镜像名或 ID 均可。"""
-        d = self._request("POST", "/api/v1/containers/image/tag",
-                          json={"sourceID": source, "targetName": target})
-        print(f"  [tag] {source} -> {target} OK")
+        last_err: Exception | None = None
+        for attempt in range(1, retries + 1):
+            try:
+                self._request("POST", "/api/v1/containers/image/load",
+                              json={"path": server_path}, timeout=900.0)
+                print(f"  [load] {server_path} OK")
+                return
+            except Exception as e:
+                last_err = e
+                msg = str(e)
+                if "SQLITE_BUSY" in msg or "database is locked" in msg:
+                    print(f"  [load] 面板忙（SQLITE_BUSY），{attempt}/{retries} 次重试...")
+                    _t.sleep(8)
+                    continue
+                raise
+        raise RuntimeError(f"load 失败（{retries} 次重试后仍 BUSY）: {last_err}")
+
+    def image_tag(self, source: str, target: str, retries: int = 5) -> None:
+        """source/target 用镜像名或 ID 均可；面板 SQLite BUSY 时重试."""
+        import time as _t
+
+        last_err: Exception | None = None
+        for attempt in range(1, retries + 1):
+            try:
+                self._request("POST", "/api/v1/containers/image/tag",
+                              json={"sourceID": source, "targetName": target})
+                print(f"  [tag] {source} -> {target} OK")
+                return
+            except Exception as e:
+                last_err = e
+                msg = str(e)
+                if "SQLITE_BUSY" in msg or "database is locked" in msg:
+                    print(f"  [tag] 面板忙（SQLITE_BUSY），{attempt}/{retries} 次重试...")
+                    _t.sleep(10)
+                    continue
+                raise
+        raise RuntimeError(f"tag 失败（{retries} 次重试后仍 BUSY）: {last_err}")
 
     # -- 编排 --
     def compose_test(self, name: str, path: str, env_list: list[str]) -> None:
@@ -174,13 +205,29 @@ class PanelClient:
             raise RuntimeError(f"compose 校验未通过: {d}")
         print(f"  [compose-test] {path} OK")
 
-    def compose_up(self, name: str, path: str, env_list: list[str]) -> str:
-        d = self._request(
-            "POST", "/api/v1/containers/compose",
-            json={"name": name, "from": "path", "path": path, "env": env_list},
-        )
-        print(f"  [compose-up] 已触发（日志 {d}），异步执行中")
-        return str(d)
+    def compose_up(self, name: str, path: str, env_list: list[str], retries: int = 6) -> str:
+        """触发 compose 编排（异步）；面板 SQLite BUSY 时重试（等待面板恢复）."""
+        import time as _t
+
+        last_err: Exception | None = None
+        for attempt in range(1, retries + 1):
+            try:
+                d = self._request(
+                    "POST", "/api/v1/containers/compose",
+                    json={"name": name, "from": "path", "path": path, "env": env_list},
+                    timeout=120.0,
+                )
+                print(f"  [compose-up] 已触发（日志 {d}），异步执行中")
+                return str(d)
+            except Exception as e:
+                last_err = e
+                msg = str(e)
+                if "SQLITE_BUSY" in msg or "database is locked" in msg:
+                    print(f"  [compose-up] 面板忙（SQLITE_BUSY），{attempt}/{retries} 次重试...")
+                    _t.sleep(15)
+                    continue
+                raise
+        raise RuntimeError(f"compose-up 失败（{retries} 次重试后仍 BUSY）: {last_err}")
 
 
 # ────────────────────────── CLI ──────────────────────────

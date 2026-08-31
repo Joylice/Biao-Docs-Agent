@@ -4,14 +4,24 @@ import api from './client'
 export interface LlmSettings {
   deepseek_api_key: string
   dashscope_api_key: string
+  openai_api_key: string
+  anthropic_api_key: string
+  zhipu_api_key: string
+  moonshot_api_key: string
   llm_model: string
   llm_api_base: string
+  llm_api_key: string
   embedding_api_base: string
   embedding_model: string
   embedding_api_key: string
   llm_mock: boolean
   deepseek_configured: boolean
   dashscope_configured: boolean
+  openai_configured: boolean
+  anthropic_configured: boolean
+  zhipu_configured: boolean
+  moonshot_configured: boolean
+  llm_key_configured: boolean
   embedding_configured: boolean
 }
 
@@ -19,8 +29,13 @@ export interface LlmSettings {
 export interface LlmSettingsPayload {
   deepseek_api_key?: string
   dashscope_api_key?: string
+  openai_api_key?: string
+  anthropic_api_key?: string
+  zhipu_api_key?: string
+  moonshot_api_key?: string
   llm_model?: string
   llm_api_base?: string
+  llm_api_key?: string
   embedding_api_base: string
   embedding_model: string
   embedding_api_key?: string

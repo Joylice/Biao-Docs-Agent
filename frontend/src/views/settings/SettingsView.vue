@@ -87,7 +87,19 @@
               @input="llmApiBaseTouched = true"
             />
             <template #help>
-              OpenAI 兼容服务地址（vLLM / Ollama 等）；留空使用模型默认端点；配置后不转发云端密钥，无需 API Key
+              OpenAI 兼容服务地址（vLLM / Ollama 等）；留空使用模型默认端点；无鉴权端点可留空下方 API Key
+            </template>
+          </a-form-item>
+          <a-form-item label="LLM 服务 API Key">
+            <a-input-password
+              v-model:value="form.llmApiKey"
+              :placeholder="llmApiKeyPlaceholder"
+              autocomplete="new-password"
+              @input="llmApiKeyTouched = true"
+            />
+            <template #help>
+              上方「LLM 服务地址」指向的私有化端点专用密钥（如带 token 的 vLLM 网关、企业内部大模型中台）；
+              无鉴权端点（Ollama / 开放 vLLM）留空即可。该密钥仅用于自定义端点，不会被转发至 DeepSeek / 百炼等云端服务
             </template>
           </a-form-item>
           <a-form-item label="DeepSeek API Key">
@@ -105,6 +117,50 @@
               autocomplete="new-password"
               @input="dashscopeTouched = true"
             />
+          </a-form-item>
+          <a-form-item label="OpenAI API Key">
+            <a-input-password
+              v-model:value="form.openaiApiKey"
+              :placeholder="openaiPlaceholder"
+              autocomplete="new-password"
+              @input="openaiTouched = true"
+            />
+            <template #help>
+              用于 gpt-4 / gpt-3.5-turbo 等 OpenAI 系列模型；模型名前缀 <code>openai/</code> 时自动匹配
+            </template>
+          </a-form-item>
+          <a-form-item label="Anthropic API Key">
+            <a-input-password
+              v-model:value="form.anthropicApiKey"
+              :placeholder="anthropicPlaceholder"
+              autocomplete="new-password"
+              @input="anthropicTouched = true"
+            />
+            <template #help>
+              用于 claude-3 / claude-sonnet 等 Anthropic 系列模型；模型名前缀 <code>anthropic/</code> 时自动匹配
+            </template>
+          </a-form-item>
+          <a-form-item label="智谱 AI API Key">
+            <a-input-password
+              v-model:value="form.zhipuApiKey"
+              :placeholder="zhipuPlaceholder"
+              autocomplete="new-password"
+              @input="zhipuTouched = true"
+            />
+            <template #help>
+              用于 glm-4 / glm-3-turbo 等智谱系列模型；模型名前缀 <code>zhipu/</code> 时自动匹配
+            </template>
+          </a-form-item>
+          <a-form-item label="月之暗面 Moonshot API Key">
+            <a-input-password
+              v-model:value="form.moonshotApiKey"
+              :placeholder="moonshotPlaceholder"
+              autocomplete="new-password"
+              @input="moonshotTouched = true"
+            />
+            <template #help>
+              用于 kimi 系列模型；模型名前缀 <code>moonshot/</code> 时自动匹配
+            </template>
           </a-form-item>
         </a-form>
         <div class="settings-card__action">
@@ -284,23 +340,43 @@ const testingEmbedding = ref(false)
 
 const deepseekMasked = ref('')
 const dashscopeMasked = ref('')
+const openaiMasked = ref('')
+const anthropicMasked = ref('')
+const zhipuMasked = ref('')
+const moonshotMasked = ref('')
+const llmApiKeyMasked = ref('')
 const embeddingMasked = ref('')
 const deepseekConfigured = ref(false)
 const dashscopeConfigured = ref(false)
+const openaiConfigured = ref(false)
+const anthropicConfigured = ref(false)
+const zhipuConfigured = ref(false)
+const moonshotConfigured = ref(false)
+const llmKeyConfigured = ref(false)
 const embeddingConfigured = ref(false)
 
 // 密钥/自定义模型输入框 touched 跟踪：用户键入过（含清空）才算修改，提交时决定字段是否进入 payload
 const deepseekTouched = ref(false)
 const dashscopeTouched = ref(false)
+const openaiTouched = ref(false)
+const anthropicTouched = ref(false)
+const zhipuTouched = ref(false)
+const moonshotTouched = ref(false)
 const embeddingTouched = ref(false)
 const llmModelTouched = ref(false)
 const llmApiBaseTouched = ref(false)
+const llmApiKeyTouched = ref(false)
 
 const form = reactive({
   deepseekApiKey: '',
   dashscopeApiKey: '',
+  openaiApiKey: '',
+  anthropicApiKey: '',
+  zhipuApiKey: '',
+  moonshotApiKey: '',
   llmModel: '',
   llmApiBase: '',
+  llmApiKey: '',
   embeddingModel: '',
   embeddingApiBase: '',
   embeddingApiKey: '',
@@ -315,13 +391,37 @@ const deepseekPlaceholder = computed(() =>
 const dashscopePlaceholder = computed(() =>
   dashscopeConfigured.value ? dashscopeMasked.value : '未配置',
 )
+const openaiPlaceholder = computed(() =>
+  openaiConfigured.value ? openaiMasked.value : '未配置',
+)
+const anthropicPlaceholder = computed(() =>
+  anthropicConfigured.value ? anthropicMasked.value : '未配置',
+)
+const zhipuPlaceholder = computed(() =>
+  zhipuConfigured.value ? zhipuMasked.value : '未配置',
+)
+const moonshotPlaceholder = computed(() =>
+  moonshotConfigured.value ? moonshotMasked.value : '未配置',
+)
+const llmApiKeyPlaceholder = computed(() =>
+  llmKeyConfigured.value ? llmApiKeyMasked.value : '无鉴权端点可留空',
+)
 const embeddingPlaceholder = computed(() =>
   embeddingConfigured.value ? embeddingMasked.value : '留空则按模型前缀回退 LLM 密钥',
 )
 
 // LLM 配置状态：主模型/服务地址/任一密钥已配置即为已配置
-const llmConfigured = computed(() =>
-  !!form.llmModel || !!form.llmApiBase || deepseekConfigured.value || dashscopeConfigured.value,
+const llmConfigured = computed(
+  () =>
+    !!form.llmModel ||
+    !!form.llmApiBase ||
+    deepseekConfigured.value ||
+    dashscopeConfigured.value ||
+    openaiConfigured.value ||
+    anthropicConfigured.value ||
+    zhipuConfigured.value ||
+    moonshotConfigured.value ||
+    llmKeyConfigured.value,
 )
 
 const getErrorMessage = (error: unknown, fallback: string): string => {
@@ -340,13 +440,28 @@ const fetchSettings = async () => {
     const settings = await getLlmSettings()
     deepseekMasked.value = settings.deepseek_api_key
     dashscopeMasked.value = settings.dashscope_api_key
+    openaiMasked.value = settings.openai_api_key
+    anthropicMasked.value = settings.anthropic_api_key
+    zhipuMasked.value = settings.zhipu_api_key
+    moonshotMasked.value = settings.moonshot_api_key
     embeddingMasked.value = settings.embedding_api_key
+    llmApiKeyMasked.value = settings.llm_api_key
     deepseekConfigured.value = settings.deepseek_configured
     dashscopeConfigured.value = settings.dashscope_configured
+    openaiConfigured.value = settings.openai_configured
+    anthropicConfigured.value = settings.anthropic_configured
+    zhipuConfigured.value = settings.zhipu_configured
+    moonshotConfigured.value = settings.moonshot_configured
+    llmKeyConfigured.value = settings.llm_key_configured
     embeddingConfigured.value = settings.embedding_configured
     // 密钥框始终留空，placeholder 展示脱敏串，避免脱敏串被当原值回传
     form.deepseekApiKey = ''
     form.dashscopeApiKey = ''
+    form.openaiApiKey = ''
+    form.anthropicApiKey = ''
+    form.zhipuApiKey = ''
+    form.moonshotApiKey = ''
+    form.llmApiKey = ''
     form.embeddingApiKey = ''
     form.llmModel = settings.llm_model
     form.llmApiBase = settings.llm_api_base
@@ -355,9 +470,14 @@ const fetchSettings = async () => {
     form.llmMock = settings.llm_mock
     deepseekTouched.value = false
     dashscopeTouched.value = false
+    openaiTouched.value = false
+    anthropicTouched.value = false
+    zhipuTouched.value = false
+    moonshotTouched.value = false
     embeddingTouched.value = false
     llmModelTouched.value = false
     llmApiBaseTouched.value = false
+    llmApiKeyTouched.value = false
   } catch (error) {
     message.error(getErrorMessage(error, '获取模型配置失败'))
   } finally {
@@ -380,11 +500,26 @@ const handleSave = async () => {
     if (dashscopeTouched.value) {
       payload.dashscope_api_key = form.dashscopeApiKey
     }
+    if (openaiTouched.value) {
+      payload.openai_api_key = form.openaiApiKey
+    }
+    if (anthropicTouched.value) {
+      payload.anthropic_api_key = form.anthropicApiKey
+    }
+    if (zhipuTouched.value) {
+      payload.zhipu_api_key = form.zhipuApiKey
+    }
+    if (moonshotTouched.value) {
+      payload.moonshot_api_key = form.moonshotApiKey
+    }
     if (llmModelTouched.value) {
       payload.llm_model = form.llmModel
     }
     if (llmApiBaseTouched.value) {
       payload.llm_api_base = form.llmApiBase
+    }
+    if (llmApiKeyTouched.value) {
+      payload.llm_api_key = form.llmApiKey
     }
     if (embeddingTouched.value) {
       payload.embedding_api_key = form.embeddingApiKey
@@ -393,9 +528,14 @@ const handleSave = async () => {
     message.success('模型配置已保存')
     deepseekTouched.value = false
     dashscopeTouched.value = false
+    openaiTouched.value = false
+    anthropicTouched.value = false
+    zhipuTouched.value = false
+    moonshotTouched.value = false
     embeddingTouched.value = false
     llmModelTouched.value = false
     llmApiBaseTouched.value = false
+    llmApiKeyTouched.value = false
     await fetchSettings()
   } catch (error) {
     message.error(getErrorMessage(error, '保存模型配置失败'))

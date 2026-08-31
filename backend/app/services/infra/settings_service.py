@@ -54,19 +54,33 @@ class RuntimeLlmConfig:
 
     deepseek_api_key: str | None = None
     dashscope_api_key: str | None = None
+    openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    zhipu_api_key: str | None = None
+    moonshot_api_key: str | None = None
     llm_model: str | None = None
     llm_api_base: str | None = None
+    # 自定义端点（llm_api_base）专用密钥：仅用于该端点，不参与云端密钥匹配
+    llm_api_key: str | None = None
     embedding_api_base: str | None = None
     embedding_model: str | None = None
     embedding_api_key: str | None = None
     llm_mock: bool = False
 
     def api_key_for(self, model: str) -> str | None:
-        """按模型前缀匹配库内密钥：deepseek → DeepSeek key，qwen/dashscope → DashScope key."""
+        """按模型前缀匹配库内密钥."""
         if model.startswith("deepseek"):
             return self.deepseek_api_key
         if model.startswith("qwen") or model.startswith("dashscope"):
             return self.dashscope_api_key
+        if model.startswith("openai") or model.startswith("gpt"):
+            return self.openai_api_key
+        if model.startswith("anthropic") or model.startswith("claude"):
+            return self.anthropic_api_key
+        if model.startswith("zhipu") or model.startswith("glm"):
+            return self.zhipu_api_key
+        if model.startswith("moonshot") or model.startswith("kimi"):
+            return self.moonshot_api_key
         return None
 
 
@@ -166,30 +180,55 @@ async def get_settings_view(db: AsyncSession) -> dict[str, Any]:
         return {
             "deepseek_api_key": "",
             "dashscope_api_key": "",
+            "openai_api_key": "",
+            "anthropic_api_key": "",
+            "zhipu_api_key": "",
+            "moonshot_api_key": "",
             "llm_model": settings.llm_model,
             "llm_api_base": "",
+            "llm_api_key": "",
             "embedding_api_base": settings.embedding_api_base,
             "embedding_model": settings.embedding_model,
             "embedding_api_key": "",
             "llm_mock": settings.llm_mock,
             "deepseek_configured": False,
             "dashscope_configured": False,
+            "openai_configured": False,
+            "anthropic_configured": False,
+            "zhipu_configured": False,
+            "moonshot_configured": False,
+            "llm_key_configured": False,
             "embedding_configured": False,
         }
     deepseek = _decrypt_or_empty(row.deepseek_api_key_enc)
     dashscope = _decrypt_or_empty(row.dashscope_api_key_enc)
+    openai = _decrypt_or_empty(row.openai_api_key_enc)
+    anthropic = _decrypt_or_empty(row.anthropic_api_key_enc)
+    zhipu = _decrypt_or_empty(row.zhipu_api_key_enc)
+    moonshot = _decrypt_or_empty(row.moonshot_api_key_enc)
+    llm_key = _decrypt_or_empty(row.llm_api_key_enc)
     embedding_key = _decrypt_or_empty(row.embedding_api_key_enc)
     return {
         "deepseek_api_key": mask_secret(deepseek),
         "dashscope_api_key": mask_secret(dashscope),
+        "openai_api_key": mask_secret(openai),
+        "anthropic_api_key": mask_secret(anthropic),
+        "zhipu_api_key": mask_secret(zhipu),
+        "moonshot_api_key": mask_secret(moonshot),
         "llm_model": row.llm_model or settings.llm_model,
         "llm_api_base": row.llm_api_base or "",
+        "llm_api_key": mask_secret(llm_key),
         "embedding_api_base": row.embedding_api_base or settings.embedding_api_base,
         "embedding_model": row.embedding_model or settings.embedding_model,
         "embedding_api_key": mask_secret(embedding_key),
         "llm_mock": row.llm_mock,
         "deepseek_configured": bool(deepseek),
         "dashscope_configured": bool(dashscope),
+        "openai_configured": bool(openai),
+        "anthropic_configured": bool(anthropic),
+        "zhipu_configured": bool(zhipu),
+        "moonshot_configured": bool(moonshot),
+        "llm_key_configured": bool(llm_key),
         "embedding_configured": bool(embedding_key),
     }
 
@@ -223,6 +262,38 @@ async def update_llm_settings(db: AsyncSession, payload: LlmSettingsUpdate) -> l
             changed.append("dashscope_api_key")
         row.dashscope_api_key_enc = encrypt_secret(new_dashscope) if new_dashscope else None
 
+    # OpenAI API Key（密钥三态）
+    if payload.openai_api_key is not None:
+        new_openai = payload.openai_api_key.strip()
+        _reject_masked_key("openai_api_key", new_openai)
+        if new_openai != _decrypt_or_empty(row.openai_api_key_enc):
+            changed.append("openai_api_key")
+        row.openai_api_key_enc = encrypt_secret(new_openai) if new_openai else None
+
+    # Anthropic API Key（密钥三态）
+    if payload.anthropic_api_key is not None:
+        new_anthropic = payload.anthropic_api_key.strip()
+        _reject_masked_key("anthropic_api_key", new_anthropic)
+        if new_anthropic != _decrypt_or_empty(row.anthropic_api_key_enc):
+            changed.append("anthropic_api_key")
+        row.anthropic_api_key_enc = encrypt_secret(new_anthropic) if new_anthropic else None
+
+    # 智谱 AI API Key（密钥三态）
+    if payload.zhipu_api_key is not None:
+        new_zhipu = payload.zhipu_api_key.strip()
+        _reject_masked_key("zhipu_api_key", new_zhipu)
+        if new_zhipu != _decrypt_or_empty(row.zhipu_api_key_enc):
+            changed.append("zhipu_api_key")
+        row.zhipu_api_key_enc = encrypt_secret(new_zhipu) if new_zhipu else None
+
+    # 月之暗面 API Key（密钥三态）
+    if payload.moonshot_api_key is not None:
+        new_moonshot = payload.moonshot_api_key.strip()
+        _reject_masked_key("moonshot_api_key", new_moonshot)
+        if new_moonshot != _decrypt_or_empty(row.moonshot_api_key_enc):
+            changed.append("moonshot_api_key")
+        row.moonshot_api_key_enc = encrypt_secret(new_moonshot) if new_moonshot else None
+
     # 自定义 LLM 主模型（三态：None=保持、""=清除回退 env、非空=更新）
     if payload.llm_model is not None:
         new_llm_model = payload.llm_model.strip() or None
@@ -238,6 +309,14 @@ async def update_llm_settings(db: AsyncSession, payload: LlmSettingsUpdate) -> l
         if new_llm_base != row.llm_api_base:
             changed.append("llm_api_base")
         row.llm_api_base = new_llm_base
+
+    # 自定义端点专用密钥（密钥三态，与 deepseek/dashscope 一致）
+    if payload.llm_api_key is not None:
+        new_llm_key = payload.llm_api_key.strip()
+        _reject_masked_key("llm_api_key", new_llm_key)
+        if new_llm_key != _decrypt_or_empty(row.llm_api_key_enc):
+            changed.append("llm_api_key")
+        row.llm_api_key_enc = encrypt_secret(new_llm_key) if new_llm_key else None
 
     new_base = payload.embedding_api_base.strip() or None
     if new_base:
@@ -290,8 +369,13 @@ async def get_runtime_config() -> RuntimeLlmConfig | None:
             cfg = RuntimeLlmConfig(
                 deepseek_api_key=_decrypt_or_empty(row.deepseek_api_key_enc) or None,
                 dashscope_api_key=_decrypt_or_empty(row.dashscope_api_key_enc) or None,
+                openai_api_key=_decrypt_or_empty(row.openai_api_key_enc) or None,
+                anthropic_api_key=_decrypt_or_empty(row.anthropic_api_key_enc) or None,
+                zhipu_api_key=_decrypt_or_empty(row.zhipu_api_key_enc) or None,
+                moonshot_api_key=_decrypt_or_empty(row.moonshot_api_key_enc) or None,
                 llm_model=row.llm_model,
                 llm_api_base=row.llm_api_base,
+                llm_api_key=_decrypt_or_empty(row.llm_api_key_enc) or None,
                 embedding_api_base=row.embedding_api_base,
                 embedding_model=row.embedding_model,
                 embedding_api_key=_decrypt_or_empty(row.embedding_api_key_enc) or None,
@@ -322,9 +406,11 @@ async def resolve_llm_target() -> tuple[str, str | None, dict[str, str]]:
     - 库内 llm_model 优先（页面配置）；空则回退 env settings.llm_model（现状）
     - 模型名无 provider 前缀时自动补 ``openai/``（OpenAI 兼容端点通用前缀；
       litellm>=1.97 实测 ``openai_like/`` 解析成功但实际调用报 Unmapped provider）
-    - 自定义端点（llm_api_base 非空）：不透传 DeepSeek/DashScope 云端密钥
-      （防密钥外泄至第三方端点，安全考虑）；无 key 端点用 ``"EMPTY"`` 占位
-      （vLLM/Ollama 等无认证 OpenAI 兼容服务通用做法，避免 litellm 报缺 key）
+    - 自定义端点（llm_api_base 非空）：优先使用页面配置的 **端点专用密钥**
+      ``llm_api_key``；未配置时以 ``"EMPTY"`` 占位（vLLM/Ollama 等无认证
+      OpenAI 兼容服务通用做法，避免 litellm 报缺 key）。
+      安全约束：自定义端点 **绝不回退** deepseek/dashscope 云端密钥，
+      防止用户云端凭据被转发至第三方端点。
     - 非自定义端点：按模型前缀匹配库内密钥（deepseek/qwen 前缀）
     """
     cfg = await get_runtime_config()
@@ -340,9 +426,9 @@ async def resolve_llm_target() -> tuple[str, str | None, dict[str, str]]:
         model = f"openai/{model}"
     kwargs: dict[str, str] = {}
     if cfg.llm_api_base:
-        # 自定义端点：仅传地址，不转发云端密钥
+        # 自定义端点：只认端点专用密钥，不回退云端密钥（防凭据外泄）
         kwargs["api_base"] = cfg.llm_api_base
-        kwargs["api_key"] = "EMPTY"
+        kwargs["api_key"] = cfg.llm_api_key or "EMPTY"
     else:
         key = cfg.api_key_for(cfg.llm_model)
         if key:
