@@ -2,6 +2,7 @@
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File deploy\restart.ps1        # 仅重启（复用现有镜像）
 #   powershell -ExecutionPolicy Bypass -File deploy\restart.ps1 -Build # 先重建 api/worker/web 镜像再重启
+# 提示：git push 报 upstream 丢失/失效时，先跑 deploy\repair-upstream.ps1 修复跟踪引用（本脚本不涉及 git）。
 param(
     [switch]$Build
 )
