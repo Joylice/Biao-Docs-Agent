@@ -6,12 +6,16 @@
 
 import asyncio
 import json
+import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from app.core.exceptions import LLMServiceError
 from app.core.redact import redact
 from app.services.infra import settings_service
+
+logger = logging.getLogger(__name__)
 
 _MOCK_TEXT = (
     "（mock 模式）本节内容为离线 mock 占位文本，用于测试环境下生成链路的完整流程验证。"
@@ -75,6 +79,61 @@ def _compat_response_format(
     return {"type": "json_object"}, system_prompt + constraint
 
 
+def _usage_summary(response: Any) -> str:
+    """提取响应 usage 摘要（部分兼容接口无 usage 字段时返回空串）."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return ""
+    return (
+        f"prompt_tokens={getattr(usage, 'prompt_tokens', '?')} "
+        f"completion_tokens={getattr(usage, 'completion_tokens', '?')} "
+        f"total_tokens={getattr(usage, 'total_tokens', '?')}"
+    )
+
+
+def _log_llm_call(
+    kind: str,
+    model: str,
+    elapsed_ms: float,
+    ok: bool,
+    prompt_chars: int,
+    usage: str = "",
+    error: str = "",
+) -> None:
+    """LLM 调用观测日志：单行 key=value（可 grep/接入采集），成功 info 失败 warning."""
+    base = (
+        f"llm_call kind={kind} model={model} ok={'true' if ok else 'false'} "
+        f"duration_ms={elapsed_ms:.1f} prompt_chars={prompt_chars}"
+    )
+    if ok:
+        logger.info("%s usage=%s", base, usage)
+    else:
+        logger.warning("%s error=%s", base, error)
+
+
+async def _call_and_log(kind: str, model: str, kwargs: dict, prompt_chars: int) -> Any:
+    """acompletion 统一调用点：记录耗时/成败/usage 后返回原始响应."""
+    from litellm import acompletion
+
+    t0 = time.perf_counter()
+    try:
+        response = await acompletion(**kwargs)
+    except Exception as e:
+        _log_llm_call(
+            kind, model, (time.perf_counter() - t0) * 1000, False, prompt_chars, error=repr(e)
+        )
+        raise
+    _log_llm_call(
+        kind,
+        model,
+        (time.perf_counter() - t0) * 1000,
+        True,
+        prompt_chars,
+        usage=_usage_summary(response),
+    )
+    return response
+
+
 async def call_llm_with_schema(
     system_prompt: str,
     user_prompt: str,
@@ -86,8 +145,6 @@ async def call_llm_with_schema(
     if await settings_service.is_mock_enabled(mock):
         return _mock_schema_response(response_format)
     try:
-        from litellm import acompletion
-
         model, _api_base, llm_kwargs = await settings_service.resolve_llm_target()
         response_format, system_prompt = _compat_response_format(
             model, response_format, system_prompt
@@ -106,7 +163,7 @@ async def call_llm_with_schema(
         if response_format:
             kwargs["response_format"] = response_format
 
-        response = await acompletion(**kwargs)
+        response = await _call_and_log("schema", model, kwargs, len(user_prompt))
         content = response.choices[0].message.content
 
         return json.loads(content)
@@ -127,19 +184,22 @@ async def call_llm_text(
     if await settings_service.is_mock_enabled(mock):
         return _MOCK_TEXT
     try:
-        from litellm import acompletion
-
         model, _api_base, llm_kwargs = await settings_service.resolve_llm_target()
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
-        response = await acompletion(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            **llm_kwargs,
+        response = await _call_and_log(
+            "text",
+            model,
+            {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                **llm_kwargs,
+            },
+            len(user_prompt),
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -169,21 +229,24 @@ async def chat_with_tools(
         return text, []
     user_prompt = redact(user_prompt)  # 外发 LLM 脱敏（安全铁律，出口兜底，无开关）
     try:
-        from litellm import acompletion
-
         model, _api_base, llm_kwargs = await settings_service.resolve_llm_target()
         messages: list[Any] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
         calls: list[dict] = []
-        for _ in range(max_rounds):
-            response = await acompletion(
-                model=model,
-                messages=messages,
-                tools=tools,
-                temperature=temperature,
-                **llm_kwargs,
+        for round_no in range(max_rounds):
+            response = await _call_and_log(
+                f"tools_round{round_no + 1}",
+                model,
+                {
+                    "model": model,
+                    "messages": messages,
+                    "tools": tools,
+                    "temperature": temperature,
+                    **llm_kwargs,
+                },
+                len(user_prompt),
             )
             message = response.choices[0].message
             tool_calls = getattr(message, "tool_calls", None)
@@ -204,11 +267,16 @@ async def chat_with_tools(
                 calls.append({"name": name, "arguments": arguments, "result": result})
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
         # 轮数耗尽：不带 tools 收敛最终答复
-        response = await acompletion(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            **llm_kwargs,
+        response = await _call_and_log(
+            "tools_final",
+            model,
+            {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                **llm_kwargs,
+            },
+            len(user_prompt),
         )
         return (response.choices[0].message.content or ""), calls
     except Exception as e:
@@ -240,20 +308,23 @@ async def call_llm_stream(
             await asyncio.sleep(0.01)
         return
     try:
-        from litellm import acompletion
-
         model, _api_base, llm_kwargs = await settings_service.resolve_llm_target()
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
-        response = await acompletion(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            stream=True,
-            **llm_kwargs,
+        response = await _call_and_log(
+            "stream",
+            model,
+            {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "stream": True,
+                **llm_kwargs,
+            },
+            len(user_prompt),
         )
         async for chunk in response:
             if stop_event is not None and stop_event.is_set():
