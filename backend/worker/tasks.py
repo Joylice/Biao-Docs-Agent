@@ -146,28 +146,6 @@ async def task_index_document(ctx: dict, project_id: str, doc_id: str) -> dict:
             return {"status": "error", "message": str(e)}
 
 
-async def task_generate_chapters(ctx: dict, project_id: str) -> dict:
-    """异步任务：启动 LangGraph 章节生成工作流.
-
-    将章节生成委托给 workflow_runtime，由 LangGraph 12 节点状态图处理：
-    parse_tender -> confirm_score_points -> generate_outline -> confirm_outline
-    -> retrieve -> write -> validate -> consistency_check -> integrate
-    -> review -> rewrite -> export
-
-    并发控制：workflow_runtime.start_workflow_in_background 内部维护
-    _running set 防止同一 project 并发执行。此处幂等——已有运行中工作流时直接返回。
-    """
-    import uuid
-
-    from app.services.infra.workflow_runtime import start_workflow_in_background
-
-    logger.info(f"开始章节生成工作流: project={project_id}")
-    try:
-        pid = uuid.UUID(project_id)
-        await start_workflow_in_background(pid)
-        return {"status": "success", "message": "章节生成工作流已启动"}
-    except ValueError:
-        return {"status": "error", "message": f"无效的项目 ID: {project_id}"}
-    except Exception as e:
-        logger.error(f"章节生成工作流启动失败: {e}")
-        return {"status": "error", "message": str(e)}
+# 历史注记（P1-2.3）：曾有 task_generate_chapters（arq 入队章节生成），
+# 但无任何入队调用方且 start_workflow_in_background 签名演进后已损坏；
+# 章节生成统一由 api 层直接调 workflow_runtime（进程内 asyncio 后台执行），已删除收敛。
