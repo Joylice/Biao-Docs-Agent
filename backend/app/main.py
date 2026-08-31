@@ -26,7 +26,7 @@ from app.api import (
     workflow,
 )
 from app.api import settings as settings_api
-from app.core.config import settings
+from app.core.config import settings, validate_runtime_secrets
 from app.core.exceptions import BizError
 from app.services.infra import workflow_runtime
 
@@ -36,14 +36,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """应用生命周期：启动/关闭时的资源管理."""
-    # 启动期安全告警（W-2）：默认 jwt_secret 且非 mock 模式 → 显著提醒（不拒启动，
-    # 避免破坏测试/开发环境）
-    if settings.jwt_secret == "change-me-in-production" and not settings.llm_mock:
-        logger.error(
-            "安全告警：BID_JWT_SECRET 仍为默认值 'change-me-in-production' 且 llm_mock 已关闭——"
-            "JWT 签名与 LLM 密钥加密均不安全！生产环境请立即设置 BID_JWT_SECRET "
-            "与 BID_LLM_CRYPTO_SECRET"
-        )
+    # 启动期安全防护（P0-1.3）：生产模式（debug=False 且非 mock）默认密钥 → 拒绝启动；
+    # 开发/mock 模式降级为告警（不阻塞，避免破坏测试/开发环境）
+    validate_runtime_secrets()
     # MinIO 客户端单例 + bucket 初始化
     from app.services.document.storage_service import init_minio
 

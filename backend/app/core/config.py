@@ -1,6 +1,13 @@
 """应用配置 — Pydantic Settings，环境变量前缀 BID_."""
 
+import logging
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_JWT_SECRET = "change-me-in-production"
+DEFAULT_MINIO_SECRET_KEY = "minioadmin"
 
 
 class Settings(BaseSettings):
@@ -28,7 +35,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # ── JWT ──
-    jwt_secret: str = "change-me-in-production"
+    jwt_secret: str = DEFAULT_JWT_SECRET
     jwt_algorithm: str = "HS256"
     jwt_access_expire_minutes: int = 120  # 2h
     jwt_refresh_expire_days: int = 7
@@ -46,7 +53,7 @@ class Settings(BaseSettings):
     # 容器内 BID_MINIO_ENDPOINT=minio:9000 是 Docker 内网地址，浏览器无法解析。
     minio_public_endpoint: str = ""
     minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin"
+    minio_secret_key: str = DEFAULT_MINIO_SECRET_KEY
     minio_bucket: str = "bid-documents"
     minio_secure: bool = False
 
@@ -89,3 +96,30 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def validate_runtime_secrets(s: Settings | None = None) -> None:
+    """启动期密钥防护（P0）：生产模式默认密钥 → 拒绝启动.
+
+    生产模式定义：debug=False 且 llm_mock=False（真实签名 + 真实 LLM 调用）。
+    开发模式（debug=True）或 mock 模式下仅告警不阻塞，避免破坏本地/测试环境。
+    """
+    cfg = s if s is not None else settings
+    insecure: list[str] = []
+    if cfg.jwt_secret == DEFAULT_JWT_SECRET:
+        insecure.append("BID_JWT_SECRET")
+    if cfg.minio_secret_key == DEFAULT_MINIO_SECRET_KEY:
+        insecure.append("BID_MINIO_SECRET_KEY")
+    if not insecure:
+        return
+    if cfg.debug or cfg.llm_mock:
+        logger.warning(
+            "安全告警（仅开发/mock 模式放行）：以下密钥仍为默认值——%s；"
+            "生产部署前必须设置自定义值",
+            ", ".join(insecure),
+        )
+        return
+    raise RuntimeError(
+        f"拒绝启动：生产模式下默认密钥不安全（{', '.join(insecure)}）。"
+        "请设置环境变量后重启"
+    )

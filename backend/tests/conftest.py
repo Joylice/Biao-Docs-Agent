@@ -14,6 +14,10 @@ from app.services.infra import workflow_runtime
 # Windows ProactorEventLoop 下 psycopg 不可用，直接短路初始化避免连接重试噪音
 # （注意不能用 shutdown_checkpointer 做桩，它会抹掉测试注入的 InMemorySaver）。
 settings.workflow_pool_timeout = 0.5
+# 测试环境固定非默认密钥：本地 .env 若为生产形态（debug=False+非 mock）+默认密钥，
+# 启动防护会拒绝 lifespan 启动（P0-1.3），测试统一覆盖保证稳定。
+settings.jwt_secret = "test-only-secret"
+settings.minio_secret_key = "test-only-secret"
 
 
 async def _skip_checkpointer_init() -> None:
