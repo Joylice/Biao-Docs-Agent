@@ -298,7 +298,7 @@ const handleConfirmOutline = async () => {
     await confirmOutline(projectId, body)
     outlineEditRef.value?.clearDraft()
     message.success('大纲已确认，请前往分工页进行章节编制')
-    await loadInitial()
+    await pollUntilOutlineConfirmed()
   } catch (err) {
     const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
     message.error(msg || '确认大纲失败')
@@ -306,6 +306,18 @@ const handleConfirmOutline = async () => {
 }
 
 const goToDivision = () => router.push({ name: 'Division', params: { projectId } })
+
+/**
+ * 后台 resume 异步推进（端点立即返回）：轮询等待 interrupt 离开 confirm_outline，
+ * 编辑态切换为已确认态（引导卡）后再停止，避免停留在旧状态。
+ */
+const pollUntilOutlineConfirmed = async () => {
+  for (let i = 0; i < 15; i += 1) {
+    await loadInitial()
+    if (!awaitingOutlineConfirm.value) return
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+}
 
 const loadInitial = async () => {
   loadError.value = ''

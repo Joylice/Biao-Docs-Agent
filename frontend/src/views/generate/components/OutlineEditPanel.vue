@@ -15,6 +15,7 @@
         >
           {{ draftStatusText }}
         </a-tag>
+        <template v-if="canEditOutlineNow">
         <a-tooltip title="基于最新评分点重新生成大纲，将覆盖当前编辑内容">
           <a-popconfirm
             title="重新生成将覆盖当前大纲编辑内容，确认继续？"
@@ -49,8 +50,16 @@
         >
           确认大纲
         </a-button>
+        </template>
       </a-space>
     </template>
+    <a-alert
+      v-if="!canEditOutlineNow"
+      type="info"
+      show-icon
+      message="等待项目负责人确认大纲"
+      class="mb-4"
+    />
     <a-alert
       type="info"
       show-icon
@@ -181,7 +190,8 @@ const syncTreeFromOutline = () => {
   nextTick(() => { suppressDraftWatch = false })
 }
 
-watch(() => props.outline, syncTreeFromOutline, { deep: true })
+// immediate：面板可能在大纲已就绪后才挂载（v-if 晚于数据加载），首次即同步树
+watch(() => props.outline, syncTreeFromOutline, { deep: true, immediate: true })
 
 /* ---------------- 草稿保存 ---------------- */
 const scheduleDraftSave = () => {
