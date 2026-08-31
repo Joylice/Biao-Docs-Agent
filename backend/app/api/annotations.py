@@ -6,6 +6,7 @@ DB 操作统一委托 annotation_service（批次 1a 分层重构）。
 """
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -27,6 +28,13 @@ class AnnotationBody(BaseModel):
     """批注内容请求体."""
 
     content: str = Field(..., min_length=1, max_length=2000)
+    selection: dict[str, Any] | None = None
+
+
+class AnnotationStatusBody(BaseModel):
+    """批注状态更新请求体."""
+
+    status: str = Field(..., pattern="^(open|resolved)$")
 
 
 async def _check_write_permission(
@@ -61,7 +69,7 @@ async def create_chapter_annotation(
     """新增章节批注（章节负责人/项目负责人可写）."""
     await _check_write_permission(db, project_id, chapter_no, user_id)
     data = await annotation_service.create_annotation(
-        db, project_id, chapter_no, body.content, user_id
+        db, project_id, chapter_no, body.content, user_id, body.selection
     )
     await audit.record(
         db,
@@ -97,6 +105,24 @@ async def update_chapter_annotation(
         project_id=project_id,
         target_type="chapter_annotation",
         target_id=data["id"],
+    )
+    await db.commit()
+    return success(data=data)
+
+
+@router.patch("/{project_id}/chapters/{chapter_no}/annotations/{annotation_id}/status")
+async def update_chapter_annotation_status(
+    project_id: uuid.UUID,
+    chapter_no: str,
+    annotation_id: uuid.UUID,
+    body: AnnotationStatusBody,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """更新批注状态（open/resolved）；项目成员均可操作."""
+    await _check_project_member(db, project_id, user_id)
+    data = await annotation_service.update_annotation_status(
+        db, project_id, chapter_no, annotation_id, body.status, user_id
     )
     await db.commit()
     return success(data=data)

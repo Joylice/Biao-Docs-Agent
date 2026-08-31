@@ -24,6 +24,8 @@ export interface AnnotationItem {
   id: string
   chapter_no: string
   content: string
+  status: 'open' | 'resolved'
+  selection: { from: number; to: number; text: string } | null
   created_by: string
   created_by_name: string
   created_at: string
@@ -33,6 +35,7 @@ export interface AnnotationItem {
 /** 创建批注请求（章节号在路径中） */
 export interface CreateAnnotationRequest {
   content: string
+  selection?: { from: number; to: number; text: string } | null
 }
 
 /** 更新批注请求 */

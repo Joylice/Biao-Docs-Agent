@@ -14,7 +14,7 @@ from app.core import audit
 from app.core.database import get_db
 from app.core.deps import get_current_owner_id, get_current_user_id
 from app.core.response import success
-from app.services.document.storage_service import presigned_url
+from app.services.document.storage_service import download_file, presigned_url
 from app.services.project import task_service, version_service
 from app.services.project.project_service import _check_project_member
 
@@ -83,6 +83,26 @@ async def download_version(
     version = await version_service.get_version(db, project_id, version_id)
     storage_key = version.storage_key_docx if type == "docx" else version.storage_key_source
     return success(data={"url": presigned_url(storage_key), "storage_key": storage_key})
+
+
+@router.get("/{project_id}/versions/{version_id}/content")
+async def get_version_content(
+    project_id: uuid.UUID,
+    version_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """获取版本 Markdown 源内容（项目成员；用于版本差异比对）."""
+    await _check_project_member(db, project_id, user_id)
+    version = await version_service.get_version(db, project_id, version_id)
+    if not version.storage_key_source:
+        return success(data={"content": ""})
+    try:
+        raw = download_file(version.storage_key_source)
+        content = raw.decode("utf-8", errors="replace")
+    except Exception:
+        content = ""
+    return success(data={"content": content, "version": version.version})
 
 
 class ArchiveBody(BaseModel):

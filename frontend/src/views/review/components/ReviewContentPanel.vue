@@ -17,13 +17,6 @@
           通过
         </a-button>
         <a-button
-          size="small"
-          :disabled="polling"
-          @click="$emit('open-feedback')"
-        >
-          反馈重写
-        </a-button>
-        <a-button
           v-if="mode === 'edit'"
           size="small"
           :loading="savingSection"
@@ -215,7 +208,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:mode', value: 'edit' | 'preview'): void
   (e: 'approve'): void
-  (e: 'open-feedback'): void
   (e: 'save'): void
   (e: 'reset'): void
   (e: 'update:editContent', value: string): void

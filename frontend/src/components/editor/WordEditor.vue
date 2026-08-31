@@ -71,9 +71,19 @@
 import { ref, watch, onMounted, onBeforeUnmount, toRef, shallowRef } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import type { Editor } from '@tiptap/core'
+import { Extension } from '@tiptap/core'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { LoadingOutlined } from '@ant-design/icons-vue'
 import { createEditorExtensions } from './extensions'
 import { useImageUpload } from '@/composables/useImageUpload'
+
+interface AnnotationMark {
+  id: string
+  from: number
+  to: number
+  status: 'open' | 'resolved'
+}
 
 interface WordEditorProps {
   /** 初始内容（HTML 字符串）；外部变化时编辑器同步刷新 */
@@ -84,6 +94,10 @@ interface WordEditorProps {
   placeholder?: string
   /** 项目 ID（用于图片上传，缺失时禁用拖拽/粘贴上传） */
   projectId?: string
+  /** 批注选区标记（只读模式下高亮显示） */
+  annotations?: AnnotationMark[]
+  /** 当前激活的批注 ID（高亮显示） */
+  activeAnnotationId?: string | null
 }
 
 const props = withDefaults(defineProps<WordEditorProps>(), {
@@ -91,10 +105,13 @@ const props = withDefaults(defineProps<WordEditorProps>(), {
   readonly: false,
   placeholder: '请输入内容...',
   projectId: undefined,
+  annotations: () => [],
+  activeAnnotationId: null,
 })
 
 const emit = defineEmits<{
   (e: 'update:content', value: string): void
+  (e: 'selection-change', selection: { from: number; to: number; text: string } | null): void
 }>()
 
 /* ---------------- 图片上传 ---------------- */
@@ -156,8 +173,47 @@ const retryImageUpload = () => {
 }
 
 /* ---------------- 编辑器 ---------------- */
+
+/** 批注高亮 decorations 的外部数据源（shallowRef 避免深响应） */
+const annotationMarks = shallowRef<AnnotationMark[]>([])
+const activeAnnotationId = ref<string | null>(null)
+
+watch(() => props.annotations, (val) => { annotationMarks.value = val || [] }, { immediate: true })
+watch(() => props.activeAnnotationId, (val) => { activeAnnotationId.value = val })
+
+/** 批注高亮扩展：根据 annotationMarks 生成 inline decorations */
+const annotationKey = new PluginKey('annotationHighlight')
+const AnnotationHighlight = Extension.create({
+  name: 'annotationHighlight',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: annotationKey,
+        props: {
+          decorations: (state) => {
+            const marks = annotationMarks.value
+            if (!marks || marks.length === 0) return DecorationSet.empty
+            const docSize = state.doc.content.size
+            const decos = marks
+              .filter((m) => m.from < docSize && m.to <= docSize && m.from < m.to)
+              .map((m) =>
+                Decoration.inline(m.from, m.to, {
+                  class: `annotation-mark annotation-mark--${m.status}${
+                    activeAnnotationId.value === m.id ? ' annotation-mark--active' : ''
+                  }`,
+                  'data-annotation-id': m.id,
+                }),
+              )
+            return DecorationSet.create(state.doc, decos)
+          },
+        },
+      }),
+    ]
+  },
+})
+
 const editor = useEditor({
-  extensions: createEditorExtensions({ placeholder: props.placeholder }),
+  extensions: [...createEditorExtensions({ placeholder: props.placeholder }), AnnotationHighlight],
   content: props.content,
   editable: !props.readonly,
   editorProps: {
@@ -183,6 +239,17 @@ const editor = useEditor({
   },
   onUpdate: ({ editor: instance }) => {
     emit('update:content', instance.getHTML())
+  },
+  onSelectionUpdate: ({ editor: instance }) => {
+    if (props.readonly) {
+      const { from, to } = instance.state.selection
+      if (from !== to) {
+        const text = instance.state.doc.textBetween(from, to, ' ')
+        emit('selection-change', { from, to, text })
+      } else {
+        emit('selection-change', null)
+      }
+    }
   },
 })
 
@@ -211,6 +278,18 @@ watch(
     if (!instance || instance.getHTML() === content) return
     instance.commands.setContent(content, false)
   },
+)
+
+// 批注数据变化 → 触发 decorations 重绘
+watch(
+  [() => props.annotations, () => props.activeAnnotationId],
+  () => {
+    const view = editor.value?.view
+    if (view) {
+      view.dispatch(view.state.tr.setMeta(annotationKey, {}))
+    }
+  },
+  { deep: true },
 )
 
 /* ---------------- 虚拟页码 ---------------- */
@@ -275,7 +354,38 @@ const focus = (): void => {
   editor.value?.commands.focus()
 }
 
-defineExpose({ editor, getHTML, getJSON, getText, setContent, focus })
+/** 滚动到指定文档位置 */
+const scrollToPosition = (pos: number): void => {
+  const instance = editor.value
+  if (!instance) return
+  const coords = instance.view.coordsAtPos(Math.min(pos, instance.state.doc.content.size))
+  const scrollEl = instance.view.dom.closest('.word-editor__scroll') as HTMLElement | null
+  if (scrollEl) {
+    const containerRect = scrollEl.getBoundingClientRect()
+    const offset = coords.top - containerRect.top + scrollEl.scrollTop - 100
+    scrollEl.scrollTo({ top: offset, behavior: 'smooth' })
+  }
+}
+
+/** 获取当前选区信息 */
+const getSelectionInfo = (): { from: number; to: number; text: string } | null => {
+  const instance = editor.value
+  if (!instance) return null
+  const { from, to } = instance.state.selection
+  if (from === to) return null
+  return { from, to, text: instance.state.doc.textBetween(from, to, ' ') }
+}
+
+defineExpose({
+  editor,
+  getHTML,
+  getJSON,
+  getText,
+  setContent,
+  focus,
+  scrollToPosition,
+  getSelectionInfo,
+})
 </script>
 
 <style scoped>
@@ -551,5 +661,27 @@ defineExpose({ editor, getHTML, getJSON, getText, setContent, focus })
 .word-editor__upload-error {
   font-size: var(--font-size-sm);
   color: var(--color-error);
+}
+
+/* 批注高亮标记 */
+.word-editor :deep(.annotation-mark) {
+  border-radius: 2px;
+  padding: 1px 0;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+.word-editor :deep(.annotation-mark--open) {
+  background-color: rgba(250, 173, 20, 0.25);
+  border-bottom: 2px solid #faad14;
+}
+.word-editor :deep(.annotation-mark--resolved) {
+  background-color: rgba(82, 196, 26, 0.15);
+  border-bottom: 2px solid #52c41a;
+  opacity: 0.7;
+}
+.word-editor :deep(.annotation-mark--active) {
+  background-color: rgba(24, 144, 255, 0.3) !important;
+  border-bottom: 2px solid #1890ff !important;
+  box-shadow: 0 0 0 1px rgba(24, 144, 255, 0.5);
 }
 </style>

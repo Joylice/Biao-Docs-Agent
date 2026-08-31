@@ -102,5 +102,5 @@ const confirmRollback = (item: VersionItem) => {
   })
 }
 
-defineExpose({ load, isOwner })
+defineExpose({ load, isOwner, versions })
 </script>

@@ -27,6 +27,12 @@ export const downloadVersion = (projectId: string, versionId: string, type: 'doc
     { params: { type } },
   )
 
+/** 获取版本 Markdown 源内容（用于差异比对） */
+export const fetchVersionContent = (projectId: string, versionId: string) =>
+  api.get<ApiResponse<{ content: string; version: number }>>(
+    `/projects/${projectId}/versions/${versionId}/content`,
+  )
+
 /** 回滚到版本（仅 owner；返回恢复章节数） */
 export const rollbackToVersion = (projectId: string, versionId: string) =>
   api.post<ApiResponse<{ id?: string; version?: number; chapters_restored?: number }>>(
@@ -49,10 +55,15 @@ export const fetchChapterAnnotations = (projectId: string, chapterNo: string) =>
   )
 
 /** 创建章节批注 */
-export const createChapterAnnotation = (projectId: string, chapterNo: string, content: string) =>
+export const createChapterAnnotation = (
+  projectId: string,
+  chapterNo: string,
+  content: string,
+  selection?: { from: number; to: number; text: string } | null,
+) =>
   api.post<ApiResponse<AnnotationItem>>(
     `/projects/${projectId}/chapters/${chapterNo}/annotations`,
-    { content },
+    { content, selection: selection || null },
   )
 
 /** 更新章节批注 */
@@ -65,6 +76,18 @@ export const updateChapterAnnotation = (
   api.put<ApiResponse<AnnotationItem>>(
     `/projects/${projectId}/chapters/${chapterNo}/annotations/${annotationId}`,
     { content },
+  )
+
+/** 更新批注状态（open/resolved） */
+export const updateAnnotationStatus = (
+  projectId: string,
+  chapterNo: string,
+  annotationId: string,
+  status: 'open' | 'resolved',
+) =>
+  api.patch<ApiResponse<AnnotationItem>>(
+    `/projects/${projectId}/chapters/${chapterNo}/annotations/${annotationId}/status`,
+    { status },
   )
 
 /** 删除章节批注 */

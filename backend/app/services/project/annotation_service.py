@@ -5,6 +5,7 @@
 """
 
 import uuid
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +52,8 @@ def _serialize(ann: ChapterAnnotation, author_name: str | None = None) -> dict:
         "id": str(ann.id),
         "chapter_no": ann.chapter_no,
         "content": ann.content,
+        "status": ann.status or "open",
+        "selection": ann.selection,
         "created_by": str(ann.created_by),
         "created_by_name": author_name or "",
         "created_at": ann.created_at.isoformat() if ann.created_at else None,
@@ -78,12 +81,15 @@ async def create_annotation(
     chapter_no: str,
     content: str,
     user_id: uuid.UUID,
+    selection: dict[str, Any] | None = None,
 ) -> dict:
     """新增章节批注（内容去首尾空格；flush/refresh 后返回序列化项）."""
     ann = ChapterAnnotation(
         project_id=project_id,
         chapter_no=chapter_no,
         content=content.strip(),
+        status="open",
+        selection=selection,
         created_by=user_id,
     )
     db.add(ann)
@@ -107,6 +113,28 @@ async def update_annotation(
     await db.flush()
     await db.refresh(ann)
     return _serialize(ann)
+
+
+async def update_annotation_status(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    chapter_no: str,
+    annotation_id: uuid.UUID,
+    status: str,
+    user_id: uuid.UUID,
+) -> dict:
+    """更新批注状态（open/resolved）；项目成员均可操作."""
+    if status not in ("open", "resolved"):
+        raise NotFoundError("无效的批注状态")
+    ann = await _get_annotation(db, project_id, chapter_no, annotation_id)
+    # 状态切换不限制作者，项目成员均可
+    ann.status = status
+    await db.flush()
+    await db.refresh(ann)
+    # 查询作者名
+    result = await db.execute(select(User.display_name).where(User.id == ann.created_by))
+    author_name = result.scalar_one_or_none()
+    return _serialize(ann, author_name)
 
 
 async def delete_annotation(
