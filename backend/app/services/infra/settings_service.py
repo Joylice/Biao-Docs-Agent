@@ -47,6 +47,17 @@ _MASKED_KEY_RE = re.compile(r"^[A-Za-z0-9_-]*\*{4}.*")
 # SSRF 防护：localhost 域名别名（IP 字面量由 ipaddress 判定）
 _LOCAL_HOSTNAMES = {"localhost", "localhost.localdomain", "ip6-localhost"}
 
+# Provider 别名映射：非 LiteLLM 原生支持但 OpenAI 兼容的提供商
+# key=用户配置的前缀，value=(litellm provider, 默认 api_base)
+# 密钥匹配仍用原始前缀（api_key_for），调用时转换为 litellm 可识别格式
+_PROVIDER_ALIASES: dict[str, tuple[str, str]] = {
+    "zhipu": ("openai", "https://open.bigmodel.cn/api/paas/v4"),
+    "glm": ("openai", "https://open.bigmodel.cn/api/paas/v4"),
+    "moonshot": ("openai", "https://api.moonshot.cn/v1"),
+    "kimi": ("openai", "https://api.moonshot.cn/v1"),
+    "deepseek": ("deepseek", "https://api.deepseek.com/v1"),
+}
+
 
 @dataclass
 class RuntimeLlmConfig:
@@ -406,12 +417,15 @@ async def resolve_llm_target() -> tuple[str, str | None, dict[str, str]]:
     - 库内 llm_model 优先（页面配置）；空则回退 env settings.llm_model（现状）
     - 模型名无 provider 前缀时自动补 ``openai/``（OpenAI 兼容端点通用前缀；
       litellm>=1.97 实测 ``openai_like/`` 解析成功但实际调用报 Unmapped provider）
+    - Provider 别名转换：zhipu/moonshot 等非 LiteLLM 原生支持的 OpenAI 兼容
+      提供商，自动转换为 ``openai/`` 前缀并注入默认 api_base；用户自定义
+      llm_api_base 优先于默认值
     - 自定义端点（llm_api_base 非空）：优先使用页面配置的 **端点专用密钥**
       ``llm_api_key``；未配置时以 ``"EMPTY"`` 占位（vLLM/Ollama 等无认证
       OpenAI 兼容服务通用做法，避免 litellm 报缺 key）。
       安全约束：自定义端点 **绝不回退** deepseek/dashscope 云端密钥，
       防止用户云端凭据被转发至第三方端点。
-    - 非自定义端点：按模型前缀匹配库内密钥（deepseek/qwen 前缀）
+    - 非自定义端点：按模型前缀匹配库内密钥（deepseek/qwen/zhipu 等前缀）
     """
     cfg = await get_runtime_config()
     if cfg is None or not cfg.llm_model:
@@ -422,18 +436,40 @@ async def resolve_llm_target() -> tuple[str, str | None, dict[str, str]]:
         return model, None, kwargs
 
     model = cfg.llm_model
-    if "/" not in model:
-        model = f"openai/{model}"
-    kwargs: dict[str, str] = {}
-    if cfg.llm_api_base:
-        # 自定义端点：只认端点专用密钥，不回退云端密钥（防凭据外泄）
-        kwargs["api_base"] = cfg.llm_api_base
-        kwargs["api_key"] = cfg.llm_api_key or "EMPTY"
+    # 解析 provider 前缀，做别名转换
+    litellm_model = model
+    alias_api_base: str | None = None
+    if "/" in model:
+        prefix = model.split("/", 1)[0].lower()
+        if prefix in _PROVIDER_ALIASES:
+            litellm_provider, default_base = _PROVIDER_ALIASES[prefix]
+            model_name = model.split("/", 1)[1]
+            litellm_model = f"{litellm_provider}/{model_name}"
+            alias_api_base = default_base
     else:
+        litellm_model = f"openai/{model}"
+
+    kwargs: dict[str, str] = {}
+    # api_base 优先级：用户自定义 llm_api_base > 别名默认 api_base
+    effective_api_base = cfg.llm_api_base or alias_api_base
+    if effective_api_base:
+        # 自定义端点或别名端点：使用对应密钥
+        if cfg.llm_api_base:
+            # 用户显式配置的自定义端点：只认端点专用密钥，不回退云端密钥
+            kwargs["api_base"] = cfg.llm_api_base
+            kwargs["api_key"] = cfg.llm_api_key or "EMPTY"
+        else:
+            # 别名默认端点：按原始前缀匹配密钥
+            kwargs["api_base"] = alias_api_base  # type: ignore[assignment]
+            key = cfg.api_key_for(cfg.llm_model)
+            if key:
+                kwargs["api_key"] = key
+    else:
+        # 无 api_base：按模型前缀匹配密钥（deepseek/dashscope/openai 等原生 provider）
         key = cfg.api_key_for(cfg.llm_model)
         if key:
             kwargs["api_key"] = key
-    return model, cfg.llm_api_base, kwargs
+    return litellm_model, effective_api_base, kwargs
 
 
 # ── 连通性测试（POST /settings/llm/test）──

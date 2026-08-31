@@ -21,9 +21,66 @@
       </template>
     </ErrorState>
     <ParseConfirmView
-      v-else-if="hasData && !hasPendingDoc"
+      v-else-if="hasData"
       :embedded="true"
     />
+    <!-- 解析进度提示（有数据但仍有文件解析中时显示） -->
+    <a-alert
+      v-if="hasData && hasPendingDoc"
+      type="info"
+      show-icon
+      class="parse-pending-alert"
+      :message="`还有 ${pendingCount} 个文件解析中，当前展示已解析结果，解析完成后自动更新`"
+    >
+      <template #action>
+        <a-button
+          size="small"
+          @click="showFileList = !showFileList"
+        >
+          {{ showFileList ? '收起文件列表' : '查看文件列表' }}
+        </a-button>
+      </template>
+    </a-alert>
+    <!-- 有数据时可折叠的文件列表 -->
+    <a-card
+      v-if="hasData && showFileList"
+      class="parse-card parse-card--collapsible"
+      size="small"
+    >
+      <template #title>招标文件列表</template>
+      <a-table
+        :columns="tenderColumns"
+        :data-source="tenderDocs"
+        :pagination="false"
+        row-key="id"
+        size="small"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'status'">
+            <a-tag :color="statusColor(record.status)">
+              {{ statusText(record.status) }}
+            </a-tag>
+          </template>
+          <template v-if="column.key === 'created_at'">
+            {{ formatTime(record.created_at) }}
+          </template>
+          <template v-if="column.key === 'action'">
+            <a-space>
+              <a-button
+                v-if="record.status === 'parsed' || record.status === 'failed' || isStale(record)"
+                size="small"
+                type="link"
+                :loading="reparseId === record.id"
+                @click="handleReparse(record.id)"
+              >
+                重新解析
+              </a-button>
+              <a-tag v-if="isStale(record)" color="warning">超时</a-tag>
+            </a-space>
+          </template>
+        </template>
+      </a-table>
+    </a-card>
     <a-card
       v-else
       class="parse-card"
@@ -81,9 +138,21 @@
             <a-tag :color="statusColor(record.status)">
               {{ statusText(record.status) }}
             </a-tag>
+            <a-tag v-if="isStale(record)" color="warning" style="margin-left: 4px">超时</a-tag>
           </template>
           <template v-if="column.key === 'created_at'">
             {{ formatTime(record.created_at) }}
+          </template>
+          <template v-if="column.key === 'action'">
+            <a-button
+              v-if="record.status === 'parsed' || record.status === 'failed' || isStale(record)"
+              size="small"
+              type="link"
+              :loading="reparseId === record.id"
+              @click="handleReparse(record.id)"
+            >
+              重新解析
+            </a-button>
           </template>
         </template>
       </a-table>
@@ -121,6 +190,7 @@ import {
   fetchTechRequirements,
   fetchProjectDocuments,
   uploadTenderDocument,
+  reparseTenderDocument,
 } from '@/api'
 import PageContainer from '@/components/PageContainer.vue'
 import ErrorState from '@/components/ErrorState.vue'
@@ -145,11 +215,17 @@ const scorePointCount = ref(0)
 const techRequirementCount = ref(0)
 const uploadList = ref<UploadFile[]>([])
 const tenderDocs = ref<TenderDocument[]>([])
+const showFileList = ref(false)
+const reparseId = ref<string | null>(null)
+
+/** 解析超时阈值（毫秒）：超过15分钟视为超时，允许重新解析 */
+const PARSE_TIMEOUT_MS = 15 * 60 * 1000
 
 const tenderColumns = [
   { title: '文件名', dataIndex: 'title', key: 'title' },
-  { title: '状态', key: 'status', width: 120 },
+  { title: '状态', key: 'status', width: 140 },
   { title: '上传时间', dataIndex: 'created_at', key: 'created_at', width: 180 },
+  { title: '操作', key: 'action', width: 100 },
 ]
 
 /** 已有解析数据（评分点或技术需求任一非空）→ 内嵌确认页；
@@ -158,8 +234,21 @@ const hasData = computed(() => scorePointCount.value > 0 || techRequirementCount
 
 /** 存在未完成的解析任务（uploaded/parsing）→ 自动轮询直到出结果 */
 const hasPendingDoc = computed(() =>
-  tenderDocs.value.some((d) => d.status === 'uploaded' || d.status === 'parsing'),
+  tenderDocs.value.some((d) => (d.status === 'uploaded' || d.status === 'parsing') && !isStale(d)),
 )
+
+/** 解析中文档数量（不含超时） */
+const pendingCount = computed(() =>
+  tenderDocs.value.filter((d) => (d.status === 'uploaded' || d.status === 'parsing') && !isStale(d)).length,
+)
+
+/** 判断文档是否解析超时（uploaded/parsing 超过15分钟）；参数宽松兼容表格 record */
+const isStale = (doc: { status?: unknown; created_at?: unknown }): boolean => {
+  if (doc.status !== 'uploaded' && doc.status !== 'parsing') return false
+  const created = new Date(String(doc.created_at ?? '')).getTime()
+  if (Number.isNaN(created)) return false
+  return Date.now() - created > PARSE_TIMEOUT_MS
+}
 
 let pollTimer: number | null = null
 
@@ -266,6 +355,23 @@ const handleUpload: NonNullable<UploadProps['customRequest']> = async (options) 
   }
 }
 
+/** 重新解析招标文件 */
+const handleReparse = async (docId: string) => {
+  reparseId.value = docId
+  try {
+    await reparseTenderDocument(projectId, docId)
+    message.success('已重新入队解析，约 1-3 分钟后完成')
+    // 重新拉取数据：状态会重置为 uploaded/parsing
+    await fetchTenderDocs()
+    // 如果当前有数据，重新解析会清除旧评分点，需要刷新计数
+    await fetchData()
+  } catch {
+    message.error('重新解析失败，请稍后重试')
+  } finally {
+    reparseId.value = null
+  }
+}
+
 onMounted(fetchData)
 
 onUnmounted(stopPolling)
@@ -283,5 +389,13 @@ onUnmounted(stopPolling)
 .parse-card__refresh {
   margin-top: 16px;
   text-align: right;
+}
+
+.parse-pending-alert {
+  margin-bottom: 16px;
+}
+
+.parse-card--collapsible {
+  margin-top: 16px;
 }
 </style>

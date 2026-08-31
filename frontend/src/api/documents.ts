@@ -96,3 +96,7 @@ export const searchKb = (params: {
 /** 重新索引文档 */
 export const reindexDocument = (documentId: string) =>
   api.post<ApiResponse<void>>(`/documents/${documentId}/reindex`)
+
+/** 重新解析招标文件（清除旧评分点 → 状态重置 → 重新入队） */
+export const reparseTenderDocument = (projectId: string, documentId: string) =>
+  api.post<ApiResponse<DocumentItem>>(`/projects/${projectId}/documents/${documentId}/reparse`)
