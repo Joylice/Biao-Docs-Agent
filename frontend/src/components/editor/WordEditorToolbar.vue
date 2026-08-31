@@ -889,11 +889,12 @@ const paragraphValue = computed(() => {
   return 'paragraph'
 })
 
-const handleParagraphChange = (value: any) => {
+// Select 的 change 事件参数类型为 antd SelectValue（含数组/对象），按 unknown 接收后显式转换
+const handleParagraphChange = (value: unknown) => {
   if (value === 'paragraph') {
     run((chain) => chain.setParagraph())
   } else {
-    const level = Number(value.split('-')[1]) as 1 | 2 | 3 | 4
+    const level = Number(String(value).split('-')[1]) as 1 | 2 | 3 | 4
     run((chain) => chain.setHeading({ level }))
   }
 }
@@ -922,16 +923,16 @@ const currentLineHeight = computed(() => {
   return (attrs.lineHeight as string | undefined) ?? undefined
 })
 
-const handleFontFamilyChange = (value: any) => {
-  run((chain) => chain.setFontFamily(value))
+const handleFontFamilyChange = (value: unknown) => {
+  run((chain) => chain.setFontFamily(String(value)))
 }
 
-const handleFontSizeChange = (value: any) => {
-  run((chain) => chain.setFontSize(value))
+const handleFontSizeChange = (value: unknown) => {
+  run((chain) => chain.setFontSize(String(value)))
 }
 
-const handleLineHeightChange = (value: any) => {
-  run((chain) => chain.setLineHeight(value))
+const handleLineHeightChange = (value: unknown) => {
+  run((chain) => chain.setLineHeight(String(value)))
 }
 
 /* ---------------- 颜色 / 高亮 ---------------- */

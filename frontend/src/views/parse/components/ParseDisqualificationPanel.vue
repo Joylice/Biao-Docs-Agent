@@ -70,9 +70,9 @@ const emit = defineEmits<{
   (e: 'checked', clause: DisqualificationClause, checked: boolean): void
 }>()
 
-const onChecked = (clause: DisqualificationClause, e: any) => {
-  const checked = (e.target as HTMLInputElement).checked
-  emit('checked', clause, checked)
+// antd Checkbox 的 change 事件类型非原生 Event，其 target 仅含 checked 等字段
+const onChecked = (clause: DisqualificationClause, e: { target: { checked: boolean } }) => {
+  emit('checked', clause, e.target.checked)
 }
 
 const RISK_CATEGORY_LABELS: Record<string, string> = {

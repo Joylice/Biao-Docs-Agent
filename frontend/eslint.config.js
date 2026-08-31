@@ -23,4 +23,13 @@ export default tseslint.config(
       },
     },
   },
+  {
+    rules: {
+      // 下划线前缀参数/变量为「故意不用」的占位约定（如预留扩展的入参）
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
+    },
+  },
 )

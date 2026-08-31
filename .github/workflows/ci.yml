@@ -69,6 +69,8 @@ jobs:
           cache: pnpm
       - name: Install
         run: cd frontend && pnpm install --frozen-lockfile
+      - name: Unit tests (vitest)
+        run: cd frontend && pnpm test
       - name: Lint
         run: cd frontend && pnpm lint
       - name: Build

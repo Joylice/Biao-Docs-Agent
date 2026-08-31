@@ -6,6 +6,7 @@
  * - 支持插入目录和更新目录
  */
 import type { Editor } from '@tiptap/core'
+import type { Node as PMNode } from '@tiptap/pm/model'
 
 /** 目录项 */
 export interface TocItem {
@@ -169,7 +170,7 @@ export function insertToc(editor: Editor, options: TocOptions = {}): void {
  */
 export function updateToc(editor: Editor, options: TocOptions = {}): boolean {
   let tocPos = -1
-  let tocNode: any = null
+  let tocNode: PMNode | null = null
 
   // 查找目录容器节点
   editor.state.doc.descendants((node, pos) => {

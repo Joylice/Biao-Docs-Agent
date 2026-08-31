@@ -148,12 +148,12 @@ const filteredTreeData = computed<ChapterTreeNode[]>(() => {
   )
 })
 
-const onTreeSelect = (keys: any) => {
-  if (keys.length > 0) emit('select', keys[0])
+const onTreeSelect = (keys: Array<string | number>) => {
+  if (keys.length > 0) emit('select', String(keys[0]))
 }
 
-const onTreeExpand = (keys: any) => {
-  emit('expand', keys)
+const onTreeExpand = (keys: Array<string | number>) => {
+  emit('expand', keys.map(String))
 }
 </script>
 

@@ -54,7 +54,7 @@
                   size="small"
                   style="width: 140px"
                   :options="roleOptions"
-                  @change="(val) => handleRoleChange(record, val as UserRole)"
+                  @change="(val) => handleRoleChange(record as UserItem, val as UserRole)"
                 />
               </template>
               <template v-else-if="column.key === 'created_at'">
@@ -77,7 +77,7 @@
                     ok-text="确认删除"
                     cancel-text="取消"
                     :ok-button-props="{ danger: true }"
-                    @confirm="handleDelete(record)"
+                    @confirm="handleDelete(record as UserItem)"
                   >
                     <a class="danger-link">删除</a>
                   </a-popconfirm>
@@ -181,7 +181,7 @@ const handleUserUpdated = () => {
   fetchCurrentUserRole()
 }
 
-const handleRoleChange = (record: any, newRole: UserRole) => {
+const handleRoleChange = (record: UserItem, newRole: UserRole) => {
   if (newRole === record.role) return
   Modal.confirm({
     title: `将「${record.display_name || record.email}」的角色变更为「${roleName[newRole]}」？`,
@@ -212,7 +212,7 @@ const handleTableChange = (pag: { current?: number; pageSize?: number }) => {
 }
 
 /** 删除用户（Popconfirm 轻量二次确认，无需填写理由；角色变更确认仍保留 Modal） */
-const handleDelete = async (record: any) => {
+const handleDelete = async (record: UserItem) => {
   try {
     const { data } = await deleteUser(record.id)
     if (data.code === 0) {

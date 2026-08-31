@@ -176,10 +176,11 @@ const retryImageUpload = () => {
 
 /** 批注高亮 decorations 的外部数据源（shallowRef 避免深响应） */
 const annotationMarks = shallowRef<AnnotationMark[]>([])
-const activeAnnotationId = ref<string | null>(null)
+// 本地激活态；与 props.activeAnnotationId 同名字段区分，避免遮蔽 props 访问
+const localActiveAnnotationId = ref<string | null>(null)
 
 watch(() => props.annotations, (val) => { annotationMarks.value = val || [] }, { immediate: true })
-watch(() => props.activeAnnotationId, (val) => { activeAnnotationId.value = val })
+watch(() => props.activeAnnotationId, (val) => { localActiveAnnotationId.value = val })
 
 /** 批注高亮扩展：根据 annotationMarks 生成 inline decorations */
 const annotationKey = new PluginKey('annotationHighlight')
@@ -199,7 +200,7 @@ const AnnotationHighlight = Extension.create({
               .map((m) =>
                 Decoration.inline(m.from, m.to, {
                   class: `annotation-mark annotation-mark--${m.status}${
-                    activeAnnotationId.value === m.id ? ' annotation-mark--active' : ''
+                    localActiveAnnotationId.value === m.id ? ' annotation-mark--active' : ''
                   }`,
                   'data-annotation-id': m.id,
                 }),

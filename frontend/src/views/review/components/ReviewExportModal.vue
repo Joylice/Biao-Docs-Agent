@@ -158,7 +158,7 @@ const handleExport = async () => {
   try {
     const res = await fetchWorkflowExport(props.projectId)
     const data = res.data?.data
-    exportStatus.value = (data?.export_status as any) || 'pending'
+    exportStatus.value = (data?.export_status as 'pending' | 'running' | 'done' | 'failed') || 'pending'
     exportStorageKey.value = data?.export_storage_key || ''
 
     if (exportStatus.value === 'done') {
@@ -193,9 +193,10 @@ const handleExport = async () => {
         // 继续轮询
       }
     }, 2000)
-  } catch (err: any) {
+  } catch (err) {
     exportStatus.value = 'failed'
-    errorMessage.value = err?.response?.data?.message || '导出失败，请重试'
+    const e = err as { response?: { data?: { message?: string } } }
+    errorMessage.value = e?.response?.data?.message || '导出失败，请重试'
   }
 }
 

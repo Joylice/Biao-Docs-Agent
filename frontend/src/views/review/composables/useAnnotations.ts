@@ -116,6 +116,8 @@ export function useAnnotations(projectId: string) {
     newAnnotation,
     addingAnnotation,
     currentSelection,
+    annotationMap,
+    annotationLoaded,
     annotationListOf,
     annotationCountOf,
     loadAnnotations,

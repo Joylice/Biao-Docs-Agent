@@ -42,11 +42,12 @@ import GlobalToast from '@/components/common/GlobalToast.vue'
 import RouteProgress from '@/components/common/RouteProgress.vue'
 import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import { useUiStore } from '@/stores/ui'
+import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
 
 const uiStore = useUiStore()
 
 /** Ant Design Vue 主题配置：根据当前模式切换算法 */
-const themeConfig = computed(() => ({
+const themeConfig = computed<ThemeConfig>(() => ({
   algorithm: uiStore.isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
   token: {
     // 注意：以下色值为 variables.css 同名 token 的镜像。antd 主题算法需要真实色值
@@ -85,15 +86,17 @@ const themeConfig = computed(() => ({
     Drawer: {
       contentBg: 'var(--bg-elevated)',
       headerBg: 'var(--bg-elevated)',
-    } as any,
+    },
     Dropdown: {
       contentBg: 'var(--bg-elevated)',
     },
     Select: {
       optionSelectedBg: 'var(--color-primary-light)',
     },
-  },
-})) as any
+    // OverrideToken 为全键必选 mapped type，且 DrawerToken 未声明 contentBg/headerBg，
+    // 主题覆盖场景下按未知组件 token 断言
+  } as unknown as ThemeConfig['components'],
+}))
 
 /** 监听主题变化，确保 html 属性同步 */
 watch(

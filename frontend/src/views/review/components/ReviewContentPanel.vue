@@ -240,8 +240,8 @@ const formatTime = (iso: string): string => {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('zh-CN', { hour12: false })
 }
 
-const onAnnotationPanelChange = (keys: any) => {
-  const active = Array.isArray(keys) ? keys : [keys]
+const onAnnotationPanelChange = (keys: Array<string | number>) => {
+  const active = (Array.isArray(keys) ? keys : [keys]).map(String)
   annotationPanelKeys.value = active
   for (const no of active) {
     if (no) emit('load-annotations', no)

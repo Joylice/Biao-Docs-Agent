@@ -412,9 +412,10 @@ const handleDeleteProject = async (item: ProjectItem) => {
     } else {
       message.error(data.message || '删除失败')
     }
-  } catch (err: any) {
+  } catch (err) {
     console.error('删除项目失败:', err)
-    const msg = err?.response?.data?.message || err?.message || '删除失败，请稍后重试'
+    const e = err as { response?: { data?: { message?: string } }; message?: string }
+    const msg = e?.response?.data?.message || e?.message || '删除失败，请稍后重试'
     message.error(msg)
   } finally {
     deletingId.value = null

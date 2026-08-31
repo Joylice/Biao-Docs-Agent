@@ -764,11 +764,15 @@ const handleAssist = async () => {
     } else {
       message.warning('AI 未生成有效内容，请调整提示词后重试')
     }
-  } catch (err: any) {
+  } catch (err) {
     console.error('[AI辅助] 失败:', err)
-    const status = err?.response?.status
-    const body = err?.response?.data
-    const msg = body?.message || err?.message
+    const e = err as {
+      response?: { status?: number; data?: { message?: string } }
+      message?: string
+    }
+    const status = e?.response?.status
+    const body = e?.response?.data
+    const msg = body?.message || e?.message
     let friendlyMsg = 'AI 辅助失败'
     if (status === 400) {
       friendlyMsg = `请求参数错误：${msg || '请检查输入'}`

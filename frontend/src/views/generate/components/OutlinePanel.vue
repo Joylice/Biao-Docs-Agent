@@ -132,8 +132,8 @@ watch(() => props.selectedChapter, () => {
   selectedSectionKey.value = ''
 })
 
-const handleSelect = (keys: any) => {
-  const key = keys[0]
+const handleSelect = (keys: Array<string | number>) => {
+  const key = String(keys[0])
   if (!key) return
   if (key.startsWith('ch-')) {
     selectedSectionKey.value = ''

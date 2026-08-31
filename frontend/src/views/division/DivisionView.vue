@@ -531,13 +531,18 @@ const handleAssign = async () => {
       const detail = `错误码: ${data.code}，消息: ${data.message || '未知错误'}`
       message.error(`分工推送失败：${detail}`, 5)
     }
-  } catch (err: any) {
-    console.error('[分工推送] 请求异常:', err)
-    console.error('[分工推送] 异常 response:', err?.response)
-    console.error('[分工推送] 异常 request:', err?.request)
+  } catch (err) {
+    const e = err as {
+      response?: { status?: number; data?: { message?: string; code?: number } }
+      message?: string
+      request?: unknown
+    }
+    console.error('[分工推送] 请求异常:', e)
+    console.error('[分工推送] 异常 response:', e?.response)
+    console.error('[分工推送] 异常 request:', e?.request)
 
-    const status = err?.response?.status
-    const body = err?.response?.data
+    const status = e?.response?.status
+    const body = e?.response?.data
     const msg = body?.message
     const code = body?.code
 
@@ -552,8 +557,8 @@ const handleAssign = async () => {
     if (msg) {
       detail += `错误消息: ${msg}\n`
     }
-    if (err?.message) {
-      detail += `异常消息: ${err.message}\n`
+    if (e?.message) {
+      detail += `异常消息: ${e.message}\n`
     }
     if (!detail) {
       detail = '未知错误，请查看浏览器控制台日志'

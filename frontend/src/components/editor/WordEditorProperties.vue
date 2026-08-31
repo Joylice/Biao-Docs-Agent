@@ -335,7 +335,7 @@
  * - 图片属性：宽度/高度/对齐
  */
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import type { Editor } from '@tiptap/core'
+import type { ChainedCommands, Editor } from '@tiptap/core'
 import {
   CloseOutlined,
   InfoCircleOutlined,
@@ -473,26 +473,28 @@ const BORDER_COLOR_PRESETS = ['#000000', '#333333', '#666666', '#999999', '#cccc
 const BG_COLOR_PRESETS = ['#ffffff', '#f5f5f5', '#e6f7ff', '#f6ffed', '#fff7e6', '#fff1f0', '#f9f0ff', '#e6fffb']
 
 /* 操作方法 */
-const run = (fn: (chain: any) => any) => {
+const run = (fn: (chain: ChainedCommands) => ChainedCommands) => {
   const ed = props.editor
   if (!ed) return
   fn(ed.chain().focus()).run()
 }
 
-const setTextAlign = (align: string) => run((c: any) => c.setTextAlign(align))
-const setLineHeight = (val: any) => run((c: any) => c.setLineHeight(val))
-const setFirstLineIndent = (val: any) => run((c: any) => c.setIndent(Number(val)))
-const setParagraphSpacing = (_type: string, _val: any) => {
+const setTextAlign = (align: string) => run((c: ChainedCommands) => c.setTextAlign(align))
+// Select/InputNumber 的 change 事件参数类型为 antd SelectValue/ValueType（含数组/对象），
+// 此处按 unknown 接收后显式转换，保持函数签名与模板绑定兼容
+const setLineHeight = (val: unknown) => run((c: ChainedCommands) => c.setLineHeight(String(val)))
+const setFirstLineIndent = (val: unknown) => run((c: ChainedCommands) => c.setIndent(Number(String(val))))
+const setParagraphSpacing = (_type: string, _val: unknown) => {
   // Tiptap 默认不支持段前段后，需自定义扩展；此处预留
 }
 
-const setFontFamily = (val: any) => run((c: any) => c.setFontFamily(val))
-const setFontSize = (val: any) => run((c: any) => c.setFontSize(val))
-const setTextColor = (color: string) => run((c: any) => c.setColor(color))
-const toggleBold = () => run((c: any) => c.toggleBold())
-const toggleItalic = () => run((c: any) => c.toggleItalic())
-const toggleUnderline = () => run((c: any) => c.toggleUnderline())
-const toggleStrike = () => run((c: any) => c.toggleStrike())
+const setFontFamily = (val: unknown) => run((c: ChainedCommands) => c.setFontFamily(String(val)))
+const setFontSize = (val: unknown) => run((c: ChainedCommands) => c.setFontSize(String(val)))
+const setTextColor = (color: string) => run((c: ChainedCommands) => c.setColor(color))
+const toggleBold = () => run((c: ChainedCommands) => c.toggleBold())
+const toggleItalic = () => run((c: ChainedCommands) => c.toggleItalic())
+const toggleUnderline = () => run((c: ChainedCommands) => c.toggleUnderline())
+const toggleStrike = () => run((c: ChainedCommands) => c.toggleStrike())
 
 const setTableCellAlign = (align: string) => {
   const ed = props.editor
@@ -510,14 +512,14 @@ const setTableBgColor = (color: string) => {
   ed.chain().focus().updateAttributes('tableCell', { backgroundColor: color || null }).run()
 }
 
-const setImageWidth = (val: any) => {
+const setImageWidth = (val: number | string | null) => {
   if (val == null) return
   const ed = props.editor
   if (!ed) return
   ed.chain().focus().updateAttributes('image', { width: Number(val) }).run()
 }
 
-const setImageHeight = (val: any) => {
+const setImageHeight = (val: number | string | null) => {
   if (val == null) return
   const ed = props.editor
   if (!ed) return
