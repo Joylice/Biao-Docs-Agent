@@ -67,13 +67,17 @@ async def test_invalid_response_degrades_to_empty(monkeypatch) -> None:
         return {"issues": "不是列表"}
 
     monkeypatch.setattr("app.services.infra.settings_service.is_mock_enabled", _not_mock)
-    monkeypatch.setattr("app.services.proposal.consistency_service.call_llm_with_schema", fake_llm_bad)
+    monkeypatch.setattr(
+        "app.services.proposal.consistency_service.call_llm_with_schema", fake_llm_bad
+    )
     assert await check_consistency(CHAPTERS, OUTLINE) == []
 
     async def fake_llm_mixed(**kwargs):
         return {"issues": [{"chapter_no": "1", "description": "重复段落"}, "脏数据"]}
 
-    monkeypatch.setattr("app.services.proposal.consistency_service.call_llm_with_schema", fake_llm_mixed)
+    monkeypatch.setattr(
+        "app.services.proposal.consistency_service.call_llm_with_schema", fake_llm_mixed
+    )
     result = await check_consistency(CHAPTERS, OUTLINE)
     assert result == [{"chapter_no": "1", "description": "重复段落"}]
 

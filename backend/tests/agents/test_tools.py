@@ -77,7 +77,9 @@ class TestKbSearch:
         with (
             patch.object(tools.settings_service, "is_mock_enabled", AsyncMock(return_value=False)),
             patch("app.services.llm.rag_service.get_embedding", AsyncMock(return_value=object())),
-            patch("app.services.llm.rag_service.retrieve_with_rerank", AsyncMock(return_value=[hit])),
+            patch(
+                "app.services.llm.rag_service.retrieve_with_rerank", AsyncMock(return_value=[hit])
+            ),
             patch.object(tools, "async_session_factory", lambda: FakeDB([])),
         ):
             rows = await tools.kb_search(PROJECT_ID, "q")

@@ -58,7 +58,9 @@ def req_env(monkeypatch):
         }
     )
     list_mock = AsyncMock(return_value=generate_mock.return_value["items"])
-    monkeypatch.setattr("app.services.proposal.requirements_service.generate_requirements", generate_mock)
+    monkeypatch.setattr(
+        "app.services.proposal.requirements_service.generate_requirements", generate_mock
+    )
     monkeypatch.setattr("app.services.proposal.requirements_service.list_requirements", list_mock)
     monkeypatch.setattr("app.core.audit.record", AsyncMock())
 

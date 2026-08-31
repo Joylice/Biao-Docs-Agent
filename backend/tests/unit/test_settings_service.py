@@ -196,7 +196,10 @@ class TestGetSettingsView:
 class TestUpdateLlmSettings:
     """PUT upsert：密钥三态（None=保持/""=清除/非空=更新）、加密入库、变更字段清单."""
 
-    def _payload(self, deepseek=None, dashscope=None, base="", llm_mock=False, embedding_model="", embedding_api_key=None):
+    def _payload(
+        self, deepseek=None, dashscope=None, base="", llm_mock=False,
+        embedding_model="", embedding_api_key=None,
+    ):
         return LlmSettingsUpdate(
             deepseek_api_key=deepseek,
             dashscope_api_key=dashscope,
@@ -212,7 +215,12 @@ class TestUpdateLlmSettings:
 
         changed = await update_llm_settings(
             session,
-            self._payload(deepseek="sk-new-key", base="http://emb:2/v1", llm_mock=True, embedding_model="bge-m3"),
+            self._payload(
+                deepseek="sk-new-key",
+                base="http://emb:2/v1",
+                llm_mock=True,
+                embedding_model="bge-m3",
+            ),
         )
 
         assert session.flushed is True
@@ -225,11 +233,16 @@ class TestUpdateLlmSettings:
         assert row.embedding_api_base == "http://emb:2/v1"
         assert row.embedding_model == "bge-m3"
         assert row.llm_mock is True
-        assert set(changed) == {"deepseek_api_key", "embedding_api_base", "embedding_model", "llm_mock"}
+        assert set(changed) == {
+            "deepseek_api_key", "embedding_api_base", "embedding_model", "llm_mock"
+        }
 
     async def test_empty_string_clears_key(self) -> None:
         """空串清除已有密钥（列置 NULL）."""
-        existing = _row(deepseek="sk-old", dashscope="sk-old2", base="http://old/v1", embedding_model="old-model")
+        existing = _row(
+            deepseek="sk-old", dashscope="sk-old2",
+            base="http://old/v1", embedding_model="old-model",
+        )
         session = _FakeSession(row=existing)
 
         changed = await update_llm_settings(session, self._payload(deepseek="", dashscope=""))
@@ -238,16 +251,22 @@ class TestUpdateLlmSettings:
         assert existing.dashscope_api_key_enc is None
         assert existing.embedding_api_base is None
         assert existing.embedding_model is None
-        assert set(changed) == {"deepseek_api_key", "dashscope_api_key", "embedding_api_base", "embedding_model"}
+        assert set(changed) == {
+            "deepseek_api_key", "dashscope_api_key", "embedding_api_base", "embedding_model"
+        }
 
     async def test_none_keeps_existing_keys(self) -> None:
         """W-5 三态：None（省略）→ 保持原密文不变，且不进 changed."""
-        existing = _row(deepseek="sk-keep", dashscope="sk-keep2", base="http://emb/v1", embedding_model="bge-m3")
+        existing = _row(
+            deepseek="sk-keep", dashscope="sk-keep2", base="http://emb/v1", embedding_model="bge-m3"
+        )
         before_deepseek = existing.deepseek_api_key_enc
         before_dashscope = existing.dashscope_api_key_enc
         session = _FakeSession(row=existing)
 
-        changed = await update_llm_settings(session, self._payload(base="http://emb/v1", embedding_model="bge-m3"))
+        changed = await update_llm_settings(
+            session, self._payload(base="http://emb/v1", embedding_model="bge-m3")
+        )
 
         assert existing.deepseek_api_key_enc == before_deepseek
         assert existing.dashscope_api_key_enc == before_dashscope
@@ -256,7 +275,9 @@ class TestUpdateLlmSettings:
 
     async def test_empty_clears_but_none_keeps_other(self) -> None:
         """混合三态：deepseek=""（清除）而 dashscope=None（保持）."""
-        existing = _row(deepseek="sk-old", dashscope="sk-stay", base="http://emb/v1", embedding_model="bge-m3")
+        existing = _row(
+            deepseek="sk-old", dashscope="sk-stay", base="http://emb/v1", embedding_model="bge-m3"
+        )
         before_dashscope = existing.dashscope_api_key_enc
         session = _FakeSession(row=existing)
 
@@ -270,12 +291,16 @@ class TestUpdateLlmSettings:
 
     async def test_unchanged_values_not_in_changed(self) -> None:
         """重复提交相同值：changed 为空."""
-        existing = _row(deepseek="sk-same", base="http://emb/v1", llm_mock=True, embedding_model="bge-m3")
+        existing = _row(
+            deepseek="sk-same", base="http://emb/v1", llm_mock=True, embedding_model="bge-m3"
+        )
         session = _FakeSession(row=existing)
 
         changed = await update_llm_settings(
             session,
-            self._payload(deepseek="sk-same", base="http://emb/v1", llm_mock=True, embedding_model="bge-m3"),
+            self._payload(
+                deepseek="sk-same", base="http://emb/v1", llm_mock=True, embedding_model="bge-m3"
+            ),
         )
 
         assert changed == []
@@ -367,7 +392,9 @@ class TestValidateEmbeddingApiBase:
         """PUT 路径集成：upsert 对非空 base 执行 SSRF 校验."""
         monkeypatch.setattr(settings, "debug", False)
         session = _FakeSession(row=None)
-        payload = LlmSettingsUpdate(embedding_api_base="http://localhost:11434/v1", embedding_model="bge-m3", llm_mock=False)
+        payload = LlmSettingsUpdate(
+            embedding_api_base="http://localhost:11434/v1", embedding_model="bge-m3", llm_mock=False
+        )
         with pytest.raises(BizValidationError):
             await update_llm_settings(session, payload)
         assert session.flushed is False

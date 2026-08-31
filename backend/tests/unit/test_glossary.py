@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.proposal import glossary_service
 from app.services.document import parse_service
 from app.services.document.parse_service import ParsedTender
+from app.services.proposal import glossary_service
 
 
 class TestParseSchemaGlossary:

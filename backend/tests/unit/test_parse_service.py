@@ -218,8 +218,8 @@ class TestParseTenderWithLlmSchema:
 
     @pytest.mark.asyncio
     async def test_schema_excludes_tech_requirements_when_disabled(self, monkeypatch) -> None:
-        from app.services.llm import llm_service
         from app.services.document import parse_service
+        from app.services.llm import llm_service
 
         captured: dict = {}
 
@@ -249,8 +249,8 @@ class TestParseTenderWithLlmSchema:
 
     @pytest.mark.asyncio
     async def test_schema_includes_tech_requirements_by_default(self, monkeypatch) -> None:
-        from app.services.llm import llm_service
         from app.services.document import parse_service
+        from app.services.llm import llm_service
 
         captured: dict = {}
 
@@ -279,8 +279,8 @@ class TestFormatRequirementsSchema:
 
     @pytest.mark.asyncio
     async def test_schema_includes_format_requirements(self, monkeypatch) -> None:
-        from app.services.llm import llm_service
         from app.services.document import parse_service
+        from app.services.llm import llm_service
 
         captured: dict = {}
 
@@ -310,8 +310,8 @@ class TestFormatRequirementsSchema:
     @pytest.mark.asyncio
     async def test_format_requirements_kept_when_score_points_only(self, monkeypatch) -> None:
         """重新解析（跳过技术需求）仍提取格式要求."""
-        from app.services.llm import llm_service
         from app.services.document import parse_service
+        from app.services.llm import llm_service
 
         async def fake_call(
             system_prompt: str,
@@ -334,8 +334,8 @@ class TestFormatRequirementsSchema:
 
     @pytest.mark.asyncio
     async def test_missing_format_requirements_fallback_empty(self, monkeypatch) -> None:
-        from app.services.llm import llm_service
         from app.services.document import parse_service
+        from app.services.llm import llm_service
 
         async def fake_call(
             system_prompt: str,
@@ -353,8 +353,8 @@ class TestFormatRequirementsSchema:
     @pytest.mark.asyncio
     async def test_prompt_declares_chapter_format_category(self, monkeypatch) -> None:
         """阶段5：提示词枚举含 chapter_format（技术方案章节格式要求）."""
-        from app.services.llm import llm_service
         from app.services.document import parse_service
+        from app.services.llm import llm_service
 
         captured: dict = {}
 
@@ -375,8 +375,8 @@ class TestFormatRequirementsSchema:
     @pytest.mark.asyncio
     async def test_chapter_format_items_passthrough(self, monkeypatch) -> None:
         """阶段5：chapter_format 条目原样透传落 meta（不参与排版映射）."""
-        from app.services.llm import llm_service
         from app.services.document import parse_service
+        from app.services.llm import llm_service
 
         async def fake_call(
             system_prompt: str,

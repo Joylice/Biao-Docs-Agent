@@ -143,7 +143,9 @@ def mock_node_deps(monkeypatch):
     monkeypatch.setattr(settings, "llm_mock", True)
     monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
     monkeypatch.setattr(nodes, "publish_event", fake_publish_event)
-    monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", fake_call_llm_with_schema)
+    monkeypatch.setattr(
+        "app.services.llm.llm_service.call_llm_with_schema", fake_call_llm_with_schema
+    )
     monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_get_embedding)
     monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve_similar)
     monkeypatch.setattr("app.services.document.export_service.export_to_word", fake_export_to_word)
@@ -177,8 +179,10 @@ class TestConfirmReview:
     """review HITL 恢复端点：approved → 导出 / feedback → 重写后复审."""
 
     async def _advance_to_review(self, client: AsyncClient, headers: dict[str, str]) -> None:
-        """start → confirm-score-points → confirm-outline（自动生成模式），推进到 review interrupt."""
-        resp = await client.post(f"/api/v1/projects/{PROJECT_ID}/workflow/start", headers=headers)
+        """start → confirm → confirm-outline（自动生成），推进到 review interrupt."""
+        resp = await client.post(
+            f"/api/v1/projects/{PROJECT_ID}/workflow/start", headers=headers
+        )
         assert resp.status_code == 200
         await _wait_status(client, headers, lambda d: _interrupt_type(d) == "confirm_score_points")
 
@@ -227,7 +231,9 @@ class TestConfirmReview:
         async def fake_rewrite_chapter(**kwargs) -> str:
             return rewrite_marker * 20
 
-        monkeypatch.setattr("app.services.proposal.review_service.rewrite_chapter", fake_rewrite_chapter)
+        monkeypatch.setattr(
+            "app.services.proposal.review_service.rewrite_chapter", fake_rewrite_chapter
+        )
 
         await self._advance_to_review(client, owner_headers)
 

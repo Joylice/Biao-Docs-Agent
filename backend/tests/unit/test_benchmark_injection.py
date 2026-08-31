@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from app.services.proposal.chapter_service import generate_chapter
 from app.services.infra.prompt_loader import load_chapter_prompt
+from app.services.proposal.chapter_service import generate_chapter
 
 
 class TestLoadChapterPromptBenchmark:

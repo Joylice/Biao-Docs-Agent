@@ -646,7 +646,9 @@ class TestConsistencyCheckNode:
         async def fake_check(chapters, outline):
             return []
 
-        monkeypatch.setattr("app.services.proposal.consistency_service.check_consistency", fake_check)
+        monkeypatch.setattr(
+            "app.services.proposal.consistency_service.check_consistency", fake_check
+        )
         state = {"project_id": str(PROJECT_ID), "chapters": {"1": "x"}, "outline": []}
         result = await nodes.consistency_check_node(state)
         assert result["consistency_issues"] == []
@@ -677,7 +679,9 @@ class TestConsistencyCheckNode:
             rewritten.append(kwargs["chapter_no"])
             return "修复后的内容" + "字" * 200
 
-        monkeypatch.setattr("app.services.proposal.consistency_service.check_consistency", fake_check)
+        monkeypatch.setattr(
+            "app.services.proposal.consistency_service.check_consistency", fake_check
+        )
         monkeypatch.setattr("app.services.proposal.review_service.rewrite_chapter", fake_rewrite)
         monkeypatch.setattr(nodes, "async_session_factory", lambda: FakeDB())
         monkeypatch.setattr(nodes, "publish_event", TestWriteNodeChapterSummaries._noop_publish())
@@ -706,7 +710,9 @@ class TestConsistencyCheckNode:
         async def fake_publish(_project_id: str, event: dict) -> None:
             events.append(event)
 
-        monkeypatch.setattr("app.services.proposal.consistency_service.check_consistency", fake_check)
+        monkeypatch.setattr(
+            "app.services.proposal.consistency_service.check_consistency", fake_check
+        )
         monkeypatch.setattr("app.services.proposal.review_service.rewrite_chapter", fake_rewrite)
         monkeypatch.setattr(nodes, "publish_event", fake_publish)
 
@@ -727,7 +733,9 @@ class TestConsistencyCheckNode:
         async def fake_check(chapters, outline):
             raise RuntimeError("LLM 不可用")
 
-        monkeypatch.setattr("app.services.proposal.consistency_service.check_consistency", fake_check)
+        monkeypatch.setattr(
+            "app.services.proposal.consistency_service.check_consistency", fake_check
+        )
         state = {"project_id": str(PROJECT_ID), "chapters": {"1": "x"}, "outline": []}
         result = await nodes.consistency_check_node(state)
         assert result["consistency_issues"] == []

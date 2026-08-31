@@ -67,7 +67,9 @@ def mock_node_deps(monkeypatch):
     monkeypatch.setattr(settings, "llm_mock", True)
     monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
     monkeypatch.setattr(nodes, "publish_event", fake_publish_event)
-    monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", fake_call_llm_with_schema)
+    monkeypatch.setattr(
+        "app.services.llm.llm_service.call_llm_with_schema", fake_call_llm_with_schema
+    )
     monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_get_embedding)
     monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve_similar)
     monkeypatch.setattr("app.services.document.export_service.export_to_word", fake_export_to_word)
@@ -217,7 +219,9 @@ class TestRegenerateOutline:
                 ]
             }
 
-        monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", _call_llm_with_schema)
+        monkeypatch.setattr(
+            "app.services.llm.llm_service.call_llm_with_schema", _call_llm_with_schema
+        )
         await self._advance_to_outline_interrupt()
         assert outline_calls["n"] == 1, "初始大纲应已生成一次"
 

@@ -140,8 +140,12 @@ def upload_env(monkeypatch):
         calls["index"].append((pid, did))
         return True
 
-    monkeypatch.setattr("app.services.project.task_service.enqueue_parse_tender", fake_enqueue_parse)
-    monkeypatch.setattr("app.services.project.task_service.enqueue_index_document", fake_enqueue_index)
+    monkeypatch.setattr(
+        "app.services.project.task_service.enqueue_parse_tender", fake_enqueue_parse
+    )
+    monkeypatch.setattr(
+        "app.services.project.task_service.enqueue_index_document", fake_enqueue_index
+    )
 
     yield {
         "user_id": user_id,
