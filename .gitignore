@@ -8,6 +8,7 @@
 .venv/
 __pycache__/
 *.pyc
+.mypy_cache/
 .pytest_cache/
 .ruff_cache/
 .coverage
@@ -16,6 +17,13 @@ __pycache__/
 node_modules/
 dist/
 *.tsbuildinfo
+
+# IDE tools
+.qoder/
+
+# E2E test artifacts
+e2e/playwright-report/
+e2e/test-results/
 
 # Vite 配置编译产物（源文件为 vite.config.ts）
 frontend/vite.config.js

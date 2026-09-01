@@ -19,14 +19,19 @@ from app.core.exceptions import ValidationError as BizValidationError
 from app.models.llm_settings import LlmSetting
 from app.schemas.settings import LlmSettingsUpdate
 from app.services.infra import settings_service
-from app.services.infra.settings_service import (
+from app.services.infra.settings import runtime
+from app.services.infra.settings.runtime import (
     RuntimeLlmConfig,
     get_runtime_config,
-    get_settings_view,
     invalidate_runtime_cache,
     is_mock_enabled,
-    mask_secret,
+)
+from app.services.infra.settings.storage import (
+    get_settings_view,
     update_llm_settings,
+)
+from app.services.infra.settings.security import (
+    mask_secret,
     validate_embedding_api_base,
 )
 
@@ -329,12 +334,12 @@ class TestUpdateLlmSettings:
 
     async def test_update_does_not_invalidate_runtime_cache(self) -> None:
         """W-1：service 层不再内部失效缓存（移至 api 层 commit 成功后调用）."""
-        settings_service._runtime_cache = (time.monotonic(), RuntimeLlmConfig())
+        runtime._runtime_cache = (time.monotonic(), RuntimeLlmConfig())
         session = _FakeSession(row=None)
 
         await update_llm_settings(session, self._payload(deepseek="sk-x"))
 
-        assert settings_service._runtime_cache is not None
+        assert runtime._runtime_cache is not None
 
 
 class TestValidateEmbeddingApiBase:
@@ -436,7 +441,7 @@ class TestGetRuntimeConfig:
         async def fake_factory():
             yield session
 
-        monkeypatch.setattr(settings_service, "async_session_factory", fake_factory)
+        monkeypatch.setattr(runtime, "async_session_factory", fake_factory)
 
         cfg = await get_runtime_config()
 
@@ -456,7 +461,7 @@ class TestGetRuntimeConfig:
         async def fake_factory():
             yield session
 
-        monkeypatch.setattr(settings_service, "async_session_factory", fake_factory)
+        monkeypatch.setattr(runtime, "async_session_factory", fake_factory)
         assert await get_runtime_config() is None
 
     async def test_cached_within_ttl(self, monkeypatch) -> None:
@@ -470,7 +475,7 @@ class TestGetRuntimeConfig:
             calls["n"] += 1
             yield session
 
-        monkeypatch.setattr(settings_service, "async_session_factory", fake_factory)
+        monkeypatch.setattr(runtime, "async_session_factory", fake_factory)
 
         await get_runtime_config()
         await get_runtime_config()
@@ -503,7 +508,7 @@ class TestIsMockEnabled:
         async def fake_cfg():
             return RuntimeLlmConfig(llm_mock=True)
 
-        monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
+        monkeypatch.setattr(runtime, "get_runtime_config", fake_cfg)
         assert await is_mock_enabled(None) is True
 
     async def test_both_false(self, monkeypatch) -> None:
@@ -512,7 +517,7 @@ class TestIsMockEnabled:
         async def fake_cfg():
             return RuntimeLlmConfig(llm_mock=False)
 
-        monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
+        monkeypatch.setattr(runtime, "get_runtime_config", fake_cfg)
         assert await is_mock_enabled(None) is False
 
 
@@ -525,7 +530,7 @@ class TestConnection:
         async def fake_cfg():
             return None
 
-        monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
+        monkeypatch.setattr(runtime, "get_runtime_config", fake_cfg)
         result = await run_connection_test("llm")
         assert result == {"ok": False, "error": "未配置密钥或处于 mock 模式"}
 
@@ -547,7 +552,7 @@ class TestConnection:
         async def fake_cfg():
             return RuntimeLlmConfig(deepseek_api_key="sk-ds-test")
 
-        monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
+        monkeypatch.setattr(runtime, "get_runtime_config", fake_cfg)
 
         result = await run_connection_test("llm")
 
@@ -567,7 +572,7 @@ class TestConnection:
         async def fake_cfg():
             return RuntimeLlmConfig(deepseek_api_key="sk-bad")
 
-        monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
+        monkeypatch.setattr(runtime, "get_runtime_config", fake_cfg)
 
         result = await run_connection_test("llm")
 
@@ -590,7 +595,7 @@ class TestConnection:
                 embedding_api_key="sk-emb",
             )
 
-        monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
+        monkeypatch.setattr(runtime, "get_runtime_config", fake_cfg)
 
         result = await run_connection_test("embedding")
 
@@ -620,7 +625,7 @@ class TestConnection:
         async def fake_cfg():
             return RuntimeLlmConfig(embedding_api_base="http://emb:1/v1", embedding_model="bge-m3")
 
-        monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
+        monkeypatch.setattr(runtime, "get_runtime_config", fake_cfg)
 
         result = await run_connection_test("embedding")
 
@@ -644,7 +649,7 @@ class TestConnection:
                 dashscope_api_key="sk-dash",
             )
 
-        monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
+        monkeypatch.setattr(runtime, "get_runtime_config", fake_cfg)
 
         result = await run_connection_test("embedding")
 
@@ -659,7 +664,7 @@ class TestConnection:
         async def fake_cfg():
             return None
 
-        monkeypatch.setattr(settings_service, "get_runtime_config", fake_cfg)
+        monkeypatch.setattr(runtime, "get_runtime_config", fake_cfg)
 
         result = await run_connection_test("embedding")
 

@@ -48,9 +48,7 @@ export function useEditorAiAssist(options: {
         prompt: assistPrompt.value,
         mode: assistMode.value,
       }
-      console.log('[AI辅助] 请求参数:', { assignmentId: currentTask.id, payload })
       const { data } = await assistChapter(projectId, currentTask.id, payload)
-      console.log('[AI辅助] 响应:', data)
       const newContent = data.data?.content
       if (typeof newContent === 'string' && newContent.trim()) {
         const html = markdownToHtml(newContent)

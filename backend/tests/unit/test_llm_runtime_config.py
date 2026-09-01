@@ -8,7 +8,8 @@ import pytest
 
 from app.core.config import settings
 from app.services.infra import settings_service
-from app.services.infra.settings_service import RuntimeLlmConfig
+from app.services.infra.settings import runtime
+from app.services.infra.settings.runtime import RuntimeLlmConfig
 from app.services.llm import llm_service, rag_service
 from app.services.llm.llm_service import call_llm_text, call_llm_with_schema
 from app.services.llm.rag_service import get_embedding
@@ -26,7 +27,8 @@ def _patch_cfg(monkeypatch, cfg: RuntimeLlmConfig | None) -> None:
     async def fake_get_runtime_config():
         return cfg
 
-    monkeypatch.setattr(settings_service, "get_runtime_config", fake_get_runtime_config)
+    # 运行时解析已迁至 runtime 子模块：打补丁目标须指向实际命名空间
+    monkeypatch.setattr(runtime, "get_runtime_config", fake_get_runtime_config)
 
 
 @pytest.fixture(autouse=True)

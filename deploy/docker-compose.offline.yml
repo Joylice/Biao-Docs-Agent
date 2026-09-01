@@ -3,6 +3,37 @@
 # 各服务通过 env_file: 1panel.env 读取 1Panel 注入的密钥变量（BID_JWT_SECRET 等）
 # 端口与生产一致：15432/16379/19000/19001/18000/5173
 
+# ── 公共环境变量锚点（api 与 worker 共享）──
+x-backend-env: &backend-env
+  BID_DATABASE_URL: postgresql+psycopg://bid:bid@postgres:5432/bid
+  BID_REDIS_URL: redis://redis:6379/0
+  BID_MINIO_ENDPOINT: minio:9000
+  BID_MINIO_PUBLIC_ENDPOINT: 192.168.18.200:19000
+  BID_MINIO_ACCESS_KEY: ${BID_MINIO_ACCESS_KEY}
+  BID_MINIO_SECRET_KEY: ${BID_MINIO_SECRET_KEY}
+  BID_DEBUG: "false"
+  BID_LLM_MOCK: "false"
+  BID_JWT_SECRET: ${BID_JWT_SECRET}
+  BID_CORS_ORIGINS: '["http://192.168.18.200:5173"]'
+  BID_ADMIN_USER_IDS: "admin@bidagent.com"
+  # ── LLM 配置（环境变量回退，数据库无配置时自动生效）──
+  BID_LLM_MODEL: ${BID_LLM_MODEL:-zhipu/glm-4.6v}
+  BID_LLM_API_BASE: ${BID_LLM_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
+  BID_LLM_API_KEY: ${BID_LLM_API_KEY:-}
+  BID_DEEPSEEK_API_KEY: ${BID_DEEPSEEK_API_KEY:-}
+  BID_DASHSCOPE_API_KEY: ${BID_DASHSCOPE_API_KEY:-}
+  BID_ZHIPU_API_KEY: ${BID_ZHIPU_API_KEY:-}
+  BID_OPENAI_API_KEY: ${BID_OPENAI_API_KEY:-}
+  BID_ANTHROPIC_API_KEY: ${BID_ANTHROPIC_API_KEY:-}
+  BID_MOONSHOT_API_KEY: ${BID_MOONSHOT_API_KEY:-}
+  # ── Embedding 配置 ──
+  BID_EMBEDDING_MODEL: ${BID_EMBEDDING_MODEL:-jiaorong-bge-m3}
+  BID_EMBEDDING_API_BASE: ${BID_EMBEDDING_API_BASE:-https://c4ai.cccltd.cn/api/compatible/v1}
+  BID_EMBEDDING_API_KEY: ${BID_EMBEDDING_API_KEY:-}
+  # 兼容旧变量名（litellm 直接读取）
+  DEEPSEEK_API_KEY: ${BID_DEEPSEEK_API_KEY:-}
+  DASHSCOPE_API_KEY: ${BID_DASHSCOPE_API_KEY:-}
+
 services:
   # ── PostgreSQL + pgvector ──
   postgres:
@@ -36,7 +67,7 @@ services:
 
   # ── MinIO ──
   minio:
-    image: docker.1ms.run/minio/minio:RELEASE.2024-02-26T09-33-48Z
+    image: docker.1ms.run/minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     env_file:
       - 1panel.env
@@ -62,34 +93,7 @@ services:
     env_file:
       - 1panel.env
     environment:
-      BID_DATABASE_URL: postgresql+psycopg://bid:bid@postgres:5432/bid
-      BID_REDIS_URL: redis://redis:6379/0
-      BID_MINIO_ENDPOINT: minio:9000
-      BID_MINIO_PUBLIC_ENDPOINT: 192.168.18.200:19000
-      BID_MINIO_ACCESS_KEY: ${BID_MINIO_ACCESS_KEY}
-      BID_MINIO_SECRET_KEY: ${BID_MINIO_SECRET_KEY}
-      BID_DEBUG: "false"
-      BID_LLM_MOCK: "false"
-      BID_JWT_SECRET: ${BID_JWT_SECRET}
-      BID_CORS_ORIGINS: '["http://192.168.18.200:5173"]'
-      BID_ADMIN_USER_IDS: "admin@bidagent.com"
-      # ── LLM 配置（环境变量回退，数据库无配置时自动生效）──
-      BID_LLM_MODEL: ${BID_LLM_MODEL:-zhipu/glm-4.6v}
-      BID_LLM_API_BASE: ${BID_LLM_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
-      BID_LLM_API_KEY: ${BID_LLM_API_KEY:-}
-      BID_DEEPSEEK_API_KEY: ${BID_DEEPSEEK_API_KEY:-}
-      BID_DASHSCOPE_API_KEY: ${BID_DASHSCOPE_API_KEY:-}
-      BID_ZHIPU_API_KEY: ${BID_ZHIPU_API_KEY:-}
-      BID_OPENAI_API_KEY: ${BID_OPENAI_API_KEY:-}
-      BID_ANTHROPIC_API_KEY: ${BID_ANTHROPIC_API_KEY:-}
-      BID_MOONSHOT_API_KEY: ${BID_MOONSHOT_API_KEY:-}
-      # ── Embedding 配置 ──
-      BID_EMBEDDING_MODEL: ${BID_EMBEDDING_MODEL:-jiaorong-bge-m3}
-      BID_EMBEDDING_API_BASE: ${BID_EMBEDDING_API_BASE:-https://c4ai.cccltd.cn/api/compatible/v1}
-      BID_EMBEDDING_API_KEY: ${BID_EMBEDDING_API_KEY:-}
-      # 兼容旧变量名（litellm 直接读取）
-      DEEPSEEK_API_KEY: ${BID_DEEPSEEK_API_KEY:-}
-      DASHSCOPE_API_KEY: ${BID_DASHSCOPE_API_KEY:-}
+      <<: *backend-env
     ports:
       - "18000:8000"
     depends_on:
@@ -108,32 +112,7 @@ services:
     env_file:
       - 1panel.env
     environment:
-      BID_DATABASE_URL: postgresql+psycopg://bid:bid@postgres:5432/bid
-      BID_REDIS_URL: redis://redis:6379/0
-      BID_MINIO_ENDPOINT: minio:9000
-      BID_MINIO_PUBLIC_ENDPOINT: 192.168.18.200:19000
-      BID_MINIO_ACCESS_KEY: ${BID_MINIO_ACCESS_KEY}
-      BID_MINIO_SECRET_KEY: ${BID_MINIO_SECRET_KEY}
-      BID_DEBUG: "false"
-      BID_LLM_MOCK: "false"
-      BID_JWT_SECRET: ${BID_JWT_SECRET}
-      BID_ADMIN_USER_IDS: "admin@bidagent.com"
-      # ── LLM 配置（与 api 服务保持一致）──
-      BID_LLM_MODEL: ${BID_LLM_MODEL:-zhipu/glm-4.6v}
-      BID_LLM_API_BASE: ${BID_LLM_API_BASE:-https://open.bigmodel.cn/api/paas/v4}
-      BID_LLM_API_KEY: ${BID_LLM_API_KEY:-}
-      BID_DEEPSEEK_API_KEY: ${BID_DEEPSEEK_API_KEY:-}
-      BID_DASHSCOPE_API_KEY: ${BID_DASHSCOPE_API_KEY:-}
-      BID_ZHIPU_API_KEY: ${BID_ZHIPU_API_KEY:-}
-      BID_OPENAI_API_KEY: ${BID_OPENAI_API_KEY:-}
-      BID_ANTHROPIC_API_KEY: ${BID_ANTHROPIC_API_KEY:-}
-      BID_MOONSHOT_API_KEY: ${BID_MOONSHOT_API_KEY:-}
-      # ── Embedding 配置 ──
-      BID_EMBEDDING_MODEL: ${BID_EMBEDDING_MODEL:-jiaorong-bge-m3}
-      BID_EMBEDDING_API_BASE: ${BID_EMBEDDING_API_BASE:-https://c4ai.cccltd.cn/api/compatible/v1}
-      BID_EMBEDDING_API_KEY: ${BID_EMBEDDING_API_KEY:-}
-      DEEPSEEK_API_KEY: ${BID_DEEPSEEK_API_KEY:-}
-      DASHSCOPE_API_KEY: ${BID_DASHSCOPE_API_KEY:-}
+      <<: *backend-env
     depends_on:
       postgres:
         condition: service_healthy

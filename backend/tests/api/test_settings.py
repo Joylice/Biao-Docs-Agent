@@ -29,7 +29,8 @@ from app.models.audit_log import AuditLog
 from app.models.llm_settings import LlmSetting
 from app.models.user import User
 from app.services.infra import settings_service
-from app.services.infra.settings_service import RuntimeLlmConfig, invalidate_runtime_cache
+from app.services.infra.settings import runtime
+from app.services.infra.settings.runtime import RuntimeLlmConfig, invalidate_runtime_cache
 
 ADMIN_USER_ID = uuid.uuid4()
 ADMIN_EMAIL = "admin@example.com"
@@ -101,7 +102,7 @@ class _FakeSettingsSession:
         self.flushed = True
 
     async def commit(self) -> None:
-        self.cache_alive_at_commit = settings_service._runtime_cache is not None
+        self.cache_alive_at_commit = runtime._runtime_cache is not None
         self.committed = True
 
 
@@ -477,7 +478,7 @@ async def test_put_invalidates_runtime_cache_only_after_commit(
     client: AsyncClient, override_db, admin_headers: dict[str, str]
 ) -> None:
     """W-1 时序：commit 时缓存仍有效（未提前失效），commit 成功后才失效."""
-    settings_service._runtime_cache = (time.monotonic(), RuntimeLlmConfig())
+    runtime._runtime_cache = (time.monotonic(), RuntimeLlmConfig())
     session = _FakeSettingsSession(row=None, user=_admin_user())
     override_db(session)
 
@@ -494,7 +495,7 @@ async def test_put_invalidates_runtime_cache_only_after_commit(
     assert resp.status_code == 200
     assert session.committed is True
     assert session.cache_alive_at_commit is True  # commit 之前缓存仍有效
-    assert settings_service._runtime_cache is None  # commit 之后失效
+    assert runtime._runtime_cache is None  # commit 之后失效
 
 
 # ── 自定义 LLM 端点（llm_model / llm_api_base）──
@@ -616,7 +617,8 @@ def _patch_cfg(monkeypatch, cfg: RuntimeLlmConfig | None) -> None:
     async def fake_get_runtime_config():
         return cfg
 
-    monkeypatch.setattr(settings_service, "get_runtime_config", fake_get_runtime_config)
+    # 运行时解析已迁至 runtime 子模块：打补丁目标须指向实际命名空间
+    monkeypatch.setattr(runtime, "get_runtime_config", fake_get_runtime_config)
 
 
 @pytest.mark.asyncio

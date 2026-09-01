@@ -517,10 +517,8 @@ const handleAssign = async () => {
 
   assigning.value = true
   try {
-    console.log('[分工推送] 开始推送，payload:', JSON.stringify(payload, null, 2))
     // 后端幂等 upsert，响应同为树形结构
-    const { data, status } = await upsertChapterAssignments(projectId, payload)
-    console.log('[分工推送] 响应 status:', status, 'data:', data)
+    const { data } = await upsertChapterAssignments(projectId, payload)
     if (data.code === 0) {
       // 推送成功后统一从后端重新加载分工列表（内部已含 syncDraftBaseline），
       // 避免 upsert 返回树与 list 接口结构不一致导致的状态不同步

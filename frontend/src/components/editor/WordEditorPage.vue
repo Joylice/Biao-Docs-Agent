@@ -773,9 +773,8 @@ const leftPanelVisible = ref(true)
 const leftPanelTab = ref<'navigator' | 'outline'>('navigator')
 
 /** 章节导航跳转（由 ChapterNavigator 触发） */
-const handleChapterNavigate = (chapterNo: string) => {
-  // 路由跳转由 ChapterNavigator 内部处理，这里仅做日志/状态同步
-  console.log('[章节导航] 跳转到:', chapterNo)
+const handleChapterNavigate = (_chapterNo: string) => {
+  // 路由跳转由 ChapterNavigator 内部处理，仅保留状态同步入口
 }
 
 /* ---------------- 图片上传 composable ---------------- */
