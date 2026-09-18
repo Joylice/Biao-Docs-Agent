@@ -21,6 +21,10 @@ htmlcov/
 # Node
 node_modules/
 dist/
+# 前端 build 验证副本（frontend/scripts/verify-clone-snapshot.mjs 本地留档用）
+# 🔴 2026-09-18：dist-verify{,2..13} 共 782 个构建产物曾被误入库（32.2 MB），
+#    此处补上忽略规则并 git rm --cached 摘除（磁盘文件保留）。
+dist-verify*/
 *.tsbuildinfo
 
 # IDE tools
@@ -55,3 +59,8 @@ deploy/.admin_cred.txt
 
 # 镜像恢复中转目录（仅本地留存，不入库）
 backend/_superseded_img_*/
+
+# 损坏的 .git 对象库留存（2026-09-18 恢复时原地重命名保留，仅本地排查用，不入库）
+_superseded_git_broken_*/
+# 仓库外 git 恢复中转目录（clone 用，不入库）
+_git_recover_*/

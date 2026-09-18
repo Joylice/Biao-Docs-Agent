@@ -1,1 +1,0 @@
-import{a as t}from"./index-BKaUQSec.js";const c=e=>t.get("/projects",{params:e}),r=e=>t.get(`/projects/${e}`),j=e=>t.post("/projects",e),a=e=>t.delete(`/projects/${e}`),m=e=>t.get(`/projects/${e}/members`),p=(e,s)=>t.post(`/projects/${e}/members`,{email:s}),b=(e,s)=>t.delete(`/projects/${e}/members/${s}`);export{r as a,p as b,j as c,a as d,m as e,c as f,b as r};

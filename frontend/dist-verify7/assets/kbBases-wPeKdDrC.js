@@ -1,1 +1,0 @@
-import{a as e}from"./index-CbXYqj-Z.js";const o=s=>e.get("/kb-bases",{params:s}),b=s=>e.post("/kb-bases",s),c=s=>e.delete(`/kb-bases/${s}`),d=(s,a)=>e.post(`/kb-bases/${s}/documents`,{document_id:a});export{d as a,b as c,c as d,o as f};
