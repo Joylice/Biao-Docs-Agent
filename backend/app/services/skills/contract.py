@@ -209,6 +209,14 @@ def validate_contract(
     if valid_stage_keys is not None and c.stage_key not in valid_stage_keys:
         raise SkillContractError(f"stage_key '{c.stage_key}' 非法：须 ∈ {sorted(valid_stage_keys)}")
 
+    # 🔴 body 空判必须与 parse_skill_md 一致。
+    # parse_skill_md 会拒空 body，但**手工构造**的 SkillContract（如 api 层
+    # /preview 的草稿、测试构造的契约）绕过了 parse 路径，若无此判则会渲染出
+    # 空 system/user（实测 system_chars=0）—— 正是「渲染成功但产出空提示词」的
+    # 静默降质形态：`_via_skill_or_yaml` 的 except 永不触发 ⇒ 旧 YAML 兜底失效。
+    if not c.body.strip():
+        raise SkillContractError("正文（行为指令）为空")
+
     if len(c.body) > SKILL_BODY_MAX_CHARS:
         raise SkillContractError(
             f"正文超限：{len(c.body)} 字符 > {SKILL_BODY_MAX_CHARS}（token 预算保护）"

@@ -27,6 +27,7 @@ from app.api import (
     kb,
     kb_bases,
     projects,
+    skills,
     usage,
     users,
     versions,
@@ -126,5 +127,11 @@ app.include_router(
     external_tools.router,
     prefix=f"{settings.api_prefix}/settings/external-tools",
     tags=["外部工具"],
+)
+# skill 契约体系（S4）：用户级资产，仅需登录（不用 admin 门禁）
+app.include_router(
+    skills.router,
+    prefix=f"{settings.api_prefix}/settings/skills",
+    tags=["技能准则"],
 )
 app.include_router(websocket.router)
