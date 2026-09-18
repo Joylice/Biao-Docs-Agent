@@ -210,7 +210,8 @@ class TestRoutes:
         assert nodes.review_route({"review_action": "approved"}) == "export"
 
     def test_review_route_feedback(self) -> None:
-        assert nodes.review_route({"review_action": "feedback"}) == "rewrite"
+        # feedback 现在回到 review interrupt 等待人工再次确认（rewrite 节点已移除）
+        assert nodes.review_route({"review_action": "feedback"}) == "review"
 
 
 class TestRetrieveNode:
@@ -431,7 +432,6 @@ class TestWriteNode:
             "outline": [{"chapter_no": "1", "title": "概述", "sections": ["背景"]}],
             "chapters": {},
             "score_points": [],
-            "tech_requirements": [],
             "retrieved_context": "素材上下文",
         }
         result = await nodes.write_node(state)
@@ -470,7 +470,6 @@ class TestWriteNode:
             "outline": [{"chapter_no": "1", "title": "概述", "sections": ["背景"]}],
             "chapters": {},
             "score_points": [],
-            "tech_requirements": [],
             "retrieved_context": "素材",
         }
         result = await nodes.write_node(state)
@@ -516,7 +515,6 @@ class TestWriteNodeChapterSummaries:
             "chapters": {"1": "第一章全文"},
             "chapter_summaries": {"1": {"title": "项目概述", "summary": "介绍项目背景"}},
             "score_points": [],
-            "tech_requirements": [],
             "retrieved_context": "素材",
         }
         await nodes.write_node(state)
@@ -545,7 +543,6 @@ class TestWriteNodeChapterSummaries:
             "chapters": {"1": "第一章全文"},
             "chapter_summaries": {"1": {"title": "项目概述", "summary": "介绍项目背景"}},
             "score_points": [],
-            "tech_requirements": [],
             "retrieved_context": "素材",
         }
         result = await nodes.write_node(state)
@@ -596,7 +593,6 @@ class TestWriteNodeCoverageMatrix:
                 {"clause_no": "1", "item": "架构", "confirmed": True},
                 {"clause_no": "2", "item": "安全", "confirmed": True},
             ],
-            "tech_requirements": [],
             "retrieved_context": "素材",
         }
         await nodes.write_node(state)
@@ -630,8 +626,7 @@ class TestWriteNodeCoverageMatrix:
                 {"chapter_no": "1", "title": "概述", "sections": [], "covered_clauses": ["1"]},
             ],
             "chapters": {},
-            "score_points": [{"clause_no": "1", "item": "架构", "confirmed": True}],
-            "tech_requirements": [],
+            "score_points": [],
             "retrieved_context": "素材",
         }
         await nodes.write_node(state)
@@ -767,8 +762,7 @@ class TestNodeCommits:
 
         state = {
             "project_id": str(PROJECT_ID),
-            "score_points": [{"clause_no": "1", "item": "技术方案完整性", "is_star": False}],
-            "tech_requirements": [],
+            "score_points": [],
         }
         result = await nodes.generate_outline_node(state)
         assert "error" not in result
@@ -819,8 +813,7 @@ class TestOutlineNodeCoveredClauses:
 
         state = {
             "project_id": str(PROJECT_ID),
-            "score_points": [{"clause_no": "1", "item": "技术方案"}],
-            "tech_requirements": [],
+            "score_points": [],
         }
         result = await nodes.generate_outline_node(state)
         assert "error" not in result
@@ -857,8 +850,7 @@ class TestOutlineNodeCoveredClauses:
 
         state = {
             "project_id": str(PROJECT_ID),
-            "score_points": [{"clause_no": "4.2.1", "item": "架构"}],
-            "tech_requirements": [],
+            "score_points": [],
         }
         result = await nodes.generate_outline_node(state)
         assert result["outline"][0]["covered_clauses"] == ["4.2.1", "4.2.2"]
@@ -920,7 +912,6 @@ class TestOutlineProjectContextAndIsolation:
             "tender_no": "ZB-2026-001",
             "industry": "智慧水务",
             "score_points": [{"clause_no": "1", "item": "技术方案"}],
-            "tech_requirements": [{"seq": 1, "description": "巡检管理", "category": "软件"}],
         }
         result = await nodes.generate_outline_node(state)
         assert "error" not in result
@@ -948,7 +939,7 @@ class TestOutlineProjectContextAndIsolation:
         monkeypatch.setattr(nodes, "publish_event", fake_publish)
         monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", fake_llm)
 
-        state = {"project_id": str(PROJECT_ID), "score_points": [], "tech_requirements": []}
+        state = {"project_id": str(PROJECT_ID), "score_points": []}
         result = await nodes.generate_outline_node(state)
         assert "error" not in result
         assert result["outline"]
@@ -981,9 +972,7 @@ class TestOutlineProjectContextAndIsolation:
         monkeypatch.setattr("app.services.llm.llm_service.call_llm_with_schema", fake_llm)
 
         for pid in (pid_a, pid_b):
-            result = await nodes.generate_outline_node(
-                {"project_id": str(pid), "score_points": [], "tech_requirements": []}
-            )
+            result = await nodes.generate_outline_node({"project_id": str(pid), "score_points": []})
             assert "error" not in result
 
         skeletons = [o for db in dbs for o in db.added if isinstance(o, ProposalSkeleton)]
@@ -1002,7 +991,6 @@ class TestWriteNodeToolPreflight:
             "outline": [{"chapter_no": "1", "title": "概述", "sections": []}],
             "chapters": {},
             "score_points": [],
-            "tech_requirements": [],
             "retrieved_context": "基础素材",
         }
 

@@ -53,10 +53,16 @@ async def _model_available(model: str) -> bool:
 
 
 async def _default_parse(text: str) -> list[dict]:
-    """默认提取实现：复用 parse_service 的 LLM 结构化解析链路."""
-    from app.services.document.parse_service import parse_tender_with_llm
+    """默认提取实现：复用**生产**的多 Agent 解析链路（D5，2026-09-16 修正）.
 
-    parsed = await parse_tender_with_llm(text, include_tech_requirements=False)
+    生产入口 = `worker.tasks.task_parse_tender` 所调用的
+    `parsing.dispatch.parse_tender_multi_agent`（内部含 ≥2 Agent 失败时回退
+    `parse_tender_with_llm` 的降级路径）。此前评测默认调遗留单次调用
+    `parse_tender_with_llm`，测得的是**非生产行为**，不能作为改造效果证据。
+    """
+    from app.services.document.parsing.dispatch import parse_tender_multi_agent
+
+    parsed = await parse_tender_multi_agent(text)
     return parsed.score_points
 
 

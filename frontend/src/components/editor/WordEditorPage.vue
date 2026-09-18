@@ -1,203 +1,42 @@
 <template>
   <div class="word-page">
-    <!-- 顶栏：返回 + 章节信息 + 保存 -->
-    <header class="word-page__header">
-      <div class="word-page__header-left">
-        <a-button
-          size="small"
-          aria-label="返回分工页"
-          @click="handleBack"
-        >
-          <template #icon>
-            <ArrowLeftOutlined />
-          </template>
-          返回
-        </a-button>
-        <a-divider type="vertical" />
-        <a-tag color="blue">
-          {{ chapterNo }}
-        </a-tag>
-        <span class="word-page__chapter-title">{{ chapterTitle || '章节编辑' }}</span>
-        <a-tag
-          v-if="taskStatusText"
-          :color="taskStatusColor"
-        >
-          {{ taskStatusText }}
-        </a-tag>
-        <a-tag
-          v-if="isReadOnly"
-          color="default"
-        >
-          只读模式
-        </a-tag>
-      </div>
-      <div class="word-page__header-right">
-        <!-- 任务状态操作按钮 -->
-        <a-button
-          v-if="canAccept"
-          size="small"
-          type="primary"
-          :loading="accepting"
-          @click="handleAccept"
-        >
-          领取任务
-        </a-button>
-        <a-button
-          v-if="canSubmit"
-          size="small"
-          type="primary"
-          :loading="submittingTask"
-          @click="handleSubmit"
-        >
-          提交审核
-        </a-button>
-        <a-button
-          v-if="canApprove"
-          size="small"
-          :loading="approving"
-          @click="handleApprove"
-        >
-          审核通过
-        </a-button>
-        <a-button
-          v-if="canReject"
-          size="small"
-          danger
-          @click="showRejectModal = true"
-        >
-          打回
-        </a-button>
-        <a-divider
-          v-if="canAccept || canSubmit || canApprove || canReject"
-          type="vertical"
-        />
-        <span
-          v-if="!isReadOnly"
-          class="word-page__save-hint"
-          :class="`word-page__save-hint--${saveStatus}`"
-        >
-          {{ saveHint }}
-        </span>
-        <a-button
-          v-if="!isReadOnly"
-          size="small"
-          type="primary"
-          :loading="saveStatus === 'saving'"
-          aria-label="保存章节内容"
-          @click="saveNow"
-        >
-          保存
-        </a-button>
-        <a-button
-          size="small"
-          aria-label="导出Word"
-          @click="handleExportWord"
-        >
-          <template #icon>
-            <DownloadOutlined />
-          </template>
-          导出
-        </a-button>
-        <a-button
-          size="small"
-          aria-label="打印"
-          @click="handlePrint"
-        >
-          <template #icon>
-            <PrinterOutlined />
-          </template>
-          打印
-        </a-button>
-        <a-dropdown>
-          <a-button size="small" aria-label="目录">
-            <template #icon>
-              <UnorderedListOutlined />
-            </template>
-            目录
-          </a-button>
-          <template #overlay>
-            <a-menu>
-              <a-menu-item key="insert" @click="handleInsertToc">
-                插入目录
-              </a-menu-item>
-              <a-menu-item key="update" @click="handleUpdateToc">
-                更新目录
-              </a-menu-item>
-            </a-menu>
-          </template>
-        </a-dropdown>
-        <a-button
-          size="small"
-          :type="propertiesVisible ? 'primary' : 'default'"
-          aria-label="属性面板"
-          @click="toggleProperties"
-        >
-          <template #icon>
-            <SettingOutlined />
-          </template>
-          属性
-        </a-button>
-        <a-button
-          size="small"
-          :type="commentsVisible ? 'primary' : 'default'"
-          aria-label="批注面板"
-          @click="toggleComments"
-        >
-          <template #icon>
-            <CommentOutlined />
-          </template>
-          批注
-        </a-button>
-        <a-button
-          size="small"
-          :type="versionHistoryVisible ? 'primary' : 'default'"
-          aria-label="版本历史"
-          @click="toggleVersionHistory"
-        >
-          <template #icon>
-            <HistoryOutlined />
-          </template>
-          版本
-        </a-button>
-        <a-dropdown>
-          <a-button size="small" type="primary" :loading="aiLoading" aria-label="AI 辅助">
-            <template #icon>
-              <RobotOutlined />
-            </template>
-            AI 辅助
-          </a-button>
-          <template #overlay>
-            <a-menu>
-              <a-menu-item key="polish" @click="handleAiAction('polish')">
-                <template #icon><EditOutlined /></template>
-                AI 润色（选中文字）
-              </a-menu-item>
-              <a-menu-item key="expand" @click="handleAiAction('expand')">
-                <template #icon><ExpandOutlined /></template>
-                AI 扩写（选中文字）
-              </a-menu-item>
-              <a-menu-item key="condense" @click="handleAiAction('condense')">
-                <template #icon><CompressOutlined /></template>
-                AI 缩写（选中文字）
-              </a-menu-item>
-              <a-menu-item key="translate" @click="handleAiAction('translate')">
-                <template #icon><TranslationOutlined /></template>
-                AI 翻译（选中文字）
-              </a-menu-item>
-              <a-menu-divider />
-              <a-menu-item key="autoFormat" @click="handleAutoFormat">
-                <template #icon><BgColorsOutlined /></template>
-                AI 自动排版
-              </a-menu-item>
-            </a-menu>
-          </template>
-        </a-dropdown>
-      </div>
-    </header>
+    <!-- 顶栏：返回 + 章节信息 + 保存 + 导出/打印 + 视图切换 + 目录 + 面板开关 + AI 辅助 -->
+    <!-- N7：抽为结构组件 WordEditorHeader（配套 CSS 一并下沉，避免父级 scoped 样式断链） -->
+    <WordEditorHeader
+      v-model:preview-mode="previewMode"
+      :chapter-no="chapterNo"
+      :chapter-title="chapterTitle"
+      :task-status-text="taskStatusText"
+      :task-status-color="taskStatusColor"
+      :is-read-only="isReadOnly"
+      :can-accept="canAccept"
+      :accepting="accepting"
+      :can-submit="canSubmit"
+      :submitting-task="submittingTask"
+      :save-hint="saveHint"
+      :save-status="saveStatus"
+      :properties-visible="propertiesVisible"
+      :comments-visible="commentsVisible"
+      :version-history-visible="versionHistoryVisible"
+      :ai-loading="aiLoading"
+      @back="handleBack"
+      @accept="handleAccept"
+      @submit="handleSubmit"
+      @save="saveNow"
+      @export-word="handleExportWord"
+      @print="handlePrint"
+      @insert-toc="handleInsertToc"
+      @update-toc="handleUpdateToc"
+      @toggle-properties="toggleProperties"
+      @toggle-comments="toggleComments"
+      @toggle-version-history="toggleVersionHistory"
+      @ai-action="handleAiAction"
+      @auto-format="handleAutoFormat"
+    />
 
-    <!-- Ribbon 工具栏（只读模式下隐藏） -->
+    <!-- Ribbon 工具栏（只读 / 分页预览模式下隐藏） -->
     <WordEditorToolbar
-      v-if="!isReadOnly"
+      v-if="!isReadOnly && !previewMode"
       class="word-page__toolbar"
       :editor="editorInstance"
       :project-id="projectId"
@@ -273,21 +112,23 @@
           show-icon
           class="word-page__permission-hint"
         />
-        <!-- 水平标尺（视图选项卡控制显隐） -->
+        <!-- 水平标尺（视图选项卡控制显隐；分页预览隐藏） -->
         <WordEditorRuler
-          v-if="rulerVisible"
+          v-if="rulerVisible && !previewMode"
           class="word-page__ruler"
           :editor="editorInstance"
           @indent-change="handleRulerIndentChange"
         />
+        <!-- 连页编辑：A4 连续长纸（分页预览时隐藏但保持实例，未保存内容不丢失） -->
         <a-spin
+          v-show="!previewMode"
           :spinning="loading"
           wrapper-class-name="word-page__editor-spin"
         >
           <WordEditor
             ref="editorRef"
             class="word-page__editor"
-            :content="initialHtml"
+            :content="initialContent"
             :readonly="loading || isReadOnly"
             :project-id="projectId"
             :style="{ '--paper-zoom': zoom / 100 }"
@@ -295,9 +136,18 @@
             @update:content="handleContentUpdate"
           />
         </a-spin>
-
-        <!-- AI 辅助编写（只读模式下隐藏；整章追加/覆盖仅 assignee，选区 AI 见顶部/右键菜单） -->
-        <div v-if="!isReadOnly" class="word-page__assist">
+        <!-- 分页预览：按 A4 逐页切分展示（Word 观感：页间留白 + 页码） -->
+        <PaginatedPreview
+          v-show="previewMode"
+          class="word-page__preview"
+          :html="previewHtml"
+        />
+        <!-- AI 辅助编写（只读模式隐藏；分页预览时隐藏输入区） -->
+        <div
+          v-if="!isReadOnly"
+          v-show="!previewMode"
+          class="word-page__assist"
+        >
           <a-input
             v-model:value="assistPrompt"
             placeholder="输入 AI 辅助指令（章节负责人可用），如：补充技术架构说明、优化语言表达..."
@@ -368,11 +218,13 @@
         @close="propertiesVisible = false"
       />
 
-      <!-- 右侧：批注面板 -->
+      <!-- 右侧：批注面板（2026-09-03 后端同源：与审阅页共享 chapter_annotations） -->
       <WordEditorComments
         v-if="commentsVisible"
         class="word-page__comments"
         :editor="editorInstance"
+        :project-id="projectId"
+        :chapter-no="chapterNo"
         @close="commentsVisible = false"
       />
 
@@ -386,8 +238,9 @@
       />
     </div>
 
-    <!-- 底部状态栏 -->
+    <!-- 底部状态栏（分页预览模式隐藏） -->
     <WordEditorStatusBar
+      v-show="!previewMode"
       :editor="editorInstance"
       :save-status="saveStatus"
       :zoom="zoom"
@@ -429,22 +282,6 @@
       />
     </a-modal>
 
-    <!-- 打回原因弹窗 -->
-    <a-modal
-      v-model:open="showRejectModal"
-      title="打回原因"
-      ok-text="确认打回"
-      cancel-text="取消"
-      :confirm-loading="rejectingTask"
-      @ok="handleReject"
-    >
-      <a-textarea
-        v-model:value="rejectComment"
-        :rows="4"
-        placeholder="请输入打回原因..."
-      />
-    </a-modal>
-
     <!-- 隐藏文件选择 input（右键菜单"插入图片"触发） -->
     <input
       ref="fileInputRef"
@@ -470,7 +307,7 @@
  * - 自动保存：内容变化 2s 防抖；失败自动重试 2 次；Ctrl+S 手动保存；
  *   beforeunload 拦截未保存离开
  *
- * 快捷键系统（useHotkeys）：
+ * 快捷键系统（useEditorHotkeys）：
  * - Ctrl+S 保存、Ctrl+F/H 查找替换、Ctrl+L/E/R/J 对齐、Ctrl+1/2/3 行高
  * - Ctrl+Shift+>/< 增减字号、Ctrl+Shift+C/V 格式刷、Alt+Shift+←/→ 标题级别
  * - Ctrl+Enter 分页符、Escape 关闭面板/取消格式刷
@@ -485,9 +322,11 @@
 import { ref, computed, unref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { ArrowLeftOutlined, LoadingOutlined, DownloadOutlined, PrinterOutlined, UnorderedListOutlined, SettingOutlined, CommentOutlined, HistoryOutlined, RobotOutlined, EditOutlined, ExpandOutlined, CompressOutlined, TranslationOutlined, BgColorsOutlined, CloseOutlined, MenuUnfoldOutlined } from '@ant-design/icons-vue'
+import { LoadingOutlined, CloseOutlined, MenuUnfoldOutlined } from '@ant-design/icons-vue'
 import type { Editor } from '@tiptap/core'
 import WordEditor from './WordEditor.vue'
+import PaginatedPreview from '@/components/PaginatedPreview.vue'
+import WordEditorHeader from './WordEditorHeader.vue'
 import WordEditorToolbar from './WordEditorToolbar.vue'
 import WordEditorStatusBar from './WordEditorStatusBar.vue'
 import WordEditorOutline from './WordEditorOutline.vue'
@@ -503,9 +342,9 @@ import WordEditorVersionHistory from './WordEditorVersionHistory.vue'
 import { exportToWord, printDocument } from './utils/word-export'
 import { insertToc, updateToc } from './utils/toc-generator'
 import type { AssignmentItem } from '@/types'
-import { usePermission } from '@/composables/usePermission'
+import { currentUserId } from '@/stores/currentUser'
 import { useTaskWorkflow } from '@/composables/useTaskWorkflow'
-import { useHotkeys } from '@/composables/useHotkeys'
+import { useEditorHotkeys } from '@/composables/useEditorHotkeys'
 import { useImageUpload } from '@/composables/useImageUpload'
 import { useFormatBrush } from '@/composables/useFormatBrush'
 import { useAiAssistant } from '@/composables/useAiAssistant'
@@ -525,6 +364,17 @@ const chapterNo = String(route.params.chapterNo ?? '')
 const editorRef = ref<InstanceType<typeof WordEditor> | null>(null)
 /** 编辑器实例（透传给工具栏/状态栏等子组件，auto-unwrap 为 Editor | undefined） */
 const editorInstance = computed(() => unref(editorRef.value?.editor))
+
+/* ---------------- 视图模式：连页编辑 / 分页预览 ---------------- */
+/** true = 分页预览（只读，按 A4 逐页切分展示当前内容）；false = 连页编辑 */
+const previewMode = ref(false)
+/** 进入分页预览时从编辑器快照的 HTML */
+const previewHtml = ref('')
+watch(previewMode, (on) => {
+  if (on) {
+    previewHtml.value = editorInstance.value?.getHTML() ?? initialHtml.value ?? ''
+  }
+})
 
 /**
  * 编辑器实例的 ShallowRef 副本，供 useFormatBrush 等 composable 使用。
@@ -546,12 +396,12 @@ const currentTask = ref<AssignmentItem | null>(null)
 const isMember = ref(false)
 
 // 本地计算 canEdit（用于传递给 useChapterPersistence）
-const { isProjectOwner } = usePermission()
+// 2026-09-03 产品确认最终口径：仅「本人分工」且未锁定的章节可编辑
+// （assignee = 当前用户；已提审 submitted / 已通过 approved 内容锁定，不可编辑）
 const canEdit = computed(() => {
   if (!currentTask.value) return false
-  if (isProjectOwner(projectOwnerId.value)) return false
-  if (!isMember.value) return false
-  return true
+  if (currentTask.value.assignee_id !== currentUserId.value) return false
+  return !['submitted', 'approved'].includes(currentTask.value.status)
 })
 
 // 立即初始化 taskWorkflow（传入 loadChapter，虽然 loadChapter 还未定义，但 useTaskWorkflow 不会立即调用它）
@@ -573,6 +423,7 @@ const setLoadChapter = (fn: () => Promise<void>) => {
 /* ---------------- 加载 / 保存（useChapterPersistence） ---------------- */
 const {
   loading,
+  initialContent,
   initialHtml,
   chapterTitle,
   saveStatus,
@@ -586,6 +437,7 @@ const {
   projectId,
   chapterNo,
   getEditorHtml: () => editorRef.value?.getHTML() ?? '',
+  getEditorJson: () => editorRef.value?.getJSON() ?? {},
   isReadOnly: () => !canEdit.value || routeReadonly.value,
   onLoaded: ({ projectOwnerId: ownerId, currentTask: task, isProjectMember }) => {
     projectOwnerId.value = ownerId
@@ -618,27 +470,13 @@ const taskStatusText = computed(() => taskState.value?.taskStatusText.value ?? '
 const taskStatusColor = computed(() => taskState.value?.taskStatusColor.value ?? 'default')
 const canAccept = computed(() => taskState.value?.canAccept.value ?? false)
 const canSubmit = computed(() => taskState.value?.canSubmit.value ?? false)
-const canApprove = computed(() => taskState.value?.canApprove.value ?? false)
-const canReject = computed(() => taskState.value?.canReject.value ?? false)
 const accepting = computed(() => taskState.value?.accepting.value ?? false)
 const submittingTask = computed(() => taskState.value?.submittingTask.value ?? false)
-const approving = computed(() => taskState.value?.approving.value ?? false)
-const rejectingTask = computed(() => taskState.value?.rejectingTask.value ?? false)
-const showRejectModal = computed({
-  get: () => taskState.value?.showRejectModal.value ?? false,
-  set: (val) => { if (taskState.value) taskState.value.showRejectModal.value = val }
-})
-const rejectComment = computed({
-  get: () => taskState.value?.rejectComment.value ?? '',
-  set: (val) => { if (taskState.value) taskState.value.rejectComment.value = val }
-})
 const handleAccept = async () => taskState.value?.handleAccept()
 const handleSubmit = async () => {
   await saveNow()
   await taskState.value?.handleSubmit()
 }
-const handleApprove = async () => taskState.value?.handleApprove()
-const handleReject = async () => taskState.value?.handleReject()
 
 /* ---------------- AI 辅助（useEditorAiAssist） ---------------- */
 const {
@@ -800,146 +638,15 @@ const { increaseFontSize, decreaseFontSize } = useEditorTextUtils(
   () => editorInstance.value,
 )
 
-/* ---------------- 快捷键系统 ---------------- */
-useHotkeys([
-  // 保存（已有）
-  { combo: 'ctrl+s', allowInInput: true, handler: saveNow },
-  // 查找 / 替换
-  {
-    combo: 'ctrl+f',
-    allowInInput: true,
-    handler: () => {
-      searchMode.value = 'find'
-      searchVisible.value = true
-    },
-  },
-  {
-    combo: 'ctrl+h',
-    allowInInput: true,
-    handler: () => {
-      searchMode.value = 'replace'
-      searchVisible.value = true
-    },
-  },
-  // 对齐
-  {
-    combo: 'ctrl+l',
-    allowInInput: true,
-    handler: () => editorInstance.value?.chain().focus().setTextAlign('left').run(),
-  },
-  {
-    combo: 'ctrl+e',
-    allowInInput: true,
-    handler: () => editorInstance.value?.chain().focus().setTextAlign('center').run(),
-  },
-  {
-    combo: 'ctrl+r',
-    allowInInput: true,
-    handler: () => editorInstance.value?.chain().focus().setTextAlign('right').run(),
-  },
-  {
-    combo: 'ctrl+j',
-    allowInInput: true,
-    handler: () => editorInstance.value?.chain().focus().setTextAlign('justify').run(),
-  },
-  // 行高
-  {
-    combo: 'ctrl+1',
-    allowInInput: true,
-    handler: () => editorInstance.value?.chain().focus().setLineHeight('1').run(),
-  },
-  {
-    combo: 'ctrl+2',
-    allowInInput: true,
-    handler: () => editorInstance.value?.chain().focus().setLineHeight('1.5').run(),
-  },
-  {
-    combo: 'ctrl+3',
-    allowInInput: true,
-    handler: () => editorInstance.value?.chain().focus().setLineHeight('2').run(),
-  },
-  // 字号增减（Shift+. → '>'，Shift+, → '<'）
-  {
-    combo: 'ctrl+shift+>',
-    allowInInput: true,
-    handler: increaseFontSize,
-  },
-  {
-    combo: 'ctrl+shift+<',
-    allowInInput: true,
-    handler: decreaseFontSize,
-  },
-  // 格式刷
-  {
-    combo: 'ctrl+shift+c',
-    allowInInput: true,
-    handler: () => formatBrush.copyFormat('continuous'),
-  },
-  {
-    combo: 'ctrl+shift+v',
-    allowInInput: true,
-    handler: () => formatBrush.applyFormat(),
-  },
-  // 标题级别：Alt+Shift+← 降低（增大 level 数值），Alt+Shift+→ 提升
-  {
-    combo: 'alt+shift+arrowleft',
-    allowInInput: true,
-    handler: () => {
-      const ed = editorInstance.value
-      if (!ed) return
-      if (ed.isActive('heading', { level: 4 })) {
-        ed.chain().focus().setParagraph().run()
-      } else if (ed.isActive('heading')) {
-        const lvl = ed.getAttributes('heading').level as number
-        ed.chain().focus().setHeading({ level: (lvl + 1) as 1 | 2 | 3 | 4 }).run()
-      } else {
-        ed.chain().focus().setHeading({ level: 1 }).run()
-      }
-    },
-  },
-  {
-    combo: 'alt+shift+arrowright',
-    allowInInput: true,
-    handler: () => {
-      const ed = editorInstance.value
-      if (!ed) return
-      if (ed.isActive('heading', { level: 1 })) {
-        ed.chain().focus().setParagraph().run()
-      } else if (ed.isActive('heading')) {
-        const lvl = ed.getAttributes('heading').level as number
-        if (lvl > 1) {
-          ed.chain().focus().setHeading({ level: (lvl - 1) as 1 | 2 | 3 | 4 }).run()
-        }
-      } else {
-        ed.chain().focus().setHeading({ level: 4 }).run()
-      }
-    },
-  },
-  // 分页符（Tiptap page-break 扩展已处理 Mod-Enter，此处仅在编辑器外触发）
-  {
-    combo: 'ctrl+enter',
-    allowInInput: true,
-    handler: (e: KeyboardEvent) => {
-      // 当事件源自 contenteditable 编辑区时，Tiptap 已处理 Mod-Enter，
-      // 跳过以避免重复插入分页符
-      const target = e.target
-      if (target instanceof HTMLElement && target.isContentEditable) return
-      editorInstance.value?.chain().focus().setPageBreak().run()
-    },
-  },
-  // Escape：依次关闭搜索面板 / 取消格式刷
-  {
-    combo: 'escape',
-    allowInInput: true,
-    handler: () => {
-      if (searchVisible.value) {
-        searchVisible.value = false
-      } else if (formatBrush.brushActive.value) {
-        formatBrush.cancelBrush()
-      }
-    },
-  },
-])
+/* ---------------- 快捷键系统（useEditorHotkeys） ---------------- */
+useEditorHotkeys({
+  getEditor: () => editorInstance.value,
+  saveNow,
+  getSearch: () => ({ mode: searchMode, visible: searchVisible }),
+  increaseFontSize,
+  decreaseFontSize,
+  getFormatBrush: () => formatBrush,
+})
 
 /* ---------------- 右键菜单事件处理 ---------------- */
 
@@ -1056,46 +763,6 @@ onBeforeUnmount(() => {
   background: var(--bg-app);
 }
 
-/* ========== 顶栏 ========== */
-.word-page__header {
-  flex: 0 0 auto;
-  height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--space-4);
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border-color);
-}
-
-.word-page__header-left,
-.word-page__header-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.word-page__chapter-title {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-/* 保存状态提示 */
-.word-page__save-hint {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-}
-.word-page__save-hint--saving {
-  color: var(--color-primary);
-}
-.word-page__save-hint--saved {
-  color: var(--color-success);
-}
-.word-page__save-hint--error {
-  color: var(--color-error);
-}
-
 /* ========== 工具栏 ========== */
 .word-page__toolbar {
   flex: 0 0 auto;
@@ -1205,6 +872,12 @@ onBeforeUnmount(() => {
 }
 
 .word-page__editor {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 分页预览：撑满编辑区（内含自身滚动容器） */
+.word-page__preview {
   flex: 1;
   min-height: 0;
 }

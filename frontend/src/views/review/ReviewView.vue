@@ -22,7 +22,7 @@
         </template>
       </ErrorState>
       <EmptyState
-        v-else-if="chapterKeys.length === 0"
+        v-else-if="!hasDivision && chapterKeys.length === 0"
         description="暂无章节内容，请先在「方案大纲生成」页生成技术方案"
       />
 
@@ -42,6 +42,7 @@
             <a-button
               type="primary"
               :loading="exportStatus === 'exporting'"
+              :disabled="hasDivision && !exportAvailable"
               @click="handleExport"
             >
               <template #icon>
@@ -64,107 +65,36 @@
               :review-feedback="reviewFeedback"
               :annotation-counts="annotationCounts"
               :chapter-statuses="chapterStatuses"
+              :mode="hasDivision ? 'division' : 'chapter'"
+              :unit-keys="hasDivision ? chapterKeys : undefined"
+              :raw-statuses="rawStatusMap"
               @select="selectChapter"
               @expand="expandedKeys = $event"
             />
           </div>
 
           <!-- 中间：富文本预览区 -->
-          <div class="review-view__content">
-            <!-- 章节头部 -->
-            <div class="review-view__content-header">
-              <div class="review-view__content-title">
-                <template v-if="viewMode === 'single'">
-                  <span class="review-view__chapter-no">{{ activeChapter }}</span>
-                  <span class="review-view__chapter-title">{{ activeChapterTitle }}</span>
-                  <a-tag color="geekblue">
-                    提交人：{{ submitterOf(activeChapter) }}
-                  </a-tag>
-                  <a-tag :color="currentStatusColor">
-                    {{ currentStatusText }}
-                  </a-tag>
-                </template>
-                <template v-else>
-                  <span class="review-view__chapter-title">全文预览（{{ chapterKeys.length }} 章）</span>
-                </template>
-              </div>
-              <a-radio-group
-                v-model:value="viewMode"
-                size="small"
-                button-style="solid"
-              >
-                <a-radio-button value="single">单章</a-radio-button>
-                <a-radio-button value="full">全文</a-radio-button>
-              </a-radio-group>
-            </div>
-
-            <!-- 废标风险提示（单章模式） -->
-            <a-alert
-              v-if="viewMode === 'single' && activeChapterRisks.length > 0"
-              type="error"
-              show-icon
-              class="review-view__risk-alert"
-              message="废标风险提示"
-            >
-              <template #description>
-                <div
-                  v-for="(risk, index) in activeChapterRisks"
-                  :key="index"
-                  class="review-view__risk-item"
-                >
-                  <strong>{{ risk.clause_no }} {{ risk.title }}</strong>
-                  <span> — {{ risk.recommendation }}</span>
-                </div>
-              </template>
-            </a-alert>
-
-            <!-- 富文本预览（单章模式） -->
-            <a-spin v-if="viewMode === 'single'" :spinning="contentLoading">
-              <div class="review-view__paper-wrapper">
-                <WordEditor
-                  v-if="currentHtml"
-                  ref="wordEditorRef"
-                  :content="currentHtml"
-                  :readonly="true"
-                  :annotations="annotationMarks"
-                  :active-annotation-id="activeAnnotationId"
-                  class="review-view__editor"
-                  @selection-change="onSelectionChange"
-                />
-                <div v-else class="review-view__empty-content">
-                  暂无内容
-                </div>
-              </div>
-            </a-spin>
-
-            <!-- 全文预览模式 -->
-            <div v-else class="review-view__full-content" ref="fullContentRef">
-              <div
-                v-for="chapterNo in chapterKeys"
-                :key="chapterNo"
-                :id="`chapter-${chapterNo}`"
-                class="review-view__full-chapter"
-              >
-                <div class="review-view__full-chapter-header">
-                  <span class="review-view__full-chapter-no">{{ chapterNo }}</span>
-                  <span class="review-view__full-chapter-title">
-                    {{ outline.find((c) => c.chapter_no === chapterNo)?.title || '' }}
-                  </span>
-                </div>
-                <div class="review-view__paper-wrapper">
-                  <WordEditor
-                    v-if="chapterHtmlMap[chapterNo]"
-                    :content="chapterHtmlMap[chapterNo]"
-                    :readonly="true"
-                    class="review-view__editor"
-                  />
-                  <div v-else class="review-view__empty-content">
-                    暂无内容
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <ReviewContentArea
+            ref="contentAreaRef"
+            :view-mode="viewMode"
+            :active-chapter="activeChapter"
+            :active-chapter-title="activeChapterTitle"
+            :submitter="submitterOf(activeChapter)"
+            :current-status-color="currentStatusColor"
+            :current-status-text="currentStatusText"
+            :has-division="hasDivision"
+            :full-keys="fullKeys"
+            :active-chapter-risks="activeChapterRisks"
+            :content-loading="contentLoading"
+            :current-html="currentHtml"
+            :annotation-marks="annotationMarks"
+            :active-annotation-id="activeAnnotationId"
+            :outline="outline"
+            :chapter-html-map="chapterHtmlMap"
+            @view-mode-change="onViewModeChange"
+            @selection-change="onSelectionChange"
+            @full-content-mounted="(el) => fullContentRef = el"
+          />
 
           <!-- 右侧：审阅工作台 -->
           <div class="review-view__aside">
@@ -185,6 +115,9 @@
                   :submitter="submitterOf(activeChapter)"
                   :approving="approving"
                   :polling="polling"
+                  :raw-status="currentRawStatus || undefined"
+                  :enable-approve="hasDivision ? divisionReviewable : true"
+                  :enable-reject="hasDivision ? divisionReviewable : true"
                   @approve="handleApprove"
                   @reject="handleReject"
                 />
@@ -202,116 +135,22 @@
                     />
                   </span>
                 </template>
-                <div class="review-view__annotation-panel">
-                  <!-- 选区提示 -->
-                  <div
-                    v-if="currentSelectionText"
-                    class="review-view__selection-hint"
-                  >
-                    <span class="review-view__selection-label">已选中文字：</span>
-                    <span class="review-view__selection-text">"{{ currentSelectionText }}"</span>
-                  </div>
-                  <div class="review-view__annotation-actions">
-                    <a-input
-                      v-model:value="newAnnotation"
-                      :placeholder="currentSelectionText ? '对选中文字添加批注...' : '添加批注（可先在正文中选中文字）...'"
-                      :disabled="addingAnnotation"
-                      @press-enter="addAnnotation(activeChapter)"
-                    >
-                      <template #addonAfter>
-                        <a-button
-                          type="primary"
-                          :loading="addingAnnotation"
-                          @click="addAnnotation(activeChapter)"
-                        >
-                          添加
-                        </a-button>
-                      </template>
-                    </a-input>
-                  </div>
-                  <!-- 筛选 -->
-                  <div class="review-view__annotation-filter">
-                    <a-radio-group
-                      v-model:value="annotationFilter"
-                      size="small"
-                      button-style="solid"
-                    >
-                      <a-radio-button value="open">
-                        未解决 ({{ openAnnotationCount }})
-                      </a-radio-button>
-                      <a-radio-button value="resolved">
-                        已解决 ({{ resolvedAnnotationCount }})
-                      </a-radio-button>
-                      <a-radio-button value="all">全部</a-radio-button>
-                    </a-radio-group>
-                  </div>
-                  <a-spin :spinning="annotationsLoading">
-                    <a-empty
-                      v-if="filteredAnnotations.length === 0"
-                      description="暂无批注"
-                      :image="Empty.PRESENTED_IMAGE_SIMPLE"
-                    />
-                    <div
-                      v-else
-                      class="review-view__annotation-list"
-                    >
-                      <div
-                        v-for="item in filteredAnnotations"
-                        :key="item.id"
-                        class="review-view__annotation-item"
-                        :class="{
-                          'review-view__annotation-item--active': activeAnnotationId === item.id,
-                          'review-view__annotation-item--resolved': item.status === 'resolved',
-                        }"
-                        @click="locateAnnotation(item)"
-                      >
-                        <div class="review-view__annotation-header">
-                          <span class="review-view__annotation-author">
-                            {{ item.created_by_name || '未知用户' }}
-                          </span>
-                          <a-tag
-                            :color="item.status === 'resolved' ? 'green' : 'orange'"
-                            class="review-view__annotation-status"
-                          >
-                            {{ item.status === 'resolved' ? '已解决' : '未解决' }}
-                          </a-tag>
-                        </div>
-                        <div
-                          v-if="item.selection?.text"
-                          class="review-view__annotation-quote"
-                        >
-                          "{{ item.selection.text.length > 50 ? item.selection.text.slice(0, 50) + '...' : item.selection.text }}"
-                        </div>
-                        <div class="review-view__annotation-content">
-                          {{ item.content }}
-                        </div>
-                        <div class="review-view__annotation-footer">
-                          <span class="review-view__annotation-time">
-                            {{ formatTime(item.created_at) }}
-                          </span>
-                          <span class="review-view__annotation-btns">
-                            <a-button
-                              type="link"
-                              size="small"
-                              @click.stop="toggleAnnotationStatus(activeChapter, item.id)"
-                            >
-                              {{ item.status === 'resolved' ? '重新打开' : '标记解决' }}
-                            </a-button>
-                            <a-button
-                              v-if="item.created_by === currentUserId"
-                              type="link"
-                              size="small"
-                              danger
-                              @click.stop="deleteAnnotation(activeChapter, item.id)"
-                            >
-                              删除
-                            </a-button>
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </a-spin>
-                </div>
+                <ReviewAnnotationPanel
+                  v-model:new-annotation="newAnnotation"
+                  v-model:annotation-filter="annotationFilter"
+                  :current-selection-text="currentSelectionText"
+                  :adding-annotation="addingAnnotation"
+                  :annotations-loading="annotationsLoading"
+                  :filtered-annotations="filteredAnnotations"
+                  :open-annotation-count="openAnnotationCount"
+                  :resolved-annotation-count="resolvedAnnotationCount"
+                  :active-annotation-id="activeAnnotationId"
+                  :active-chapter="activeChapter"
+                  @add="addAnnotation"
+                  @locate="locateAnnotation"
+                  @toggle="toggleAnnotationStatus"
+                  @delete="deleteAnnotation"
+                />
               </a-tab-pane>
 
               <!-- Tab 3：版本 -->
@@ -361,6 +200,7 @@
     <ReviewExportModal
       v-model:visible="exportModalVisible"
       :project-id="projectId"
+      :current-chapter="activeChapter"
       @exported="handleExported"
     />
   </div>
@@ -368,8 +208,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
-import { message, Empty } from 'ant-design-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { message } from 'ant-design-vue'
 import {
   DownloadOutlined,
   AuditOutlined,
@@ -377,25 +217,28 @@ import {
   HistoryOutlined,
 } from '@ant-design/icons-vue'
 import type { AnnotationItem } from '@/types'
-import { currentUserId } from '@/stores/currentUser'
 import PageContainer from '@/components/PageContainer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ErrorState from '@/components/ErrorState.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
-import WordEditor from '@/components/editor/WordEditor.vue'
 import ReviewChapterList from './components/ReviewChapterList.vue'
 import ReviewProgressBar from './components/ReviewProgressBar.vue'
 import ReviewActionPanel from './components/ReviewActionPanel.vue'
 import ReviewVersionSection from './components/ReviewVersionSection.vue'
 import ReviewVersionCompare from './components/ReviewVersionCompare.vue'
 import ReviewExportModal from './components/ReviewExportModal.vue'
+import ReviewAnnotationPanel from './components/ReviewAnnotationPanel.vue'
+import ReviewContentArea from './components/ReviewContentArea.vue'
 import AnnotationEditModal from './components/AnnotationEditModal.vue'
 import { useAnnotations } from './composables/useAnnotations'
+import { useAnnotationView } from './composables/useAnnotationView'
 import { useReviewState } from './composables/useReviewState'
 import { useReviewNavigation } from './composables/useReviewNavigation'
 import { useReviewActions } from './composables/useReviewActions'
+import { useReviewStatusDisplay } from './composables/useReviewStatusDisplay'
 
 const route = useRoute()
+const router = useRouter()
 const projectId = route.params.projectId as string
 
 /* ==================== 状态层（按依赖顺序初始化） ==================== */
@@ -415,9 +258,15 @@ const {
   applyStatus,
   pollUntil,
   stopPolling,
+  fetchAssignments,
   fetchSubmitters,
   fetchDisqualificationRisks,
   chapterKeys,
+  formalChapterKeys,
+  hasDivision,
+  rawStatusOf,
+  assignmentIdOf,
+  titleOf,
   chapterStatuses,
   approvedCount,
   rejectedCount,
@@ -462,6 +311,8 @@ const {
   getOutline: () => outline.value,
   getRisks: () => disqualificationRisks.value,
   loadAnnotations,
+  getTitle: titleOf,
+  getFullKeys: () => fullKeys.value,
 })
 
 // 4. 操作（依赖 state + navigation）
@@ -481,13 +332,15 @@ const {
   setExportStatus: (v) => { exportStatus.value = v },
   setExportStorageKey: (v) => { exportStorageKey.value = v },
   pollUntil,
+  getAssignmentId: () => assignmentIdOf(activeChapter.value),
+  refreshDivisionData: refreshAll,
 })
 
 /* ==================== UI 状态 ==================== */
 const rightTab = ref<'action' | 'annotation' | 'version'>('action')
 const annotationFilter = ref<'open' | 'resolved' | 'all'>('open')
 const activeAnnotationId = ref<string | null>(null)
-const wordEditorRef = ref<InstanceType<typeof WordEditor> | null>(null)
+const contentAreaRef = ref<InstanceType<typeof ReviewContentArea> | null>(null)
 const versionSubTab = ref<'list' | 'compare'>('list')
 const versionCompareRef = ref<InstanceType<typeof ReviewVersionCompare> | null>(null)
 const versionSectionRef = ref<InstanceType<typeof ReviewVersionSection> | null>(null)
@@ -496,73 +349,102 @@ const annotationEditRef = ref<InstanceType<typeof AnnotationEditModal> | null>(n
 /* ==================== 计算属性 ==================== */
 const versionList = computed(() => versionSectionRef.value?.versions || [])
 
-const currentChapterStatus = computed(() => chapterStatuses.value[activeChapter.value] || 'pending')
-const currentStatusText = computed(() => {
-  const map: Record<string, string> = { pending: '未审阅', approved: '已通过', rejected: '需修改' }
-  return map[currentChapterStatus.value] || '未审阅'
-})
-const currentStatusColor = computed(() => {
-  const map: Record<string, string> = { pending: 'default', approved: 'green', rejected: 'orange' }
-  return map[currentChapterStatus.value] || 'default'
-})
+const { currentChapterStatus, currentRawStatus, currentStatusText, currentStatusColor } =
+  useReviewStatusDisplay({ hasDivision, chapterStatuses, rawStatusOf, activeChapter })
 
-const annotationCounts = computed<Record<string, number>>(() => {
-  const counts: Record<string, number> = {}
-  chapterKeys.value.forEach((no) => { counts[no] = annotationCountOf(no) })
-  return counts
-})
-
-const annotatedCount = computed(
-  () => chapterKeys.value.filter((no) => annotationCountOf(no) > 0).length,
+/** 分工模式下当前章节是否可执行审阅（仅 submitted 待审可操作） */
+const divisionReviewable = computed(
+  () => hasDivision.value && currentRawStatus.value === 'submitted',
 )
 
-const currentAnnotations = computed(() => annotationListOf(activeChapter.value))
-const openAnnotationCount = computed(
-  () => currentAnnotations.value.filter((a) => a.status !== 'resolved').length,
-)
-const resolvedAnnotationCount = computed(
-  () => currentAnnotations.value.filter((a) => a.status === 'resolved').length,
-)
+/** 全文预览章节集合：分工模式 = 已回写的正式方案（章级）；AI 模式 = state.chapters */
+const fullKeys = computed(() => (hasDivision.value ? formalChapterKeys.value : chapterKeys.value))
+const fullAvailable = computed(() => fullKeys.value.length > 0)
+/** 正式方案是否可导出（分工模式需至少一章已通过回写） */
+const exportAvailable = computed(() => formalChapterKeys.value.length > 0)
 
-const filteredAnnotations = computed(() => {
-  if (annotationFilter.value === 'all') return currentAnnotations.value
-  return currentAnnotations.value.filter((a) =>
-    annotationFilter.value === 'open' ? a.status !== 'resolved' : a.status === 'resolved',
+/** 分工原始状态表（树状态点配色用） */
+const rawStatusMap = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {}
+  for (const no of chapterKeys.value) map[no] = rawStatusOf(no) || 'pending'
+  return map
+})
+
+/* ==================== 数据刷新（分工审阅动作/回滚后调用） ==================== */
+function applyWithNav(data: Parameters<typeof applyStatus>[0]) {
+  applyStatus(
+    data,
+    () => activeChapter.value,
+    (v) => { activeChapter.value = v },
+    () => expandedKeys.value,
+    (v) => { expandedKeys.value = v },
+    () => route.query.chapter as string,
   )
+}
+
+async function refreshAll() {
+  const data = await fetchStatus()
+  if (data) applyWithNav(data)
+  await fetchAssignments()
+  // 分工模式：fetchAssignments 就绪后审阅单元切换为分工章节，补齐 active 选中
+  if (!activeChapter.value && chapterKeys.value.length > 0) {
+    const q = route.query.chapter as string | undefined
+    activeChapter.value = chapterKeys.value.includes(q || '') ? (q as string) : chapterKeys.value[0]
+    router.replace({ query: { ...route.query, chapter: activeChapter.value } })
+  }
+  clearHtmlCache()
+  if (activeChapter.value) {
+    await loadChapterHtml(activeChapter.value)
+    loadAnnotations(activeChapter.value)
+  }
+}
+
+/* ==================== 批注视图模型（useAnnotationView） ==================== */
+const {
+  annotationCounts,
+  annotatedCount,
+  openAnnotationCount,
+  resolvedAnnotationCount,
+  filteredAnnotations,
+  annotationMarks,
+  currentSelectionText,
+} = useAnnotationView({
+  chapterKeys,
+  getActiveChapter: () => activeChapter.value,
+  getAnnotationCount: annotationCountOf,
+  getAnnotations: annotationListOf,
+  getSelectionText: () => currentSelection.value?.text || '',
+  filter: annotationFilter,
 })
-
-const annotationMarks = computed(() =>
-  currentAnnotations.value
-    .filter((a) => a.selection && a.selection.from != null && a.selection.to != null)
-    .map((a) => ({
-      id: a.id,
-      from: a.selection!.from,
-      to: a.selection!.to,
-      status: a.status,
-    })),
-)
-
-const currentSelectionText = computed(() => currentSelection.value?.text || '')
 
 /* ==================== 方法 ==================== */
 const onSelectionChange = (sel: { from: number; to: number; text: string } | null) => {
   setSelection(sel)
 }
 
+/** 预览模式切换守卫：全文不可用（无已通过章节）时阻止并提示 */
+const onViewModeChange = (e: { target: { value?: string } }) => {
+  const v = e.target.value
+  if (v === 'full' && !fullAvailable.value) {
+    message.info(
+      hasDivision.value
+        ? '暂无已通过并回写的章节，章节审核通过后可切换全文预览'
+        : '暂无章节内容，无法全文预览',
+    )
+    viewMode.value = 'single'
+    return
+  }
+  viewMode.value = v as 'single' | 'full'
+}
+
 const locateAnnotation = (item: AnnotationItem) => {
   activeAnnotationId.value = item.id
-  if (item.selection && wordEditorRef.value) {
-    wordEditorRef.value.scrollToPosition(item.selection.from)
+  if (item.selection && contentAreaRef.value) {
+    contentAreaRef.value.scrollToPosition(item.selection.from)
   }
   setTimeout(() => {
     if (activeAnnotationId.value === item.id) activeAnnotationId.value = null
   }, 3000)
-}
-
-const formatTime = (time: string): string => {
-  const d = new Date(time)
-  if (Number.isNaN(d.getTime())) return ''
-  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 const handleRolledBack = async (restored: number) => {
@@ -588,17 +470,13 @@ onMounted(async () => {
   loadError.value = ''
   try {
     const data = await fetchStatus()
-    if (data) {
-      applyStatus(
-        data,
-        () => activeChapter.value,
-        (v) => { activeChapter.value = v },
-        () => expandedKeys.value,
-        (v) => { expandedKeys.value = v },
-        () => route.query.chapter as string,
-      )
-    }
+    if (data) applyWithNav(data)
+    // 分工数据就绪（分工模式审阅单元为子节）
     await fetchSubmitters()
+    if (data && !activeChapter.value && chapterKeys.value.length > 0) {
+      const q = route.query.chapter as string | undefined
+      activeChapter.value = chapterKeys.value.includes(q || '') ? (q as string) : chapterKeys.value[0]
+    }
     await versionSectionRef.value?.load()
     await fetchDisqualificationRisks()
     if (activeChapter.value) {
@@ -615,310 +493,5 @@ onUnmounted(() => {
 })
 </script>
 
-<style scoped>
-.review-view__topbar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.review-view__topbar :deep(.review-progress) {
-  flex: 1;
-  margin-bottom: 0;
-}
-
-.review-view__topbar-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-/* 三栏布局 */
-.review-view__three-col {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-}
-
-.review-view__sider {
-  width: 280px;
-  flex-shrink: 0;
-  position: sticky;
-  top: 16px;
-  max-height: calc(100vh - 100px);
-  overflow-y: auto;
-}
-
-.review-view__content {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.review-view__aside {
-  width: 340px;
-  flex-shrink: 0;
-  position: sticky;
-  top: 16px;
-  max-height: calc(100vh - 100px);
-  background: var(--bg-elevated, #1f1f1f);
-  border: 1px solid var(--border-color, #303030);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.review-view__aside-tabs {
-  height: 100%;
-}
-
-.review-view__aside-tabs :deep(.ant-tabs-content-holder) {
-  max-height: calc(100vh - 160px);
-  overflow-y: auto;
-}
-
-/* 章节头部 */
-.review-view__content-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 20px;
-  background: var(--bg-elevated, #1f1f1f);
-  border: 1px solid var(--border-color, #303030);
-  border-radius: 8px;
-}
-
-.review-view__content-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.review-view__chapter-no {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--primary-color, #1890ff);
-}
-
-.review-view__chapter-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary, #fff);
-}
-
-/* 废标风险 */
-.review-view__risk-alert {
-  flex-shrink: 0;
-}
-
-.review-view__risk-item {
-  font-size: 12px;
-  line-height: 1.8;
-}
-
-/* 富文本预览区 */
-.review-view__paper-wrapper {
-  background: var(--bg-surface, #141414);
-  border: 1px solid var(--border-color, #303030);
-  border-radius: 8px;
-  padding: 24px;
-  min-height: 500px;
-  display: flex;
-  justify-content: center;
-}
-
-.review-view__editor {
-  width: 100%;
-  max-width: 210mm;
-}
-
-.review-view__editor :deep(.ProseMirror) {
-  background: #fff;
-  color: #333;
-  padding: 25.4mm;
-  min-height: 297mm;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  border-radius: 4px;
-}
-
-.review-view__empty-content {
-  color: var(--text-secondary, #999);
-  padding: 60px 0;
-}
-
-/* 批注面板 */
-.review-view__annotation-panel {
-  padding: 12px;
-}
-
-.review-view__selection-hint {
-  padding: 6px 10px;
-  margin-bottom: 8px;
-  background: rgba(24, 144, 255, 0.1);
-  border: 1px solid rgba(24, 144, 255, 0.3);
-  border-radius: 4px;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.review-view__selection-label {
-  color: var(--text-secondary, #999);
-}
-
-.review-view__selection-text {
-  color: var(--primary-color, #1890ff);
-  font-style: italic;
-}
-
-.review-view__annotation-filter {
-  margin-bottom: 10px;
-}
-
-.review-view__annotation-actions {
-  margin-bottom: 10px;
-}
-
-.review-view__annotation-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.review-view__annotation-item {
-  padding: 10px 12px;
-  background: var(--bg-surface, #2a2a2a);
-  border-radius: 6px;
-  border-left: 3px solid #fa8c16;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.review-view__annotation-item:hover {
-  background: var(--bg-hover, #333);
-}
-
-.review-view__annotation-item--active {
-  border-left-color: #1890ff;
-  box-shadow: 0 0 0 1px rgba(24, 144, 255, 0.3);
-}
-
-.review-view__annotation-item--resolved {
-  border-left-color: #52c41a;
-  opacity: 0.75;
-}
-
-.review-view__annotation-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-.review-view__annotation-status {
-  font-size: 10px;
-  margin: 0;
-}
-
-.review-view__annotation-quote {
-  font-size: 11px;
-  color: var(--text-tertiary, #888);
-  font-style: italic;
-  padding: 4px 8px;
-  margin-bottom: 6px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 3px;
-  border-left: 2px solid var(--border-color, #444);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.review-view__annotation-author {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary, #fff);
-}
-
-.review-view__annotation-time {
-  font-size: 11px;
-  color: var(--text-tertiary, #666);
-}
-
-.review-view__annotation-content {
-  font-size: 13px;
-  color: var(--text-secondary, #ccc);
-  line-height: 1.5;
-}
-
-.review-view__annotation-footer {
-  margin-top: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.review-view__annotation-btns {
-  display: flex;
-  gap: 0;
-}
-
-.review-view__version-panel {
-  max-height: 500px;
-  overflow-y: auto;
-}
-
-/* 全文预览模式 */
-.review-view__full-content {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-
-.review-view__full-chapter {
-  scroll-margin-top: 16px;
-}
-
-.review-view__full-chapter-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  margin-bottom: 8px;
-  background: var(--bg-elevated, #1f1f1f);
-  border: 1px solid var(--border-color, #303030);
-  border-radius: 6px;
-}
-
-.review-view__full-chapter-no {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--primary-color, #1890ff);
-}
-
-.review-view__full-chapter-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary, #fff);
-}
-
-/* 窄屏适配 */
-@media (max-width: 1400px) {
-  .review-view__aside {
-    width: 300px;
-  }
-}
-
-@media (max-width: 1200px) {
-  .review-view__three-col {
-    flex-direction: column;
-  }
-  .review-view__sider,
-  .review-view__aside {
-    width: 100%;
-    position: static;
-    max-height: none;
-  }
-}
+<style scoped src="./review-view.css">
 </style>

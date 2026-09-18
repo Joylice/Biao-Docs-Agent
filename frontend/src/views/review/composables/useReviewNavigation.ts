@@ -19,8 +19,12 @@ export function useReviewNavigation(options: {
   getOutline: () => OutlineNode[]
   getRisks: () => Record<string, RiskItem[]>
   loadAnnotations: (chapterNo: string) => void
+  /** 章节标题解析（分工模式子节标题来自分工记录；缺省回退大纲） */
+  getTitle?: (chapterNo: string) => string
+  /** 全文预览章节集合（分工模式 = 已回写正式方案章级；缺省取 chapterKeys） */
+  getFullKeys?: () => string[]
 }) {
-  const { projectId, getChapters, getOutline, getRisks, loadAnnotations } = options
+  const { projectId, getChapters, getOutline, getRisks, loadAnnotations, getTitle, getFullKeys } = options
   const route = useRoute()
   const router = useRouter()
 
@@ -38,9 +42,14 @@ export function useReviewNavigation(options: {
   /* ---------------- 计算属性 ---------------- */
   const chapterKeys = computed(() => Object.keys(getChapters()))
 
-  const activeChapterTitle = computed(
-    () => getOutline().find((c) => c.chapter_no === activeChapter.value)?.title || '',
-  )
+  const activeChapterTitle = computed(() => {
+    const no = activeChapter.value
+    if (getTitle) {
+      const t = getTitle(no)
+      if (t) return t
+    }
+    return getOutline().find((c) => c.chapter_no === no)?.title || ''
+  })
 
   const activeChapterRisks = computed<RiskItem[]>(
     () => getRisks()[activeChapter.value] || [],
@@ -91,15 +100,16 @@ export function useReviewNavigation(options: {
   }
 
   /* ---------------- 全文预览 ---------------- */
-  const loadAllChapterHtml = async () => {
-    for (const no of chapterKeys.value) {
+  const loadAllChapterHtml = async (keys?: string[]) => {
+    const nos = keys ?? chapterKeys.value
+    for (const no of nos) {
       if (!chapterHtmlMap.value[no]) {
         await loadChapterHtml(no)
       }
     }
   }
 
-  const startFullObserver = () => {
+  const startFullObserver = (keys?: string[]) => {
     if (fullObserver) return
     fullObserver = new IntersectionObserver(
       (entries) => {
@@ -117,7 +127,8 @@ export function useReviewNavigation(options: {
       },
       { rootMargin: '-80px 0px -60% 0px', threshold: 0 },
     )
-    chapterKeys.value.forEach((no) => {
+    const nos = keys ?? chapterKeys.value
+    nos.forEach((no) => {
       const el = document.getElementById(`chapter-${no}`)
       if (el) fullObserver?.observe(el)
     })
@@ -132,8 +143,9 @@ export function useReviewNavigation(options: {
 
   watch(viewMode, async (mode) => {
     if (mode === 'full') {
-      await loadAllChapterHtml()
-      nextTick(() => startFullObserver())
+      const keys = getFullKeys?.()?.length ? getFullKeys() : chapterKeys.value
+      await loadAllChapterHtml(keys)
+      nextTick(() => startFullObserver(keys))
     } else {
       stopFullObserver()
       if (activeChapter.value) {

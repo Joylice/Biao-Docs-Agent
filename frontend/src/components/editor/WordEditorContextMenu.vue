@@ -232,7 +232,7 @@
 /**
  * WordEditorContextMenu：右键上下文菜单
  *
- * 实现：
+ * 实现委托 useEditorContextMenu（composable）：
  * - 在 editor.view.dom 上挂载 contextmenu 事件监听（watch editor 自动绑定/解绑）
  * - 菜单通过 Teleport + fixed 定位渲染，z-index 1050
  * - 字体/字号/颜色/行距使用 CSS :hover 子菜单（无需 JS 管理显隐）
@@ -244,8 +244,7 @@
  * @emits insert-link 触发链接插入流程（父组件处理）
  * @emits find 将选中文本填入查找替换面板
  */
-import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
-import type { Editor, ChainedCommands } from '@tiptap/core'
+import type { Editor } from '@tiptap/core'
 import {
   ScissorOutlined,
   CopyOutlined,
@@ -266,10 +265,7 @@ import {
   TranslationOutlined,
   RocketOutlined,
 } from '@ant-design/icons-vue'
-import { FONT_FAMILY_OPTIONS } from './extensions/font-family'
-import { FONT_SIZE_OPTIONS } from './extensions/font-size'
-import { LINE_HEIGHT_OPTIONS } from './extensions/line-height'
-import { TEXT_COLOR_PRESETS } from './extensions/text-color'
+import { useEditorContextMenu } from '@/composables/useEditorContextMenu'
 
 const props = defineProps<{
   /** 编辑器实例 */
@@ -286,217 +282,39 @@ const emit = defineEmits<{
   (e: 'ai-action', action: 'polish' | 'translate' | 'expand'): void
 }>()
 
-/** AI 操作是否可用：编辑器可编辑且有选中文字 */
-const canAiAction = computed(() => props.editable !== false && hasSelection.value)
-
-/** AI 菜单点击：无选区/只读时忽略，否则上抛父页面处理 */
-const handleAi = (action: 'polish' | 'translate' | 'expand') => {
-  if (!canAiAction.value) return
-  emit('ai-action', action)
-  menuVisible.value = false
-}
-
-/* ---------------- 菜单状态 ---------------- */
-
-const menuVisible = ref(false)
-const menuX = ref(0)
-const menuY = ref(0)
-const menuOnRight = ref(false)
-const hasSelection = ref(false)
-
-/* ---------------- 下拉选项（复用扩展预设） ---------------- */
-
-const fontFamilyItems = FONT_FAMILY_OPTIONS.map((o) => ({ label: o.label, value: o.value }))
-const fontSizeItems = FONT_SIZE_OPTIONS.map((o) => ({ label: `${o.label} · ${o.value}`, value: o.value }))
-const lineHeightItems = LINE_HEIGHT_OPTIONS.map((v) => ({ label: `行高 ${v}`, value: String(v) }))
-
-/* ---------------- 编辑器命令执行 ---------------- */
-
-/** 执行链式命令并关闭菜单 */
-const run = (apply: (chain: ChainedCommands) => ChainedCommands) => {
-  const inst = props.editor
-  if (!inst) return
-  apply(inst.chain().focus()).run()
-  closeMenu()
-}
-
-const runAlign = (align: string) => {
-  run((chain) => chain.setTextAlign(align))
-}
-
-const handleFontFamily = (value: string) => {
-  run((chain) => chain.setFontFamily(value))
-}
-
-const handleFontSize = (value: string) => {
-  run((chain) => chain.setFontSize(value))
-}
-
-const handleTextColor = (color: string) => {
-  run((chain) => chain.setColor(color))
-}
-
-const handleLineHeight = (value: string) => {
-  run((chain) => chain.setLineHeight(value))
-}
-
-/* ---------------- 剪贴板操作 ---------------- */
-
-/** 获取当前选中文本（无选区时返回空串） */
-const getSelectedText = (): string => {
-  const inst = props.editor
-  if (!inst) return ''
-  const { from, to } = inst.state.selection
-  if (from === to) return ''
-  return inst.state.doc.textBetween(from, to, ' ', ' ')
-}
-
-const handleCut = async () => {
-  if (!hasSelection.value) return
-  closeMenu()
-  const inst = props.editor
-  if (!inst) return
-  const text = getSelectedText()
-  try {
-    await navigator.clipboard.writeText(text)
-    inst.chain().focus().deleteSelection().run()
-  } catch {
-    // 剪贴板写入失败（非安全上下文或权限不足）
-  }
-}
-
-const handleCopy = async () => {
-  if (!hasSelection.value) return
-  closeMenu()
-  const text = getSelectedText()
-  try {
-    await navigator.clipboard.writeText(text)
-  } catch {
-    // 剪贴板写入失败
-  }
-}
-
-const handlePaste = async () => {
-  closeMenu()
-  const inst = props.editor
-  if (!inst) return
-  try {
-    const text = await navigator.clipboard.readText()
-    if (text) {
-      inst.chain().focus().insertContent(text).run()
-    }
-  } catch {
-    // 剪贴板读取失败
-  }
-}
-
-/** 粘贴为纯文本：与普通粘贴一致（readText 仅返回纯文本） */
-const handlePastePlain = handlePaste
-
-/* ---------------- 插入操作 ---------------- */
-
-const handleInsertLink = () => {
-  closeMenu()
-  emit('insert-link')
-}
-
-const handleInsertImage = () => {
-  closeMenu()
-  emit('insert-image')
-}
-
-const handleInsertTable = () => {
-  run((chain) => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }))
-}
-
-const handleFind = () => {
-  if (!hasSelection.value) return
-  const text = getSelectedText()
-  closeMenu()
-  if (text) {
-    emit('find', text)
-  }
-}
-
-/* ---------------- 菜单显隐控制 ---------------- */
-
-const closeMenu = () => {
-  menuVisible.value = false
-}
-
-/** contextmenu 事件处理：定位菜单 + 读取选区状态 */
-const handleContextMenu = (e: MouseEvent) => {
-  const inst = props.editor
-  if (!inst || inst.isDestroyed) return
-  e.preventDefault()
-
-  // 读取选区状态（在打开菜单时快照）
-  const { from, to } = inst.state.selection
-  hasSelection.value = from !== to
-
-  // 菜单定位：防止超出视口边界
-  const menuWidth = 220
-  const menuHeight = 420
-  let x = e.clientX
-  let y = e.clientY
-  menuOnRight.value = x > window.innerWidth / 2
-  if (x + menuWidth > window.innerWidth) {
-    x = Math.max(0, window.innerWidth - menuWidth)
-  }
-  if (y + menuHeight > window.innerHeight) {
-    y = Math.max(0, window.innerHeight - menuHeight)
-  }
-  menuX.value = x
-  menuY.value = y
-  menuVisible.value = true
-}
-
-/** 点击菜单外部关闭菜单 */
-const handleDocumentClick = (e: MouseEvent) => {
-  if (!menuVisible.value) return
-  const target = e.target as HTMLElement
-  if (!target.closest('.ctx-menu')) {
-    closeMenu()
-  }
-}
-
-/** Esc 关闭菜单 */
-const handleKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape' && menuVisible.value) {
-    e.preventDefault()
-    closeMenu()
-  }
-}
-
-/* ---------------- editor contextmenu 监听绑定 ---------------- */
-
-watch(
-  () => props.editor,
-  (inst, oldInst) => {
-    if (oldInst && !oldInst.isDestroyed) {
-      oldInst.view.dom.removeEventListener('contextmenu', handleContextMenu)
-    }
-    if (inst && !inst.isDestroyed) {
-      inst.view.dom.addEventListener('contextmenu', handleContextMenu)
-    }
-  },
-  { immediate: true },
-)
-
-/* ---------------- 生命周期 ---------------- */
-
-onMounted(() => {
-  document.addEventListener('click', handleDocumentClick)
-  document.addEventListener('keydown', handleKeydown)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('click', handleDocumentClick)
-  document.removeEventListener('keydown', handleKeydown)
-  const inst = props.editor
-  if (inst && !inst.isDestroyed) {
-    inst.view.dom.removeEventListener('contextmenu', handleContextMenu)
-  }
+const {
+  menuVisible,
+  menuOnRight,
+  menuX,
+  menuY,
+  hasSelection,
+  canAiAction,
+  fontFamilyItems,
+  fontSizeItems,
+  lineHeightItems,
+  TEXT_COLOR_PRESETS,
+  run,
+  runAlign,
+  handleFontFamily,
+  handleFontSize,
+  handleTextColor,
+  handleLineHeight,
+  handleCut,
+  handleCopy,
+  handlePaste,
+  handlePastePlain,
+  handleInsertLink,
+  handleInsertImage,
+  handleInsertTable,
+  handleFind,
+  handleAi,
+} = useEditorContextMenu({
+  getEditor: () => props.editor,
+  getEditable: () => props.editable,
+  onInsertLink: () => emit('insert-link'),
+  onInsertImage: () => emit('insert-image'),
+  onFind: (text) => emit('find', text),
+  onAiAction: (action) => emit('ai-action', action),
 })
 </script>
 

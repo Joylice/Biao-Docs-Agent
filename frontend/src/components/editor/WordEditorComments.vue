@@ -32,7 +32,8 @@
       <a-button
         size="small"
         type="primary"
-        :disabled="!hasSelection"
+        :loading="loading"
+        :disabled="!hasSelection || loading"
         @click="showAddModal = true"
       >
         <template #icon>
@@ -42,9 +43,13 @@
       </a-button>
     </div>
 
-    <!-- 批注列表 -->
+    <!-- 批注列表（后端 chapter_annotations 同源：审阅页/分工编辑器共享） -->
     <div class="word-comments__list">
-      <div v-if="filteredComments.length === 0" class="word-comments__empty">
+      <div v-if="loading && comments.length === 0" class="word-comments__empty">
+        <a-spin size="small" />
+        <p>批注加载中...</p>
+      </div>
+      <div v-else-if="filteredComments.length === 0" class="word-comments__empty">
         <CommentOutlined class="word-comments__empty-icon" />
         <p>暂无批注</p>
         <p class="word-comments__empty-hint">选中文字后点击"添加"创建批注</p>
@@ -66,24 +71,9 @@
           <a-tag v-if="comment.resolved" color="green" size="small">已解决</a-tag>
         </div>
 
-        <div class="word-comments__quote">"{{ comment.quote }}"</div>
+        <div v-if="comment.quote" class="word-comments__quote">"{{ comment.quote }}"</div>
 
         <div class="word-comments__content">{{ comment.content }}</div>
-
-        <!-- 回复列表 -->
-        <div v-if="comment.replies.length > 0" class="word-comments__replies">
-          <div
-            v-for="reply in comment.replies"
-            :key="reply.id"
-            class="word-comments__reply"
-          >
-            <div class="word-comments__reply-header">
-              <span class="word-comments__author">{{ reply.author }}</span>
-              <span class="word-comments__time">{{ formatTime(reply.createdAt) }}</span>
-            </div>
-            <div class="word-comments__reply-content">{{ reply.content }}</div>
-          </div>
-        </div>
 
         <!-- 操作按钮 -->
         <div class="word-comments__actions" @click.stop>
@@ -105,14 +95,6 @@
             <template #icon><ReloadOutlined /></template>
             重新打开
           </a-button>
-          <a-button
-            size="small"
-            type="text"
-            @click="showReplyInput(comment.id)"
-          >
-            <template #icon><MessageOutlined /></template>
-            回复
-          </a-button>
           <a-popconfirm
             title="确定删除此批注？"
             @confirm="deleteComment(comment.id)"
@@ -123,22 +105,6 @@
             </a-button>
           </a-popconfirm>
         </div>
-
-        <!-- 回复输入框 -->
-        <div v-if="replyingTo === comment.id" class="word-comments__reply-input" @click.stop>
-          <a-textarea
-            v-model:value="replyContent"
-            :rows="2"
-            placeholder="输入回复内容..."
-            size="small"
-          />
-          <div class="word-comments__reply-actions">
-            <a-button size="small" @click="replyingTo = null">取消</a-button>
-            <a-button size="small" type="primary" @click="submitReply(comment.id)">
-              发送
-            </a-button>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -148,9 +114,10 @@
       title="添加批注"
       ok-text="添加"
       cancel-text="取消"
+      :confirm-loading="adding"
       @ok="submitAddComment"
     >
-      <div class="word-comments__add-quote">
+      <div v-if="selectedText" class="word-comments__add-quote">
         <span class="word-comments__add-label">引用文本：</span>
         <span class="word-comments__add-quote-text">"{{ selectedText }}"</span>
       </div>
@@ -165,11 +132,12 @@
 
 <script setup lang="ts">
 /**
- * WordEditorComments：批注面板
- * - 显示批注列表（全部/未解决/已解决筛选）
- * - 添加批注（基于选中文本）
- * - 批注回复、解决、删除
- * - 点击批注跳转到对应位置
+ * WordEditorComments：分工编辑器批注面板（2026-09-03 后端同源改造）.
+ *
+ * 数据源：后端 /chapters/{no}/annotations（chapter_annotations 表），与审阅页批注
+ * 同库同章节号 → 审阅页添加的批注在此处可见、可解决/删除；新增批注审阅页同步可见。
+ * 原 localStorage 本地演示（useComments，含回复线程）移除：后端无 replies 模型，
+ * 回复能力降级为新增独立批注（与审阅页一致）。
  */
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import type { Editor } from '@tiptap/core'
@@ -179,13 +147,14 @@ import {
   CommentOutlined,
   CheckOutlined,
   ReloadOutlined,
-  MessageOutlined,
   DeleteOutlined,
 } from '@ant-design/icons-vue'
-import { useComments } from '@/composables/useComments'
+import { useServerAnnotations } from '@/composables/useServerAnnotations'
 
 const props = defineProps<{
   editor?: Editor
+  projectId: string
+  chapterNo: string
 }>()
 
 defineEmits<{
@@ -199,7 +168,7 @@ const checkDarkMode = () => {
 }
 let darkObserver: MutationObserver | null = null
 
-/* 事务版本号 */
+/* 事务版本号：选中态随编辑器事务实时刷新 */
 const version = ref(0)
 const bump = () => { version.value++ }
 
@@ -220,48 +189,40 @@ const selectedText = computed(() => {
   return ed.state.doc.textBetween(from, to, ' ')
 })
 
-/* 批注管理 */
+/* 后端批注数据域 */
 const {
+  comments,
   filteredComments,
   activeCommentId,
   filter,
   unresolvedCount,
+  loading,
+  load,
   addComment,
   deleteComment,
   resolveComment,
   reopenComment,
-  addReply,
   scrollToComment,
-} = useComments(() => props.editor)
+} = useServerAnnotations(props.projectId, props.chapterNo, () => props.editor)
 
 /* 添加批注弹窗 */
 const showAddModal = ref(false)
 const newCommentContent = ref('')
+const adding = ref(false)
 
-const submitAddComment = () => {
+const submitAddComment = async () => {
   if (!newCommentContent.value.trim()) return
-  addComment(newCommentContent.value.trim())
-  newCommentContent.value = ''
-  showAddModal.value = false
+  adding.value = true
+  try {
+    await addComment(newCommentContent.value.trim())
+    newCommentContent.value = ''
+    showAddModal.value = false
+  } finally {
+    adding.value = false
+  }
 }
 
-/* 回复 */
-const replyingTo = ref<string | null>(null)
-const replyContent = ref('')
-
-const showReplyInput = (id: string) => {
-  replyingTo.value = id
-  replyContent.value = ''
-}
-
-const submitReply = (commentId: string) => {
-  if (!replyContent.value.trim()) return
-  addReply(commentId, replyContent.value.trim())
-  replyContent.value = ''
-  replyingTo.value = null
-}
-
-/* 格式化时间 */
+/* 格式化时间（epoch ms） */
 const formatTime = (timestamp: number): string => {
   const date = new Date(timestamp)
   const now = new Date()
@@ -287,6 +248,7 @@ onMounted(() => {
     transactionHandler = bump
     props.editor.on('transaction', transactionHandler)
   }
+  load()
 })
 
 onBeforeUnmount(() => {
@@ -412,49 +374,11 @@ onBeforeUnmount(() => {
   margin-bottom: var(--space-2);
 }
 
-.word-comments__replies {
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px dashed var(--border-color);
-}
-
-.word-comments__reply {
-  margin-bottom: var(--space-2);
-  padding-left: var(--space-2);
-  border-left: 2px solid var(--border-color);
-}
-
-.word-comments__reply-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-1);
-}
-
-.word-comments__reply-content {
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-  line-height: 1.4;
-}
-
 .word-comments__actions {
   display: flex;
   gap: var(--space-1);
   margin-top: var(--space-2);
   flex-wrap: wrap;
-}
-
-.word-comments__reply-input {
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px dashed var(--border-color);
-}
-
-.word-comments__reply-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
 }
 
 .word-comments__add-quote {

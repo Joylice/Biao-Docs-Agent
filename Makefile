@@ -19,6 +19,7 @@ test:
 
 # ── 关键模块覆盖率门禁（R1 重构后按 services 子域分组路径） ──
 test-coverage-gates:
+	cd backend && pytest tests/services --cov=app.services.document.parsing       --cov-fail-under=80 -q
 	cd backend && pytest tests/services --cov=app.services.document.parse_service  --cov-fail-under=80 -q
 	cd backend && pytest tests/services --cov=app.services.llm.rag_service         --cov-fail-under=80 -q
 	cd backend && pytest tests/services --cov=app.services.document.export_service --cov-fail-under=80 -q

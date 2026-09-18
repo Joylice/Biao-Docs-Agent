@@ -28,18 +28,18 @@
           type="primary"
           block
           :loading="approving"
-          :disabled="polling || currentStatus === 'approved'"
+          :disabled="polling || currentStatus === 'approved' || !enableApprove"
           @click="$emit('approve')"
         >
           <template #icon>
             <CheckOutlined />
           </template>
-          通过
+          {{ approveButtonText }}
         </a-button>
         <a-button
           danger
           block
-          :disabled="polling || currentStatus === 'rejected'"
+          :disabled="polling || currentStatus === 'rejected' || !enableReject"
           @click="openRejectModal"
         >
           <template #icon>
@@ -47,6 +47,12 @@
           </template>
           打回
         </a-button>
+        <div
+          v-if="actionHint"
+          class="review-action__hint"
+        >
+          {{ actionHint }}
+        </div>
       </a-space>
     </div>
 
@@ -127,14 +133,24 @@ interface HistoryComment {
   time: string
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   activeChapter: string
   currentStatus: string
   submitter: string
   approving: boolean
   polling: boolean
   historyComments?: HistoryComment[]
-}>()
+  /** 分工章节原始状态（pending/in_progress/submitted/approved/rejected）；AI 模式不传 */
+  rawStatus?: string
+  /** 通过/打回按钮是否可用（分工模式仅 submitted 可操作；AI 模式默认全部可用） */
+  enableApprove?: boolean
+  enableReject?: boolean
+}>(), {
+  historyComments: () => [],
+  rawStatus: undefined,
+  enableApprove: true,
+  enableReject: true,
+})
 
 const emit = defineEmits<{
   (e: 'approve'): void
@@ -145,6 +161,16 @@ const comment = ref('')
 const rejectModalOpen = ref(false)
 
 const statusText = computed(() => {
+  if (props.rawStatus) {
+    const map: Record<string, string> = {
+      pending: '未提审',
+      in_progress: '编制中',
+      submitted: '待审阅',
+      approved: '已通过',
+      rejected: '需修改',
+    }
+    return map[props.rawStatus] || '未审阅'
+  }
   const map: Record<string, string> = {
     pending: '未审阅',
     approved: '已通过',
@@ -154,12 +180,38 @@ const statusText = computed(() => {
 })
 
 const statusColor = computed(() => {
+  if (props.rawStatus) {
+    const map: Record<string, string> = {
+      pending: 'default',
+      in_progress: 'processing',
+      submitted: 'blue',
+      approved: 'green',
+      rejected: 'orange',
+    }
+    return map[props.rawStatus] || 'default'
+  }
   const map: Record<string, string> = {
     pending: 'default',
     approved: 'green',
     rejected: 'orange',
   }
   return map[props.currentStatus] || 'default'
+})
+
+const approveButtonText = computed(() => {
+  if (props.rawStatus === 'approved') return '通过（已通过）'
+  if (!props.rawStatus && props.currentStatus === 'pending' && props.historyComments && props.historyComments.length === 0) {
+    return '通过并导出全文'
+  }
+  return '通过'
+})
+
+const actionHint = computed(() => {
+  if (props.rawStatus === 'submitted') return '章节已提审，可执行通过 / 打回'
+  if (props.rawStatus === 'approved') return '章节已通过，内容已并入正式方案'
+  if (props.rawStatus === 'rejected') return '章节已打回，待负责人修改后重新提审'
+  if (props.rawStatus === 'in_progress' || props.rawStatus === 'pending') return '章节尚未提交审核，暂无可执行审阅操作'
+  return ''
 })
 
 const openRejectModal = () => {
@@ -267,5 +319,14 @@ defineExpose({ setComment })
 .review-action__reject-comment {
   color: var(--text-secondary, #ccc);
   font-size: 13px;
+}
+
+.review-action__hint {
+  font-size: 12px;
+  color: var(--text-tertiary, #888);
+  line-height: 1.5;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  padding: 6px 10px;
 }
 </style>

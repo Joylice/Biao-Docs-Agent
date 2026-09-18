@@ -5,7 +5,7 @@
     :confirm-loading="exporting"
     ok-text="开始导出"
     cancel-text="取消"
-    width="520px"
+    width="620px"
     @ok="handleExport"
     @cancel="handleCancel"
   >
@@ -49,6 +49,102 @@
           <a-radio value="current">仅当前章节</a-radio>
         </a-radio-group>
       </div>
+
+      <!-- 格式要求（自定义覆盖，留空则用招标解析默认值） -->
+      <div class="export-modal__section">
+        <div class="export-modal__section-title">
+          格式要求
+          <span class="export-modal__hint">留空则沿用招标文件解析的默认值</span>
+        </div>
+        <div class="export-modal__grid">
+          <div class="export-modal__field">
+            <label class="export-modal__label">正文字体</label>
+            <a-select
+              v-model:value="formatOverride.body_font"
+              size="small"
+              allow-clear
+              placeholder="默认"
+              :options="fontOptions"
+            />
+          </div>
+          <div class="export-modal__field">
+            <label class="export-modal__label">正文字号</label>
+            <a-select
+              v-model:value="formatOverride.body_size_pt"
+              size="small"
+              allow-clear
+              placeholder="默认"
+              :options="fontSizeOptions"
+            />
+          </div>
+          <div class="export-modal__field">
+            <label class="export-modal__label">标题字号</label>
+            <a-select
+              v-model:value="formatOverride.heading_size_pt"
+              size="small"
+              allow-clear
+              placeholder="默认"
+              :options="fontSizeOptions"
+            />
+          </div>
+          <div class="export-modal__field">
+            <label class="export-modal__label">行距</label>
+            <a-select
+              v-model:value="lineSpacingPreset"
+              size="small"
+              allow-clear
+              placeholder="默认"
+              :options="lineSpacingOptions"
+            />
+          </div>
+        </div>
+        <div class="export-modal__grid">
+          <div class="export-modal__field">
+            <label class="export-modal__label">上边距 (cm)</label>
+            <a-input-number
+              v-model:value="marginsInput.top"
+              size="small"
+              :min="0"
+              :max="10"
+              :step="0.1"
+              placeholder="默认"
+            />
+          </div>
+          <div class="export-modal__field">
+            <label class="export-modal__label">下边距 (cm)</label>
+            <a-input-number
+              v-model:value="marginsInput.bottom"
+              size="small"
+              :min="0"
+              :max="10"
+              :step="0.1"
+              placeholder="默认"
+            />
+          </div>
+          <div class="export-modal__field">
+            <label class="export-modal__label">左边距 (cm)</label>
+            <a-input-number
+              v-model:value="marginsInput.left"
+              size="small"
+              :min="0"
+              :max="10"
+              :step="0.1"
+              placeholder="默认"
+            />
+          </div>
+          <div class="export-modal__field">
+            <label class="export-modal__label">右边距 (cm)</label>
+            <a-input-number
+              v-model:value="marginsInput.right"
+              size="small"
+              :min="0"
+              :max="10"
+              :step="0.1"
+              placeholder="默认"
+            />
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 导出进度 -->
@@ -87,23 +183,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, reactive } from 'vue'
 import { message } from 'ant-design-vue'
 import { DownloadOutlined } from '@ant-design/icons-vue'
 import { fetchWorkflowExport } from '@/api'
-
-interface ExportOptions {
-  includeToc: boolean
-  includeAnnotations: boolean
-  includeHeaderFooter: boolean
-  paperSize: 'A4' | 'A3'
-  orientation: 'portrait' | 'landscape'
-  scope: 'all' | 'current'
-}
+import type { ExportOptions, FormatOverride } from '@/types'
 
 const props = defineProps<{
   visible: boolean
   projectId: string
+  currentChapter?: string
 }>()
 
 const emit = defineEmits<{
@@ -111,18 +200,56 @@ const emit = defineEmits<{
   (e: 'exported', storageKey: string): void
 }>()
 
-const options = ref<ExportOptions>({
+/* ---------------- UI 选项状态 ---------------- */
+const options = reactive({
   includeToc: true,
   includeAnnotations: false,
   includeHeaderFooter: true,
-  paperSize: 'A4',
-  orientation: 'portrait',
-  scope: 'all',
+  paperSize: 'A4' as 'A4' | 'A3',
+  orientation: 'portrait' as 'portrait' | 'landscape',
+  scope: 'all' as 'all' | 'current',
 })
 
+/* ---------------- 格式覆盖状态 ---------------- */
+const formatOverride = reactive<FormatOverride>({})
+
+/** 行距预设（前端选值，提交时映射到 FormatOverride 的 line_spacing / line_spacing_fixed_pt） */
+const lineSpacingPreset = ref<string | undefined>(undefined)
+
+/** 页边距输入（单独收集，提交时合并到 FormatOverride.margins_cm） */
+const marginsInput = reactive<{ top?: number; bottom?: number; left?: number; right?: number }>({})
+
+/* ---------------- 下拉选项 ---------------- */
+const fontOptions = [
+  { label: '宋体', value: '宋体' },
+  { label: '仿宋', value: '仿宋' },
+  { label: '黑体', value: '黑体' },
+  { label: '楷体', value: '楷体' },
+  { label: '微软雅黑', value: '微软雅黑' },
+  { label: 'Times New Roman', value: 'Times New Roman' },
+]
+
+const fontSizeOptions = [
+  { label: '三号 (16pt)', value: 16 },
+  { label: '小三 (15pt)', value: 15 },
+  { label: '四号 (14pt)', value: 14 },
+  { label: '小四 (12pt)', value: 12 },
+  { label: '五号 (10.5pt)', value: 10.5 },
+]
+
+const lineSpacingOptions = [
+  { label: '单倍行距', value: '1.0' },
+  { label: '1.15倍行距', value: '1.15' },
+  { label: '1.5倍行距', value: '1.5' },
+  { label: '2.0倍行距', value: '2.0' },
+  { label: '固定值 28磅', value: 'fixed_28' },
+]
+
+/* ---------------- 导出状态 ---------------- */
 const exporting = ref(false)
 const exportStatus = ref<'pending' | 'running' | 'done' | 'failed'>('pending')
 const exportStorageKey = ref('')
+const downloadUrl = ref('')
 const errorMessage = ref('')
 let pollTimer: number | null = null
 
@@ -150,18 +277,68 @@ const stopPolling = () => {
   }
 }
 
+/* ---------------- 构建导出参数 ---------------- */
+const buildExportOptions = (): ExportOptions => {
+  // 格式覆盖：只收集非空字段
+  const override: FormatOverride = {}
+  if (formatOverride.body_font) override.body_font = formatOverride.body_font
+  if (formatOverride.body_size_pt != null) override.body_size_pt = formatOverride.body_size_pt
+  if (formatOverride.heading_size_pt != null) override.heading_size_pt = formatOverride.heading_size_pt
+
+  // 行距映射
+  if (lineSpacingPreset.value) {
+    if (lineSpacingPreset.value === 'fixed_28') {
+      override.line_spacing_fixed_pt = 28
+    } else {
+      override.line_spacing = parseFloat(lineSpacingPreset.value)
+    }
+  }
+
+  // 页边距：仅收集有值的边
+  const margins: NonNullable<FormatOverride['margins_cm']> = {}
+  let hasMargin = false
+  if (marginsInput.top != null) { margins.top = marginsInput.top; hasMargin = true }
+  if (marginsInput.bottom != null) { margins.bottom = marginsInput.bottom; hasMargin = true }
+  if (marginsInput.left != null) { margins.left = marginsInput.left; hasMargin = true }
+  if (marginsInput.right != null) { margins.right = marginsInput.right; hasMargin = true }
+  if (hasMargin) override.margins_cm = margins
+
+  return {
+    include_toc: options.includeToc,
+    include_annotations: options.includeAnnotations,
+    include_header_footer: options.includeHeaderFooter,
+    paper_size: options.paperSize,
+    orientation: options.orientation,
+    scope: options.scope,
+    current_chapter: options.scope === 'current' ? props.currentChapter : undefined,
+    format_override: Object.keys(override).length > 0 ? override : undefined,
+  }
+}
+
+/* ---------------- 导出 ---------------- */
+/** 存在未确认高风险废标条款时提示（2026-09-03 门禁降级：后端警告放行不阻塞） */
+const warnUnconfirmed = (data: Record<string, unknown> | undefined) => {
+  const n = Number(data?.unconfirmed_high ?? 0)
+  if (n > 0) {
+    message.warning(`存在 ${n} 条未确认的高风险废标条款，本次导出已放行，建议先前往招标解析页完成人工确认`)
+  }
+}
+
 const handleExport = async () => {
   exporting.value = true
   exportStatus.value = 'pending'
   errorMessage.value = ''
 
   try {
-    const res = await fetchWorkflowExport(props.projectId)
+    const payload = buildExportOptions()
+    const res = await fetchWorkflowExport(props.projectId, payload)
     const data = res.data?.data
     exportStatus.value = (data?.export_status as 'pending' | 'running' | 'done' | 'failed') || 'pending'
     exportStorageKey.value = data?.export_storage_key || ''
+    downloadUrl.value = data?.download_url || ''
 
     if (exportStatus.value === 'done') {
+      warnUnconfirmed(data)
       message.success('导出成功')
       return
     }
@@ -172,12 +349,14 @@ const handleExport = async () => {
     pollTimer = window.setInterval(async () => {
       attempts += 1
       try {
-        const pollRes = await fetchWorkflowExport(props.projectId)
+        const pollRes = await fetchWorkflowExport(props.projectId, payload)
         const pollData = pollRes.data?.data
         if (pollData?.export_status === 'done') {
           exportStatus.value = 'done'
           exportStorageKey.value = pollData.export_storage_key || ''
+          downloadUrl.value = pollData.download_url || ''
           stopPolling()
+          warnUnconfirmed(pollData)
           message.success('导出成功')
         } else if (pollData?.export_status === 'failed') {
           exportStatus.value = 'failed'
@@ -200,13 +379,19 @@ const handleExport = async () => {
   }
 }
 
+/* ---------------- 下载 ---------------- */
 const handleDownload = () => {
+  if (downloadUrl.value) {
+    // 后端返回预签名 URL，直接打开下载
+    window.open(downloadUrl.value, '_blank')
+    emit('exported', exportStorageKey.value)
+    return
+  }
   if (!exportStorageKey.value) {
     message.error('下载链接未就绪')
     return
   }
-  // 触发下载（通过存储标识，实际下载由后端签名URL提供）
-  message.info(`文档已就绪，存储标识：${exportStorageKey.value}`)
+  // 兜底：仅有 storage_key 时通知父组件
   emit('exported', exportStorageKey.value)
 }
 
@@ -221,7 +406,7 @@ const handleClose = () => {
   emit('update:visible', false)
 }
 
-// 弹窗关闭时重置状态
+/* ---------------- 弹窗关闭时重置状态 ---------------- */
 watch(
   () => props.visible,
   (val) => {
@@ -230,6 +415,7 @@ watch(
       exporting.value = false
       exportStatus.value = 'pending'
       exportStorageKey.value = ''
+      downloadUrl.value = ''
       errorMessage.value = ''
     }
   },
@@ -255,6 +441,15 @@ watch(
   color: var(--text-primary, #fff);
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border-color, #303030);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.export-modal__hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-tertiary, #888);
 }
 
 .export-modal__row {
@@ -267,6 +462,23 @@ watch(
   font-size: 13px;
   color: var(--text-secondary, #ccc);
   min-width: 70px;
+}
+
+.export-modal__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+}
+
+.export-modal__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.export-modal__field .export-modal__label {
+  min-width: 80px;
+  flex-shrink: 0;
 }
 
 .export-modal__progress {

@@ -45,21 +45,13 @@
         "risk_level": "medium"
       }
     ],
-    "tech_requirements": [
+    "disqualification_clauses": [
       {
-        "seq": 1,
-        "description": "系统须支持国产化操作系统与数据库部署，兼容麒麟、统信及达梦、人大金仓",
-        "category": "功能需求"
-      },
-      {
-        "seq": 2,
-        "description": "平台并发用户数不低于 500，核心查询响应时间不超过 2 秒",
-        "category": "性能需求"
-      },
-      {
-        "seq": 3,
-        "description": "须提供标准 RESTful API，支持与既有 OA 系统单点登录对接",
-        "category": "接口需求"
+        "clause_no": "3.2.3",
+        "title": "数据安全保障",
+        "risk_category": "star_clause",
+        "severity": "high",
+        "recommendation": "须提供等保三级及以上安全方案（含数据加密、访问控制、审计追溯），未满足实质性要求的作无效投标处理"
       }
     ]
   }

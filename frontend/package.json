@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
+    "check:contracts": "node scripts/check-editor-contracts.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

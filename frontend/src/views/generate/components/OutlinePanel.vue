@@ -49,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { computed } from 'vue'
 import type { OutlineItem, OutlineSection, AssignmentNode } from '@/types'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -74,9 +74,6 @@ const emit = defineEmits<{
   (e: 'select', chapterNo: string): void
 }>()
 
-// 当前选中的子章节 key（用于高亮子节点）
-const selectedSectionKey = ref('')
-
 const statusMeta: Record<string, { text: string; color: string }> = {
   pending: { text: '待领取', color: 'default' },
   in_progress: { text: '编制中', color: 'processing' },
@@ -91,16 +88,21 @@ const assignInfoOf = (chapterNo: string) => {
   return { assigneeName: a.assignee_name, assignStatus: a.status }
 }
 
+/** 子节标题展示：大纲 sections 标题自带编号前缀（如 "1.1 项目概况…"）时不重复拼接 */
+const sectionTitleOf = (no: string, raw: string): string =>
+  raw.startsWith(`${no} `) || raw === no ? raw : `${no} ${raw}`
+
 const toSectionTreeData = (sections: OutlineSection[], prefix: string): TreeDataItem[] => {
   if (!Array.isArray(sections)) return []
   return sections.map((s, i) => {
     const no = `${prefix}.${i + 1}`
     if (typeof s === 'string') {
-      return { key: `sub-${no}`, title: `${no} ${s}`, chapterNo: prefix, sectionNo: no, ...assignInfoOf(no) }
+      const title = sectionTitleOf(no, s)
+      return { key: `sub-${no}`, title, chapterNo: prefix, sectionNo: no, ...assignInfoOf(no) }
     }
     return {
       key: `sub-${no}`,
-      title: `${no} ${s.title}`,
+      title: sectionTitleOf(no, s.title),
       chapterNo: prefix,
       sectionNo: no,
       ...assignInfoOf(no),
@@ -119,32 +121,23 @@ const treeData = computed<TreeDataItem[]>(() =>
   })),
 )
 
-// 选中的 keys：父章节 + 当前选中的子章节
+// 选中的 keys：父章节 + 当前选中的子章节（子节选中时两者都高亮）
 const selectedKeys = computed(() => {
   const keys: string[] = []
-  if (props.selectedChapter) keys.push(`ch-${props.selectedChapter}`)
-  if (selectedSectionKey.value) keys.push(selectedSectionKey.value)
+  const no = props.selectedChapter || ''
+  const parentNo = no.split('.')[0]
+  if (parentNo) keys.push(`ch-${parentNo}`)
+  if (no.includes('.')) keys.push(`sub-${no}`)
   return keys
-})
-
-// 当父章节变化时，清空子章节选中
-watch(() => props.selectedChapter, () => {
-  selectedSectionKey.value = ''
 })
 
 const handleSelect = (keys: Array<string | number>) => {
   const key = String(keys[0])
   if (!key) return
-  if (key.startsWith('ch-')) {
-    selectedSectionKey.value = ''
-    emit('select', key.slice(3))
-  } else if (key.startsWith('sub-')) {
-    selectedSectionKey.value = key
-    // 子章节 emit 父章节号，用于获取章节内容
-    const sectionNo = key.slice(4)
-    const chapterNo = sectionNo.split('.')[0]
-    emit('select', chapterNo)
-  }
+  // 分工模式内容真源在子节 assignment：点击章/子节均 emit 精确编号，
+  // 由父组件/预览组件按「子节可读、章级聚合」口径加载，避免章号请求 4004
+  const no = key.startsWith('ch-') ? key.slice(3) : key.slice(4)
+  emit('select', no)
 }
 </script>
 

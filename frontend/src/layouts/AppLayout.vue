@@ -109,6 +109,9 @@
         </div>
       </a-layout-content>
     </a-layout>
+
+    <!-- 配置中心弹窗（全局唯一实例，用户菜单"模型设置"触发） -->
+    <ConfigCenterModal />
   </a-layout>
 </template>
 
@@ -133,7 +136,9 @@ import {
 import api from '@/api/client'
 import { hasPerm, setCurrentPermissions, setCurrentUser, setRole } from '@/stores/currentUser'
 import { useUiStore } from '@/stores/ui'
+import { useConfigCenterStore } from '@/stores/configCenter'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
+import ConfigCenterModal from '@/components/configCenter/ConfigCenterModal.vue'
 
 interface CurrentUser {
   id: string
@@ -146,6 +151,7 @@ interface CurrentUser {
 const router = useRouter()
 const route = useRoute()
 const uiStore = useUiStore()
+const configCenterStore = useConfigCenterStore()
 
 const displayName = ref('')
 const email = ref('')
@@ -217,7 +223,8 @@ const handleUserMenu = (info: { key: string | number }) => {
   if (key === 'kb') {
     router.push({ name: 'Materials' })
   } else if (key === 'settings') {
-    router.push({ name: 'Settings' })
+    // 配置中心弹窗（旧 /settings 路由已移除；权限校验在 store.open() 内）
+    configCenterStore.open()
   } else if (key === 'users') {
     router.push({ name: 'Users' })
   } else if (key === 'audit') {

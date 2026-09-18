@@ -45,6 +45,13 @@ export interface LlmSettingsPayload {
 /** 连通性测试目标 */
 export type ConnectionTestTarget = 'llm' | 'embedding'
 
+/** 连通性测试覆盖值（表单未保存值；先测后存流程） */
+export interface ConnectionTestOverrides {
+  model?: string
+  api_base?: string
+  api_key?: string
+}
+
 /** POST /settings/llm/test 返回结果（HTTP 恒 200） */
 export interface ConnectionTestResult {
   ok: boolean
@@ -72,9 +79,11 @@ export const updateLlmSettings = async (payload: LlmSettingsPayload): Promise<vo
 
 export const testLlmConnection = async (
   target: ConnectionTestTarget,
+  overrides?: ConnectionTestOverrides,
 ): Promise<ConnectionTestResult> => {
   const { data } = await api.post<ApiResult<ConnectionTestResult>>('/settings/llm/test', {
     target,
+    ...overrides,
   })
   return data.data
 }

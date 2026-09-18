@@ -1,10 +1,11 @@
 """Arq Worker 配置与任务注册."""
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from arq.connections import RedisSettings
 
 from app.core.config import settings
+from worker.tasks import task_index_document, task_parse_tender, task_reindex_all
 
 
 def parse_redis_url(url: str) -> RedisSettings:
@@ -23,7 +24,11 @@ def parse_redis_url(url: str) -> RedisSettings:
 class WorkerSettings:
     """Arq Worker 配置."""
 
-    functions: ClassVar[list] = []  # 在注册任务后填充
+    functions: ClassVar[list[Any]] = [
+        task_parse_tender,
+        task_index_document,
+        task_reindex_all,
+    ]
     redis_settings = parse_redis_url(settings.redis_url)
     max_jobs = 10
     job_timeout = 600  # 10 分钟

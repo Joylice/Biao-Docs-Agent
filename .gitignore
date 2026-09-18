@@ -12,6 +12,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .coverage
+.coverage.*
+htmlcov/
+# pytest 临时目录：本机 harness 有「单轮 >50 删除目标即杀进程」的门禁，
+# 故本地一律用 --basetemp=<工作区内目录> 规避临时目录 GC，这些目录不入库。
+.pytest_*/
 
 # Node
 node_modules/
@@ -24,6 +29,9 @@ dist/
 # E2E test artifacts
 e2e/playwright-report/
 e2e/test-results/
+
+# 本机人工查验脚本（Playwright 截图/扫描，依赖 output/_dev_account.txt 本地凭据）
+e2e/_dev_*.cjs
 
 # Vite 配置编译产物（源文件为 vite.config.ts）
 frontend/vite.config.js
@@ -42,3 +50,5 @@ backend/_logs/
 
 # Vite 构建临时文件
 *.timestamp-*.mjs
+deploy/.admin_cred.txt
+.git-rewrite/

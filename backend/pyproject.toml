@@ -12,6 +12,11 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 ignore = ["RUF001", "RUF002", "RUF003", "B008"]  # 允许中文全角字符; FastAPI Depends() 在参数默认值中
 
+[tool.ruff.lint.per-file-ignores]
+# 迁移脚本是「已执行的历史凭据」：其中内联 SQL（DDL / 种子数据 INSERT）的长行按原文保留。
+# 重排需拆字符串拼接，收益为零却会改动已应用的历史文件（且行号被设计文档引用）。
+"alembic/versions/*.py" = ["E501"]
+
 # ── mypy ──────────────────────────────────────────────
 [tool.mypy]
 python_version = "3.12"

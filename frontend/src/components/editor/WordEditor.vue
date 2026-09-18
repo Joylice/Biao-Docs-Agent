@@ -86,8 +86,8 @@ interface AnnotationMark {
 }
 
 interface WordEditorProps {
-  /** 初始内容（HTML 字符串）；外部变化时编辑器同步刷新 */
-  content?: string
+  /** 初始内容（HTML 字符串 或 ProseMirror JSON）；外部变化时编辑器同步刷新 */
+  content?: string | Record<string, unknown>
   /** 只读模式（禁止编辑） */
   readonly?: boolean
   /** 空文档占位提示文案 */
@@ -111,6 +111,7 @@ const props = withDefaults(defineProps<WordEditorProps>(), {
 
 const emit = defineEmits<{
   (e: 'update:content', value: string): void
+  (e: 'update:json', value: Record<string, unknown>): void
   (e: 'selection-change', selection: { from: number; to: number; text: string } | null): void
 }>()
 
@@ -240,6 +241,7 @@ const editor = useEditor({
   },
   onUpdate: ({ editor: instance }) => {
     emit('update:content', instance.getHTML())
+    emit('update:json', instance.getJSON())
   },
   onSelectionUpdate: ({ editor: instance }) => {
     if (props.readonly) {
@@ -272,12 +274,19 @@ watch(
 )
 
 // 外部 content 变化 → 重置内容（内容一致时跳过，避免光标跳动）
+// Phase 3：content 可为 HTML string 或 ProseMirror JSON，按类型分发
 watch(
   () => props.content,
   (content) => {
     const instance = editor.value
-    if (!instance || instance.getHTML() === content) return
-    instance.commands.setContent(content, false)
+    if (!instance) return
+    if (typeof content === 'string') {
+      if (instance.getHTML() === content) return
+      instance.commands.setContent(content, false)
+    } else if (content && typeof content === 'object') {
+      // ProseMirror JSON：直接 setContent（Tiptap 原生支持 JSON）
+      instance.commands.setContent(content, false)
+    }
   },
 )
 
@@ -346,8 +355,8 @@ const getHTML = (): string => editor.value?.getHTML() ?? ''
 const getJSON = (): Record<string, unknown> => editor.value?.getJSON() ?? {}
 /** 获取当前纯文本 */
 const getText = (): string => editor.value?.getText() ?? ''
-/** 外部设置内容（会进入撤销历史） */
-const setContent = (content: string): void => {
+/** 外部设置内容（会进入撤销历史）；接受 HTML string 或 ProseMirror JSON */
+const setContent = (content: string | Record<string, unknown>): void => {
   editor.value?.commands.setContent(content)
 }
 /** 聚焦编辑区 */
@@ -415,6 +424,8 @@ defineExpose({
    深色模式下纸张必须保持白色、文字保持深色，以模拟真实纸张
    并保证与 Word 导出效果一致。 */
 .word-editor__paper {
+  /* flex 子项不被压缩：内容超过一页时纸面随内容增高，避免溢出到滚动区背景（黑底） */
+  flex-shrink: 0;
   width: var(--paper-width, 210mm);
   min-height: var(--paper-height, 297mm);
   padding: var(--paper-padding, 25.4mm);

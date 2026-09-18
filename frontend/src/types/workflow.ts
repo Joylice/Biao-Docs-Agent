@@ -146,3 +146,41 @@ export interface AssignmentNode {
   /** 后端列表接口附带的提交人姓名（用于审阅页展示） */
   submitted_by_name?: string
 }
+
+/** 导出格式覆盖（前端自定义，传了哪个字段就用哪个，没传保留招标解析默认值） */
+export interface FormatOverride {
+  /** 正文字体（宋体/仿宋/黑体/楷体/微软雅黑） */
+  body_font?: string
+  /** 正文字号 pt（如 12=小四, 14=四号, 16=三号, 10.5=五号） */
+  body_size_pt?: number
+  /** 标题字号 pt（不传则沿用 heading 样式） */
+  heading_size_pt?: number
+  /** 行距倍数（1.0/1.15/1.5/2.0） */
+  line_spacing?: number
+  /** 固定行距 pt（与 line_spacing 二选一） */
+  line_spacing_fixed_pt?: number
+  /** 页边距 cm（仅传了的边覆盖） */
+  margins_cm?: {
+    top?: number
+    bottom?: number
+    left?: number
+    right?: number
+  }
+}
+
+/** 导出选项（传给后端驱动 Word 导出） */
+export interface ExportOptions {
+  /** 文档内容选项 */
+  include_toc?: boolean
+  include_annotations?: boolean
+  include_header_footer?: boolean
+  /** 页面设置 */
+  paper_size?: 'A4' | 'A3'
+  orientation?: 'portrait' | 'landscape'
+  /** 导出范围 */
+  scope?: 'all' | 'current'
+  /** 当前章节号（scope=current 时必传） */
+  current_chapter?: string
+  /** 格式覆盖（字段级覆盖招标解析默认值） */
+  format_override?: FormatOverride
+}

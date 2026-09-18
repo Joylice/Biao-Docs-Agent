@@ -8,7 +8,9 @@ from httpx import ASGITransport, AsyncClient
 
 from app.core.config import settings
 from app.main import app
-from app.services.infra import workflow_runtime
+from app.services.infra import settings_service
+from app.services.infra import workflow_runtime as wf_facade
+from app.services.infra.workflow import runtime as wf_runtime
 
 # 测试环境无 PostgreSQL：缩短 checkpointer 连接池等待，避免 TestClient lifespan 阻塞 30s；
 # Windows ProactorEventLoop 下 psycopg 不可用，直接短路初始化避免连接重试噪音
@@ -25,8 +27,7 @@ async def _skip_checkpointer_init() -> None:
 
 
 # 保留原实现供需要测试 init_checkpointer 自身行为的用例调用
-workflow_runtime._init_checkpointer_impl = workflow_runtime.init_checkpointer  # type: ignore[attr-defined]
-workflow_runtime.init_checkpointer = _skip_checkpointer_init  # type: ignore[method-assign]
+wf_runtime._init_checkpointer_impl = wf_runtime.init_checkpointer  # type: ignore[attr-defined]
 
 
 async def _skip_workflow_recovery() -> dict:
@@ -34,8 +35,17 @@ async def _skip_workflow_recovery() -> dict:
     return {}
 
 
-workflow_runtime._recover_running_workflows_impl = workflow_runtime.recover_running_workflows  # type: ignore[attr-defined]
-workflow_runtime.recover_running_workflows = _skip_workflow_recovery  # type: ignore[method-assign]
+wf_runtime._recover_running_workflows_impl = wf_runtime.recover_running_workflows  # type: ignore[attr-defined]
+
+# 桩必须打在**外层门面**（`app.services.infra.workflow_runtime`）上：
+# `app/main.py` 的 lifespan 走的是 `from app.services.infra import workflow_runtime`，
+# 而门面属性在导入期已绑定为原函数对象 —— 只改内层 `workflow.runtime` 改不到它
+# （实测 `outer.init_checkpointer is _skip` 为 False，真实实现照跑：
+#  日志里 `runtime.py 工作流 checkpointer 初始化失败` 即由此产生）。
+# 两层都打，保证无论调用方从哪一层取都能短路。
+for _mod in (wf_facade, wf_runtime):
+    _mod.init_checkpointer = _skip_checkpointer_init  # type: ignore[method-assign]
+    _mod.recover_running_workflows = _skip_workflow_recovery  # type: ignore[method-assign]
 
 
 @pytest.fixture(scope="session")
@@ -52,3 +62,20 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+@pytest.fixture(autouse=True)
+def _clean_settings_facade_bindings() -> Generator[None, None, None]:
+    """清理 settings_service 门面 __dict__ 残留的静态绑定.
+
+    存量测试用字符串路径 patch（``monkeypatch.setattr(
+    "app.services.infra.settings_service.X", ...)``）时，pytest undo 阶段以
+    ``setattr`` 恢复旧值，会在门面 ``__dict__`` 残留静态绑定，遮蔽 PEP 562
+    ``__getattr__`` 动态转发，导致后续对 runtime/storage 子模块的 patch 不生效。
+    autouse 先于测试内 monkeypatch setup（teardown 逆序 = monkeypatch 先 undo，
+    本 fixture 后清理），保证残留被删除、门面恢复纯动态转发。
+    """
+    yield
+    for name in list(settings_service.__dict__):
+        if name in settings_service._SYMBOL_SOURCE:  # type: ignore[attr-defined]
+            del settings_service.__dict__[name]

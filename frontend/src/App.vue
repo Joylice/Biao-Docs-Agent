@@ -53,11 +53,11 @@ const themeConfig = computed<ThemeConfig>(() => ({
     // 注意：以下色值为 variables.css 同名 token 的镜像。antd 主题算法需要真实色值
     // 做派生计算（调色板/对比度），无法接受 var(--xxx)，故保留字面量；
     // 修改 variables.css 对应 token 时须同步此处。
-    colorPrimary: uiStore.isDark ? '#60a5fa' : '#3b82f6',
+    colorPrimary: uiStore.isDark ? '#5b9eff' : '#3b82f6',
     colorSuccess: uiStore.isDark ? '#34d399' : '#10b981',
     colorWarning: uiStore.isDark ? '#fbbf24' : '#f59e0b',
     colorError: uiStore.isDark ? '#f87171' : '#ef4444',
-    colorInfo: uiStore.isDark ? '#60a5fa' : '#3b82f6',
+    colorInfo: uiStore.isDark ? '#5b9eff' : '#3b82f6',
     borderRadius: 8,
     fontFamily:
       "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",

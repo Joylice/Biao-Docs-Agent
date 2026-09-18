@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>模型设置 - UI 优化预览</title>
+<style>
+  :root {
+    --bg-app: #0f172a;
+    --bg-surface: #1e293b;
+    --bg-surface-hover: #334155;
+    --bg-elevated: #1e293b;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --text-tertiary: #64748b;
+    --border-color: #334155;
+    --border-color-light: #1e293b;
+    --color-primary: #60a5fa;
+    --color-primary-light: rgba(96, 165, 250, 0.15);
+    --color-success: #34d399;
+    --color-success-light: rgba(52, 211, 153, 0.15);
+    --color-warning: #fbbf24;
+    --color-warning-light: rgba(251, 191, 36, 0.1);
+    --color-error: #f87171;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: var(--bg-app);
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.5;
+    padding: var(--space-6);
+  }
+
+  .page-header {
+    margin-bottom: var(--space-6);
+  }
+  .page-header h1 {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .page-header p {
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  /* 状态总览 */
+  .overview {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-4);
+    margin-bottom: var(--space-5);
+  }
+  .overview-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+  }
+  .overview-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .overview-icon--llm { background: linear-gradient(135deg, #60a5fa, #3b82f6); color: #fff; }
+  .overview-icon--embedding { background: linear-gradient(135deg, #34d399, #10b981); color: #fff; }
+  .overview-icon--mock { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #fff; }
+  .overview-info { flex: 1; min-width: 0; }
+  .overview-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 2px; }
+  .overview-value { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .overview-model { color: var(--text-primary); font-family: monospace; font-size: 13px; }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .tag--success { background: var(--color-success-light); color: var(--color-success); }
+  .tag--default { background: rgba(148, 163, 184, 0.15); color: var(--text-secondary); }
+  .tag--warning { background: var(--color-warning-light); color: var(--color-warning); }
+
+  /* 主网格 */
+  .settings-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-5);
+    margin-bottom: var(--space-5);
+  }
+
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-4) var(--space-5);
+    border-bottom: 1px solid var(--border-color);
+  }
+  .card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .card-title-icon { font-size: 16px; }
+  .card-title-icon--llm { color: var(--color-primary); }
+  .card-title-icon--embedding { color: var(--color-success); }
+
+  .card-body { padding: var(--space-5); }
+
+  /* 表单项 */
+  .form-item { margin-bottom: var(--space-4); }
+  .form-item:last-child { margin-bottom: 0; }
+  .form-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+  }
+  .form-label .required { color: var(--color-error); margin-left: 2px; }
+
+  .input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .input {
+    width: 100%;
+    height: 40px;
+    padding: 0 12px;
+    padding-right: 90px;
+    background: var(--bg-app);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 14px;
+    transition: border-color 0.15s;
+  }
+  .input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px var(--color-primary-light);
+  }
+  .input::placeholder { color: var(--text-tertiary); }
+
+  .input-status {
+    position: absolute;
+    right: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .input-eye {
+    cursor: pointer;
+    color: var(--text-tertiary);
+    font-size: 14px;
+    padding: 4px;
+    border-radius: 4px;
+  }
+  .input-eye:hover { color: var(--text-secondary); background: var(--bg-surface-hover); }
+
+  .form-help {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+  .form-help code {
+    background: var(--bg-app);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--color-primary);
+  }
+
+  /* 快速选择 */
+  .quick-select {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .quick-tag {
+    padding: 3px 10px;
+    background: var(--bg-app);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .quick-tag:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+
+  /* 分组折叠 */
+  .provider-group {
+    margin-top: var(--space-4);
+    border-top: 1px dashed var(--border-color);
+    padding-top: var(--space-4);
+  }
+  .collapse-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    padding: 8px 0;
+    user-select: none;
+  }
+  .collapse-header:hover .collapse-title { color: var(--color-primary); }
+  .collapse-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: color 0.15s;
+  }
+  .collapse-arrow {
+    font-size: 10px;
+    transition: transform 0.2s;
+  }
+  .collapse-header.open .collapse-arrow { transform: rotate(90deg); }
+  .collapse-count { font-size: 12px; color: var(--text-tertiary); }
+  .collapse-body {
+    display: none;
+    margin-top: var(--space-3);
+  }
+  .collapse-header.open + .collapse-body { display: block; }
+
+  /* 底部操作 */
+  .card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-4) var(--space-5);
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-surface-hover);
+  }
+  .card-footer-hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 16px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 0.15s;
+  }
+  .btn--primary {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+  .btn--primary:hover { background: #3b82f6; }
+  .btn--default {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+  }
+  .btn--default:hover { border-color: var(--color-primary); color: var(--color-primary); }
+  .btn--text {
+    background: transparent;
+    color: var(--color-primary);
+    border-color: transparent;
+    height: 32px;
+    padding: 0 8px;
+  }
+  .btn--text:hover { background: var(--color-primary-light); }
+
+  /* 运行模式卡片 */
+  .mode-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+  }
+  .mode-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-4);
+  }
+  .mode-info { flex: 1; }
+  .mode-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .mode-desc { font-size: 12px; color: var(--text-secondary); }
+
+  /* 开关 */
+  .switch {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    background: var(--bg-app);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    background: var(--text-secondary);
+    border-radius: 50%;
+    transition: all 0.2s;
+  }
+  .switch.on {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+  .switch.on::after {
+    left: 22px;
+    background: #fff;
+  }
+
+  .mode-actions {
+    display: flex;
+    gap: var(--space-3);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border-color);
+  }
+
+  .alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--color-warning-light);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    color: var(--color-warning);
+    margin-top: var(--space-4);
+  }
+
+  /* 对比标注 */
+  .badge-new {
+    display: inline-block;
+    padding: 1px 6px;
+    background: var(--color-success-light);
+    color: var(--color-success);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  @media (max-width: 992px) {
+    .overview { grid-template-columns: 1fr; }
+    .settings-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>模型设置 <span class="badge-new">优化版</span></h1>
+  <p>配置大模型与向量服务（需管理员权限，密钥加密存储）</p>
+</div>
+
+<!-- 状态总览：增强版，显示当前模型名 -->
+<div class="overview">
+  <div class="overview-item">
+    <div class="overview-icon overview-icon--llm">🤖</div>
+    <div class="overview-info">
+      <div class="overview-label">LLM 大模型</div>
+      <div class="overview-value">
+        <span class="overview-model">zhipu/glm-4.6v</span>
+        <span class="tag tag--success">已配置</span>
+      </div>
+    </div>
+  </div>
+  <div class="overview-item">
+    <div class="overview-icon overview-icon--embedding">🏢</div>
+    <div class="overview-info">
+      <div class="overview-label">Embedding 向量模型</div>
+      <div class="overview-value">
+        <span class="overview-model">jiaorong-bge-m3</span>
+        <span class="tag tag--success">已配置</span>
+      </div>
+    </div>
+  </div>
+  <div class="overview-item">
+    <div class="overview-icon overview-icon--mock">⚗️</div>
+    <div class="overview-info">
+      <div class="overview-label">运行模式</div>
+      <div class="overview-value">
+        <span class="tag tag--success">真实调用</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 主配置区 -->
+<div class="settings-grid">
+  <!-- LLM 大模型卡片 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <span class="card-title-icon card-title-icon--llm">🤖</span>
+        LLM 大模型
+        <span class="tag tag--success">已配置</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <!-- 统一说明，替代每个 Key 下面的重复文字 -->
+      <div class="form-help" style="margin-bottom: 16px; padding: 8px 12px; background: var(--bg-app); border-radius: 6px;">
+        💡 API Key 按模型名前缀自动匹配：<code>deepseek/</code>→DeepSeek，<code>zhipu/</code>→智谱，<code>qwen/</code>→百炼，<code>openai/</code>→OpenAI
+      </div>
+
+      <div class="form-item">
+        <label class="form-label">LLM 主模型</label>
+        <div class="input-wrapper">
+          <input class="input" value="zhipu/glm-4.6v" />
+        </div>
+        <!-- 快速选择标签 -->
+        <div class="quick-select">
+          <span class="quick-tag">deepseek/deepseek-chat</span>
+          <span class="quick-tag">zhipu/glm-4.6v</span>
+          <span class="quick-tag">qwen/qwen-plus</span>
+          <span class="quick-tag">moonshot/kimi-latest</span>
+        </div>
+      </div>
+
+      <div class="form-item">
+        <label class="form-label">LLM 服务地址 <span style="color: var(--text-tertiary); font-weight: 400;">（自定义端点时填写）</span></label>
+        <div class="input-wrapper">
+          <input class="input" value="https://open.bigmodel.cn/api/paas/v4" />
+        </div>
+      </div>
+
+      <div class="form-item">
+        <label class="form-label">LLM 服务 API Key <span style="color: var(--text-tertiary); font-weight: 400;">（自定义端点专用）</span></label>
+        <div class="input-wrapper">
+          <input class="input" type="password" value="sk-9f8a7b6c5d4e3f2a" style="padding-right: 50px;" />
+          <div class="input-status">
+            <span class="input-eye">👁</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 常用提供商：默认展开 -->
+      <div class="form-item">
+        <label class="form-label">DeepSeek API Key</label>
+        <div class="input-wrapper">
+          <input class="input" type="password" placeholder="请输入 API Key" />
+          <div class="input-status">
+            <span class="tag tag--default">未配置</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-item">
+        <label class="form-label">智谱 AI API Key</label>
+        <div class="input-wrapper">
+          <input class="input" type="password" value="sk-1a2b3c4d5e6f7g8h" style="padding-right: 100px;" />
+          <div class="input-status">
+            <span class="tag tag--success">已配置</span>
+            <span class="input-eye">👁</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-item">
+        <label class="form-label">阿里云百炼 DashScope API Key</label>
+        <div class="input-wrapper">
+          <input class="input" type="password" placeholder="请输入 API Key" />
+          <div class="input-status">
+            <span class="tag tag--default">未配置</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 更多提供商：折叠 -->
+      <div class="provider-group">
+        <div class="collapse-header" onclick="this.classList.toggle('open')">
+          <div class="collapse-title">
+            <span class="collapse-arrow">▶</span>
+            更多提供商
+            <span class="collapse-count">（已配置 0/3）</span>
+          </div>
+        </div>
+        <div class="collapse-body">
+          <div class="form-item">
+            <label class="form-label">OpenAI API Key</label>
+            <div class="input-wrapper">
+              <input class="input" type="password" placeholder="请输入 API Key" />
+              <div class="input-status">
+                <span class="tag tag--default">未配置</span>
+              </div>
+            </div>
+          </div>
+          <div class="form-item">
+            <label class="form-label">Anthropic API Key</label>
+            <div class="input-wrapper">
+              <input class="input" type="password" placeholder="请输入 API Key" />
+              <div class="input-status">
+                <span class="tag tag--default">未配置</span>
+              </div>
+            </div>
+          </div>
+          <div class="form-item">
+            <label class="form-label">月之暗面 Moonshot API Key</label>
+            <div class="input-wrapper">
+              <input class="input" type="password" placeholder="请输入 API Key" />
+              <div class="input-status">
+                <span class="tag tag--default">未配置</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-footer">
+      <div class="card-footer-hint">💾 密钥加密存储，仅显示脱敏值</div>
+      <button class="btn btn--text">🔗 测试连通性</button>
+    </div>
+  </div>
+
+  <!-- Embedding 卡片 -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <span class="card-title-icon card-title-icon--embedding">🏢</span>
+        Embedding 向量模型
+        <span class="tag tag--success">已配置</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="form-item">
+        <label class="form-label">Embedding 模型名称</label>
+        <div class="input-wrapper">
+          <input class="input" value="jiaorong-bge-m3" />
+        </div>
+        <div class="quick-select">
+          <span class="quick-tag">dashscope/text-embedding-v3</span>
+          <span class="quick-tag">openai/text-embedding-3-small</span>
+          <span class="quick-tag">ollama/bge-m3</span>
+        </div>
+      </div>
+
+      <div class="form-item">
+        <label class="form-label">Embedding 服务地址</label>
+        <div class="input-wrapper">
+          <input class="input" value="https://c4ai.cccltd.cn/api/compatible/v1" />
+        </div>
+      </div>
+
+      <div class="form-item">
+        <label class="form-label">Embedding API Key</label>
+        <div class="input-wrapper">
+          <input class="input" type="password" value="sk-9f8a7b6c5d4e3f2a" style="padding-right: 100px;" />
+          <div class="input-status">
+            <span class="tag tag--success">已配置</span>
+            <span class="input-eye">👁</span>
+          </div>
+        </div>
+        <div class="form-help">独立密钥，优先于 LLM 密钥匹配；留空则按模型前缀回退 DeepSeek/DashScope 密钥</div>
+      </div>
+    </div>
+    <div class="card-footer">
+      <div class="card-footer-hint">📐 向量维度：1024</div>
+      <button class="btn btn--text">🔗 测试连通性</button>
+    </div>
+  </div>
+</div>
+
+<!-- 运行模式卡片 -->
+<div class="mode-card">
+  <div class="mode-row">
+    <div class="mode-info">
+      <div class="mode-title">Mock 模式</div>
+      <div class="mode-desc">开启后不调用真实模型，使用预设 Mock 数据返回，用于开发调试与演示</div>
+    </div>
+    <div class="switch" onclick="this.classList.toggle('on')"></div>
+  </div>
+  <div class="mode-actions">
+    <button class="btn btn--primary">💾 保存配置</button>
+    <button class="btn btn--default">🔄 重新加载</button>
+  </div>
+  <div class="alert">
+    <span>⚠️</span>
+    <span>仅当您修改了密钥输入框才会更新；清空输入框并保存将删除已保存的密钥；未改动的密钥保持不变。</span>
+  </div>
+</div>
+
+<script>
+  // 简单交互演示
+  document.querySelectorAll('.input-eye').forEach(eye => {
+    eye.addEventListener('click', function() {
+      const input = this.closest('.input-wrapper').querySelector('input');
+      if (input.type === 'password') {
+        input.type = 'text';
+        this.textContent = '🙈';
+      } else {
+        input.type = 'password';
+        this.textContent = '👁';
+      }
+    });
+  });
+</script>
+
+</body>
+</html>

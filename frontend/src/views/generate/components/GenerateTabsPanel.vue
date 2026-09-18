@@ -10,6 +10,8 @@
       <ChapterPreview
         :selected-chapter="selectedChapter"
         :project-id="projectId"
+        :outline="outline"
+        :assignment-map="assignmentMap"
         @go-division="emit('go-division')"
       />
     </a-tab-pane>
@@ -33,12 +35,16 @@ import { computed, ref, watch } from 'vue'
 import { fetchBenchmark } from '@/api'
 import ChapterPreview from './ChapterPreview.vue'
 import ScoreMatchPanel from './ScoreMatchPanel.vue'
-import type { BenchmarkItem } from '@/types'
+import type { BenchmarkItem, OutlineItem, AssignmentNode } from '@/types'
 
 const props = defineProps<{
   selectedChapter: string
   projectId: string
   phase: string
+  /** 大纲章节（透传给章节预览组件用于全文拼接与全过审判定） */
+  outline: OutlineItem[]
+  /** 章节分工状态映射（透传） */
+  assignmentMap: Map<string, AssignmentNode>
 }>()
 
 const emit = defineEmits<{

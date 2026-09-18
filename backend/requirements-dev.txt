@@ -9,8 +9,12 @@ ruff>=0.5,<1.0
 mypy>=1.11,<2.0
 
 # --- Type Stubs ---
-types-redis>=4.6
+# 注意：**不要**装 types-redis —— redis>=5 自带 py.typed 内联类型，而 types-redis
+# 停留在 4.6（无 `aclose`），装上反而会让 mypy 判错 redis 5.x 的真实 API。
 types-passlib>=1.7
+# mypy strict 下 `yaml` / `jose` 无 stub 会报 import-untyped，补齐以让 CI 的类型门可过
+types-PyYAML>=6.0
+types-python-jose>=3.3
 
 # --- Security ---
 pip-audit>=2.7,<3.0

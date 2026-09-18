@@ -1,0 +1,318 @@
+.review-view__topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.review-view__topbar :deep(.review-progress) {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.review-view__topbar-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 三栏布局（侧栏收紧，为中间 A4 纸面让出宽度） */
+.review-view__three-col {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.review-view__sider {
+  width: 252px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+.review-view__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.review-view__aside {
+  width: 340px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 100px);
+  background: var(--bg-elevated, #1f1f1f);
+  border: 1px solid var(--border-color, #303030);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.review-view__aside-tabs {
+  height: 100%;
+}
+
+.review-view__aside-tabs :deep(.ant-tabs-content-holder) {
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+}
+
+/* 章节头部 */
+.review-view__content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: var(--bg-elevated, #1f1f1f);
+  border: 1px solid var(--border-color, #303030);
+  border-radius: 8px;
+}
+
+.review-view__content-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-view__chapter-no {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary-color, #1890ff);
+}
+
+.review-view__chapter-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #fff);
+}
+
+/* 废标风险 */
+.review-view__risk-alert {
+  flex-shrink: 0;
+}
+
+.review-view__risk-item {
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+/* 富文本预览区 */
+.review-view__paper-wrapper {
+  background: var(--bg-surface, #141414);
+  border: 1px solid var(--border-color, #303030);
+  border-radius: 8px;
+  padding: 24px;
+  min-height: 500px;
+  display: flex;
+  justify-content: center;
+}
+
+.review-view__editor {
+  width: 100%;
+  max-width: 210mm;
+}
+
+.review-view__editor :deep(.ProseMirror) {
+  background: #fff;
+  color: #333;
+  padding: 25.4mm;
+  min-height: 297mm;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+}
+
+.review-view__empty-content {
+  color: var(--text-secondary, #999);
+  padding: 60px 0;
+}
+
+/* 批注面板 */
+.review-view__annotation-panel {
+  padding: 12px;
+}
+
+.review-view__selection-hint {
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  background: rgba(24, 144, 255, 0.1);
+  border: 1px solid rgba(24, 144, 255, 0.3);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.review-view__selection-label {
+  color: var(--text-secondary, #999);
+}
+
+.review-view__selection-text {
+  color: var(--primary-color, #1890ff);
+  font-style: italic;
+}
+
+.review-view__annotation-filter {
+  margin-bottom: 10px;
+}
+
+.review-view__annotation-actions {
+  margin-bottom: 10px;
+}
+
+.review-view__annotation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.review-view__annotation-item {
+  padding: 10px 12px;
+  background: var(--bg-surface, #2a2a2a);
+  border-radius: 6px;
+  border-left: 3px solid #fa8c16;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.review-view__annotation-item:hover {
+  background: var(--bg-hover, #333);
+}
+
+.review-view__annotation-item--active {
+  border-left-color: #1890ff;
+  box-shadow: 0 0 0 1px rgba(24, 144, 255, 0.3);
+}
+
+.review-view__annotation-item--resolved {
+  border-left-color: #52c41a;
+  opacity: 0.75;
+}
+
+.review-view__annotation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.review-view__annotation-status {
+  font-size: 10px;
+  margin: 0;
+}
+
+.review-view__annotation-quote {
+  font-size: 11px;
+  color: var(--text-tertiary, #888);
+  font-style: italic;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 3px;
+  border-left: 2px solid var(--border-color, #444);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-view__annotation-author {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #fff);
+}
+
+.review-view__annotation-time {
+  font-size: 11px;
+  color: var(--text-tertiary, #666);
+}
+
+.review-view__annotation-content {
+  font-size: 13px;
+  color: var(--text-secondary, #ccc);
+  line-height: 1.5;
+}
+
+.review-view__annotation-footer {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.review-view__annotation-btns {
+  display: flex;
+  gap: 0;
+}
+
+.review-view__version-panel {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+/* 全文预览模式 */
+.review-view__full-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.review-view__full-chapter {
+  scroll-margin-top: 16px;
+}
+
+.review-view__full-chapter-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  margin-bottom: 8px;
+  background: var(--bg-elevated, #1f1f1f);
+  border: 1px solid var(--border-color, #303030);
+  border-radius: 6px;
+}
+
+.review-view__full-chapter-no {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary-color, #1890ff);
+}
+
+.review-view__full-chapter-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #fff);
+}
+
+/* 全文预览正文：分页纸面流（auto 模式，随页面滚动） */
+.review-view__full-chapter-body {
+  padding: 0 16px 8px;
+  display: flex;
+  justify-content: center;
+}
+
+.review-view__full-preview {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+/* 窄屏适配：中屏起右栏收窄，让更多宽度给 A4 纸面 */
+@media (max-width: 1520px) {
+  .review-view__aside {
+    width: 300px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .review-view__three-col {
+    flex-direction: column;
+  }
+  .review-view__sider,
+  .review-view__aside {
+    width: 100%;
+    position: static;
+    max-height: none;
+  }
+}

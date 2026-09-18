@@ -1,4 +1,4 @@
-/** 招标解析、评分点、技术需求相关类型 */
+/** 招标解析、评分点相关类型 */
 
 /** 评分点（对齐后端 ScorePointOut） */
 export interface ScorePoint {
@@ -11,19 +11,6 @@ export interface ScorePoint {
   strategy: string | null
   risk_level: string | null
   confirmed: boolean
-}
-
-/** 技术需求（对齐后端 TechRequirementOut；/requirements 附带 source/related_sp） */
-export interface TechRequirement {
-  id: string
-  seq: number
-  description: string
-  category: string | null
-  is_mandatory: boolean
-  /** /requirements 接口附带：来源评分点条款（未关联为 null） */
-  source?: string | null
-  /** /requirements 接口附带：关联评分点摘要 */
-  related_sp?: { clause_no: string; item: string } | null
 }
 
 /** 文档级格式要求项（对齐后端 format-requirements 条目） */
@@ -45,12 +32,38 @@ export const FORMAT_CATEGORIES: { value: string; label: string }[] = [
 /** 评分点风险颜色（分值 >= 20 为高风险） */
 export const isHighScore = (score: number | null): boolean => (score ?? 0) >= 20
 
-/** 技术需求优先级颜色 */
-export const requirementPriorityColor = (priority: string): string => {
+/** 术语表条目（只读，对齐后端 doc.meta.glossary） */
+export interface GlossaryItem {
+  term: string
+  canonical: string
+  desc?: string
+}
+
+/** 解析交叉校验告警（P2 — validator Agent 产出，对齐后端 parse_warnings） */
+export interface ParseWarning {
+  type: string
+  message: string
+  severity: 'high' | 'mid' | 'low' | string
+  agent_id?: string
+}
+
+/** 校验维度中文标签映射 */
+export const WARNING_TYPE_LABELS: Record<string, string> = {
+  duplicate: '重复条目',
+  score_total: '分值合计',
+  clause_no_format: '条款号格式',
+  coverage: '覆盖',
+  omission: '遗漏',
+  format_term: '格式术语',
+  degraded: '降级告警',
+}
+
+/** 告警严重程度颜色映射 */
+export const warningSeverityColor = (severity: string): string => {
   const map: Record<string, string> = {
     high: 'red',
-    medium: 'orange',
-    low: 'default',
+    mid: 'orange',
+    low: 'blue',
   }
-  return map[priority] || 'default'
+  return map[severity] || 'default'
 }

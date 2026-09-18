@@ -9,8 +9,10 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { htmlToMarkdown } from '@/utils/markdown-converter'
+import { proseMirrorToDSL, isDSLEmpty } from '@/utils/dsl-converter'
 import { saveChapterContent } from '@/api'
 import type { SaveStatus } from '@/types/editor'
+import type { ProposalContent } from '@/types/dsl'
 
 /** 自动保存防抖时长（ms） */
 const AUTOSAVE_DEBOUNCE_MS = 2000
@@ -31,8 +33,12 @@ export interface UseChapterSaveOptions {
   chapterNo: string
   /** 读取编辑器当前 HTML（由页面传入） */
   getEditorHtml: () => string
+  /** 读取编辑器当前 JSON（Phase 3：用于 DSL 转换） */
+  getEditorJson: () => Record<string, unknown>
   /** 保存基线 HTML（由 loader 提供，初始值 = initialHtml） */
   lastSavedHtml: Ref<string>
+  /** Phase 3：DSL 基线（由 loader 提供） */
+  lastSavedDsl: Ref<ProposalContent | null>
   /** 只读模式标志（只读时跳过自动保存和 beforeunload 拦截） */
   isReadOnly?: () => boolean
 }
@@ -49,7 +55,7 @@ export interface UseChapterSaveReturn {
 }
 
 export function useChapterSave(options: UseChapterSaveOptions): UseChapterSaveReturn {
-  const { projectId, chapterNo, getEditorHtml, lastSavedHtml, isReadOnly } = options
+  const { projectId, chapterNo, getEditorHtml, getEditorJson, lastSavedHtml, lastSavedDsl, isReadOnly } = options
 
   const saveStatus = ref<SaveStatus>('idle')
   const dirty = ref(false)
@@ -86,11 +92,19 @@ export function useChapterSave(options: UseChapterSaveOptions): UseChapterSaveRe
     saveStatus.value = 'saving'
     try {
       const markdown = htmlToMarkdown(html)
+
+      // Phase 3：编辑器 JSON → DSL JSON，作为结构化真源一并保存
+      const pmJson = getEditorJson()
+      const dsl = proseMirrorToDSL(pmJson)
+      const dslJson = isDSLEmpty(dsl) ? null : dsl
+
       await saveChapterContent(projectId, chapterNo, {
         content: markdown,
         content_html: html,
+        content_dsl: dslJson as Record<string, unknown> | null,
       })
       lastSavedHtml.value = html
+      lastSavedDsl.value = dslJson
       dirty.value = false
       retryCount.value = 0
       saveStatus.value = 'saved'

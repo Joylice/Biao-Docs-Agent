@@ -166,8 +166,9 @@ import {
   ArrowLeftOutlined,
   FileSearchOutlined,
   BulbOutlined,
-  EyeOutlined,
   EditOutlined,
+  EyeOutlined,
+  DownloadOutlined,
   TeamOutlined,
 } from '@ant-design/icons-vue'
 import {
@@ -220,12 +221,13 @@ const candidateOptions = computed(() => {
 const isOwner = computed(() => projectOwnerId.value === currentUserId.value)
 
 /* ---------------- 步骤条配置 ---------------- */
-// 业务主线顺序：招标解析 → 大纲生成 → 方案生成（分工） → 审阅导出
+// 业务主线顺序：招标解析 → 方案大纲生成 → 方案生成（分工） → 方案评审 → 方案导出
 const steps = [
   { key: 'parse', label: '招标解析', route: 'Parse', icon: h(FileSearchOutlined) },
-  { key: 'generate', label: '大纲生成', route: 'Generate', icon: h(BulbOutlined) },
+  { key: 'generate', label: '方案大纲生成', route: 'Generate', icon: h(BulbOutlined) },
   { key: 'division', label: '方案生成', route: 'Division', icon: h(EditOutlined) },
-  { key: 'review', label: '审阅', route: 'Review', icon: h(EyeOutlined) },
+  { key: 'review', label: '方案评审', route: 'Review', icon: h(EyeOutlined) },
+  { key: 'export', label: '方案导出', route: 'Review', icon: h(DownloadOutlined) },
 ]
 
 const routeToStepIndex: Record<string, number> = {
@@ -244,9 +246,10 @@ const phaseText = computed(() => {
   const map: Record<string, string> = {
     init: '待启动',
     parse: '解析中',
-    generate: '生成中',
-    generating: '生成中',
+    generate: '大纲生成中',
+    generating: '方案生成中',
     review: '审阅中',
+    export: '导出中',
     done: '已完成',
   }
   return map[projectPhase.value] || projectPhase.value

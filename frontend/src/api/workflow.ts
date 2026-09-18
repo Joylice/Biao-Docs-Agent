@@ -8,6 +8,7 @@ import type {
   OutlineDraft,
   OutlineSuggestion,
   SectionSuggestion,
+  ExportOptions,
 } from '@/types'
 
 /** 获取工作流状态 */
@@ -62,14 +63,6 @@ export const fetchSectionSuggestions = (projectId: string, chapterNo?: string) =
     { chapter_no: chapterNo },
   )
 
-/** 重写章节 */
-export const rewriteChapter = (projectId: string, chapterNo: string, comment: string) =>
-  api.post<ApiResponse<{ content: string }>>(
-    `/projects/${projectId}/workflow/rewrite-chapter`,
-    null,
-    { params: { chapter_no: chapterNo, comment } },
-  )
-
 /** 审阅确认（通过 / 章节反馈重写） */
 export const confirmReview = (projectId: string, data: ConfirmReviewRequest) =>
   api.post<ApiResponse<{ next_phase?: string }>>(
@@ -87,8 +80,9 @@ export const confirmDivision = (projectId: string) =>
 export const saveWorkflowSection = (projectId: string, chapterNo: string, content: string) =>
   api.put<ApiResponse<void>>(`/projects/${projectId}/workflow/sections/${chapterNo}`, { content })
 
-/** 导出 Word 文档（返回导出状态与存储标识） */
-export const fetchWorkflowExport = (projectId: string) =>
-  api.get<ApiResponse<{ export_status?: string; export_storage_key?: string }>>(
+/** 导出 Word 文档（返回导出状态与存储标识，携带自定义格式选项） */
+export const fetchWorkflowExport = (projectId: string, options?: ExportOptions) =>
+  api.post<ApiResponse<{ export_status?: string; export_storage_key?: string; download_url?: string }>>(
     `/projects/${projectId}/workflow/export`,
+    options ?? {},
   )

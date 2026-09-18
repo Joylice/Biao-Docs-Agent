@@ -7,10 +7,16 @@ import type {
   AssistRequest,
 } from '@/types'
 
-/** 章节内容：content 为 Markdown 文本；content_html 为富文本 HTML（后端双字段扩展） */
+/**
+ * 章节内容：
+ * - content: Markdown 文本（向后兼容）
+ * - content_html: 富文本 HTML（向后兼容）
+ * - content_dsl: 结构化 DSL JSON（Phase 3 真源，优先使用）
+ */
 export interface ChapterContent {
   content: string
   content_html?: string
+  content_dsl?: Record<string, unknown> | null
 }
 
 /** 获取章节分工列表（树形） */

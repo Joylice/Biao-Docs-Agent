@@ -22,12 +22,16 @@ export { findChapterTitle, flattenAssignments } from '@/composables/useChapterLo
 export interface UseChapterPersistenceOptions extends UseChapterLoaderOptions {
   /** 读取编辑器当前 HTML（由页面传入） */
   getEditorHtml: () => string
+  /** Phase 3：读取编辑器当前 JSON（用于 DSL 转换） */
+  getEditorJson: () => Record<string, unknown>
   /** 只读模式标志（只读时跳过自动保存和 beforeunload 拦截） */
   isReadOnly?: () => boolean
 }
 
 export interface UseChapterPersistenceReturn {
   loading: Ref<boolean>
+  /** Phase 3：初始内容（DSL JSON 或 HTML string） */
+  initialContent: Ref<string | Record<string, unknown>>
   initialHtml: Ref<string>
   chapterTitle: Ref<string>
   saveStatus: Ref<SaveStatus>
@@ -43,7 +47,7 @@ export interface UseChapterPersistenceReturn {
 export function useChapterPersistence(
   options: UseChapterPersistenceOptions,
 ): UseChapterPersistenceReturn {
-  const { projectId, chapterNo, getEditorHtml, onLoaded, isReadOnly } = options
+  const { projectId, chapterNo, getEditorHtml, getEditorJson, onLoaded, isReadOnly } = options
 
   const loader = useChapterLoader({ projectId, chapterNo, onLoaded })
 
@@ -51,12 +55,15 @@ export function useChapterPersistence(
     projectId,
     chapterNo,
     getEditorHtml,
+    getEditorJson,
     lastSavedHtml: loader.lastSavedHtml,
+    lastSavedDsl: loader.lastSavedDsl,
     isReadOnly,
   })
 
   return {
     loading: loader.loading,
+    initialContent: loader.initialContent,
     initialHtml: loader.initialHtml,
     chapterTitle: loader.chapterTitle,
     saveStatus: saver.saveStatus,

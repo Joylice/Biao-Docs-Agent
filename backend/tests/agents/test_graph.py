@@ -11,7 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from app.agents import nodes
-from app.models.document import ScorePoint, TechRequirement
+from app.models.document import ScorePoint
 from app.models.project import Project
 
 PROJECT_ID = uuid.uuid4()
@@ -84,17 +84,6 @@ def make_fake_db() -> FakeDB:
                     criteria="方案完整",
                     is_star=True,
                     confirmed=True,  # 严格模式：仅已确认评分点进入大纲
-                )
-            ],
-            TechRequirement: [
-                TechRequirement(
-                    id=uuid.uuid4(),
-                    project_id=PROJECT_ID,
-                    doc_id=uuid.uuid4(),
-                    seq=1,
-                    description="支持高可用",
-                    category="架构",
-                    is_mandatory=True,
                 )
             ],
         }
@@ -192,8 +181,8 @@ class TestWorkflowInterrupt:
         assert result["progress"] == 1.0
 
     @pytest.mark.asyncio
-    async def test_review_feedback_rewrites(self, mock_deps, graph) -> None:
-        """审阅反馈 → 重写 → 再次中断审阅."""
+    async def test_review_feedback_loops_back(self, mock_deps, graph) -> None:
+        """审阅反馈 → 回到 review interrupt 等待人工再次确认（rewrite 节点已移除）."""
         config = {"configurable": {"thread_id": str(uuid.uuid4())}}
         initial = {"project_id": str(PROJECT_ID), "user_id": str(uuid.uuid4())}
 
@@ -202,16 +191,15 @@ class TestWorkflowInterrupt:
         result = await graph.ainvoke(Command(resume=True), config)
         assert result["__interrupt__"][0].value["type"] == "review_request"
 
-        # 反馈重写章节 1
+        # 反馈 → 回到 review interrupt（不再触发 rewrite 节点）
         result = await graph.ainvoke(
             Command(resume={"action": "feedback", "feedback": {"1": "补充项目范围说明"}}),
             config,
         )
-        assert result["__interrupt__"], "重写后应再次停在审阅"
+        assert result["__interrupt__"], "反馈后应再次停在审阅"
         assert result["__interrupt__"][0].value["type"] == "review_request"
-        assert "重写后的章节" in result["chapters"]["1"]
 
-        # 重写后通过 → 导出
+        # 通过 → 导出
         result = await graph.ainvoke(Command(resume={"action": "approved"}), config)
         assert result["export_status"] == "done"
 

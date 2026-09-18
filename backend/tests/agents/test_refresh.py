@@ -1,9 +1,11 @@
 """refresh_context_node 单元测试 — 对齐方案 B 三层保障.
 
 覆盖：
-- 正常路径：从 DB 刷新源数据写回 state，字段齐全，资格需求被过滤，context_version 稳定
+- 正常路径：从 DB 刷新源数据写回 state，字段齐全，context_version 稳定
 - 异常路径：空 project_id / DB 异常 → 返回 {} 保持 state 不变
 - reducer 单测：merge_reset_on_empty 空 dict 清空、非空合并、None 处理
+
+P3 改造：tech_requirements 已移除，测试不再涉及资格需求过滤。
 """
 
 import uuid
@@ -13,7 +15,7 @@ import pytest
 from app.agents import nodes
 from app.agents.nodes.refresh import refresh_context_node
 from app.agents.state import merge_reset_on_empty
-from app.models.document import Document, ScorePoint, TechRequirement
+from app.models.document import Document, ScorePoint
 from app.models.project import Project
 
 PROJECT_ID = uuid.uuid4()
@@ -53,7 +55,7 @@ class FakeDB:
 
 
 def _make_db() -> FakeDB:
-    """构造含解析结果 + 资格类需求的 DB mock."""
+    """构造含解析结果的 DB mock（P3 后无 tech_requirements）."""
     proj = Project(
         id=PROJECT_ID,
         name="河北项目",
@@ -72,26 +74,6 @@ def _make_db() -> FakeDB:
         is_star=False,
         confirmed=True,
     )
-    # 纯技术需求（应保留）
-    tr_tech = TechRequirement(
-        id=uuid.uuid4(),
-        project_id=PROJECT_ID,
-        doc_id=uuid.uuid4(),
-        seq=1,
-        description="系统需支持高可用部署，响应时间不超过500ms",
-        category="架构",
-        is_mandatory=True,
-    )
-    # 资格/商务类需求（应被过滤）
-    tr_qual = TechRequirement(
-        id=uuid.uuid4(),
-        project_id=PROJECT_ID,
-        doc_id=uuid.uuid4(),
-        seq=2,
-        description="企业资质：具备公路交通工程专业承包壹级资质，近3年同类业绩",
-        category=None,
-        is_mandatory=True,
-    )
     doc = Document(
         id=uuid.uuid4(),
         project_id=PROJECT_ID,
@@ -102,7 +84,6 @@ def _make_db() -> FakeDB:
         {
             Project: [proj],
             ScorePoint: [sp],
-            TechRequirement: [tr_tech, tr_qual],
             Document: [doc],
         }
     )
@@ -150,29 +131,17 @@ class TestRefreshContextNode:
 
     @pytest.mark.asyncio
     async def test_refresh_writes_all_fields(self, monkeypatch):
-        """正常路径：返回字段齐全（含严格过滤后的评分点/需求/行业/术语表/指纹）."""
+        """正常路径：返回字段齐全（评分点/行业/术语表/指纹）."""
         self._patch_db(monkeypatch, _make_db())
         result = await refresh_context_node({"project_id": str(PROJECT_ID)})
 
         assert "score_points" in result and len(result["score_points"]) == 1
         assert result["score_points"][0]["clause_no"] == "2.2.4(1)"
-        assert "tech_requirements" in result
         assert "project_name" in result and result["project_name"] == "河北项目"
         assert "tender_no" in result and result["tender_no"] == "HB-2026-01"
         assert "industry" in result and result["industry"] == "公路机电"
         assert "glossary" in result and result["glossary"][0]["term"] == "TOCC"
         assert "context_version" in result and len(result["context_version"]) == 16
-
-    @pytest.mark.asyncio
-    async def test_refresh_filters_qualification_requirements(self, monkeypatch):
-        """资格/商务类技术需求被过滤（资质/业绩类），纯技术需求保留."""
-        self._patch_db(monkeypatch, _make_db())
-        result = await refresh_context_node({"project_id": str(PROJECT_ID)})
-
-        trs = result["tech_requirements"]
-        assert len(trs) == 1
-        assert "资质" not in trs[0]["description"]
-        assert "高可用" in trs[0]["description"]
 
     @pytest.mark.asyncio
     async def test_context_version_stable_and_changes_with_data(self, monkeypatch):

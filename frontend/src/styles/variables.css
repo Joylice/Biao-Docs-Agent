@@ -39,7 +39,7 @@
   --fill: rgba(15, 23, 42, 0.06);
   --fill-secondary: rgba(15, 23, 42, 0.04);
   --fill-tertiary: rgba(15, 23, 42, 0.03);
-  --text-primary: #0f172a;
+  --text-primary: #1a202c;
   --text-secondary: #475569;
   --text-tertiary: #94a3b8;
   --text-disabled: rgba(15, 23, 42, 0.35);
@@ -48,12 +48,12 @@
   --border-color: #e2e8f0;
   --border-color-light: #f1f5f9;
   --border-color-strong: #cbd5e1;
-  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
-  --shadow-deep: 0 12px 40px rgba(2, 6, 23, 0.25);
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.06), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.06), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+  --shadow-deep: 0 12px 40px rgba(2, 6, 23, 0.18);
   --bg-login-gradient: linear-gradient(135deg, #0d47a1 0%, #1565c0 50%, #1e88e5 100%);
   --radius-xs: 4px;
   --radius-sm: 6px;
@@ -92,48 +92,47 @@
   --content-max-width: 1400px;
 }
 
-/* ========== 深色主题 ========== */
+/* ========== 深色主题（柔灰蓝，降低眼疲劳） ========== */
 [data-theme='dark'] {
-  --color-primary: #60a5fa;
+  --color-primary: #5b9eff;
   --color-primary-hover: #3b82f6;
   --color-primary-active: #2563eb;
-  --color-primary-light: rgba(96, 165, 250, 0.15);
-  --color-primary-lighter: rgba(96, 165, 250, 0.08);
+  --color-primary-light: rgba(91, 158, 255, 0.14);
+  --color-primary-lighter: rgba(91, 158, 255, 0.07);
   --color-success: #34d399;
   --color-success-light: rgba(52, 211, 153, 0.15);
   --color-warning: #fbbf24;
   --color-warning-light: rgba(251, 191, 36, 0.15);
   --color-error: #f87171;
   --color-error-light: rgba(248, 113, 113, 0.12);
-  --color-info: #60a5fa;
-  --color-info-light: rgba(96, 165, 250, 0.15);
-  --bg-app: #0a0e1a;
-  --bg-surface: #111827;
-  --bg-surface-hover: #1e293b;
-  --bg-surface-active: #1e293b;
-  --bg-elevated: #1e293b;
-  --bg-tooltip: #334155;
-  --bg-overlay: rgba(0, 0, 0, 0.6);
+  --color-info: #5b9eff;
+  --color-info-light: rgba(91, 158, 255, 0.14);
+  --bg-app: #1d2330;
+  --bg-surface: #262e3f;
+  --bg-surface-hover: #2f3849;
+  --bg-surface-active: #364054;
+  --bg-elevated: #2f3849;
+  --bg-tooltip: #4a566c;
+  --bg-overlay: rgba(0, 0, 0, 0.5);
   --bg-spotlight: rgba(255, 255, 255, 0.05);
-  --bg-block: rgba(96, 165, 250, 0.12);
+  --bg-block: rgba(91, 158, 255, 0.11);
   --fill: rgba(255, 255, 255, 0.06);
-  --fill-secondary: rgba(255, 255, 255, 0.04);
+  --fill-secondary: rgba(255, 255, 255, 0.045);
   --fill-tertiary: rgba(255, 255, 255, 0.03);
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  /* 对比度修复：原 #64748b 对 --bg-app(#0a0e1a) 约 4.2:1 不达标，提亮后约 5.6:1（WCAG AA ≥4.5:1） */
-  --text-tertiary: #7c8ba1;
-  --text-disabled: rgba(241, 245, 249, 0.35);
+  --text-primary: #e9eef5;
+  --text-secondary: #a4aebf;
+  --text-tertiary: #8695ab;
+  --text-disabled: rgba(233, 238, 245, 0.30);
   --text-inverse: #0f172a;
-  --text-link: #60a5fa;
-  --border-color: #1e293b;
-  --border-color-light: #1e293b;
-  --border-color-strong: #334155;
-  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 1px 2px -1px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
-  --shadow-deep: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --text-link: #5b9eff;
+  --border-color: #374154;
+  --border-color-light: #2c3545;
+  --border-color-strong: #4a566c;
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.25), 0 1px 2px -1px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.25), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.2);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.25);
+  --shadow-deep: 0 12px 40px rgba(0, 0, 0, 0.35);
   --bg-login-gradient: linear-gradient(135deg, #0b1633 0%, #132a5e 50%, #1d4ed8 100%);
 }

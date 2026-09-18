@@ -26,14 +26,11 @@ NODE_FUNCS = [
     "consistency_check_node",
     "integrate_node",
     "review_node",
-    "rewrite_node",
     "export_node",
 ]
 ROUTES = [
     "chapter_route",
     "review_route",
-    "route_after_confirm",
-    "route_after_outline_confirmed",
 ]
 HELPERS = [
     "_update_workflow",
@@ -42,7 +39,6 @@ HELPERS = [
     "_upsert_section",
     "_persist_chapter_content",
     "_clear_outline_draft",
-    "_review_record",
 ]
 CONSTANTS = [
     "MIN_CHAPTER_LENGTH",
@@ -56,7 +52,7 @@ REEXPORTS = NODE_FUNCS + ROUTES + HELPERS + CONSTANTS + ["logger"]
 class TestPackageStructure:
     def test_is_package_with_submodules(self) -> None:
         assert hasattr(nodes, "__path__"), "app.agents.nodes 应为包（原 nodes.py 已拆分为包）"
-        for sub in ("parse", "outline", "chapter", "review", "_shared"):
+        for sub in ("parse", "outline", "chapter", "consistency", "review", "_shared"):
             mod = importlib.import_module(f"app.agents.nodes.{sub}")
             assert inspect.ismodule(mod)
 

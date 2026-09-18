@@ -3,9 +3,10 @@ import api from './client'
 import type {
   ApiResponse,
   ScorePoint,
-  TechRequirement,
   DocFormatRequirementItem,
   DisqualificationClause,
+  ParseWarning,
+  GlossaryItem,
 } from '@/types'
 
 /** 获取评分点列表（后端返回数组） */
@@ -19,21 +20,6 @@ export const updateScorePoint = (
   data: { strategy?: string | null; confirmed?: boolean },
 ) =>
   api.put<ApiResponse<ScorePoint>>(`/projects/${projectId}/score-points/${pointId}`, data)
-
-/** 获取技术需求列表（后端返回数组） */
-export const fetchTechRequirements = (projectId: string) =>
-  api.get<ApiResponse<TechRequirement[]>>(`/projects/${projectId}/tech-requirements`)
-
-/** 获取技术需求列表（含 source/related_sp 映射信息，后端返回数组） */
-export const fetchRequirements = (projectId: string) =>
-  api.get<ApiResponse<TechRequirement[]>>(`/projects/${projectId}/requirements`)
-
-/** 梳理生成技术需求（score_point_ids 省略取全部已确认评分点） */
-export const generateRequirements = (projectId: string, scorePointIds: string[]) =>
-  api.post<ApiResponse<{ total: number; mapped: number }>>(
-    `/projects/${projectId}/requirements/generate`,
-    { score_point_ids: scorePointIds },
-  )
 
 /** 下载项目文档（字节流） */
 export const downloadProjectDocument = (projectId: string, documentId: string) =>
@@ -75,4 +61,16 @@ export const saveDocDisqualificationClauses = (
   api.put<ApiResponse<void>>(
     `/projects/${projectId}/documents/${documentId}/disqualification-clauses`,
     { items },
+  )
+
+/** 获取解析交叉校验告警（P2 — validator Agent 产出，存 doc.meta） */
+export const fetchParseWarnings = (projectId: string, documentId: string) =>
+  api.get<ApiResponse<{ items: ParseWarning[]; count: number }>>(
+    `/projects/${projectId}/documents/${documentId}/parse-warnings`,
+  )
+
+/** 获取文档术语表（只读，存 doc.meta.glossary） */
+export const fetchDocGlossary = (projectId: string, documentId: string) =>
+  api.get<ApiResponse<{ items: GlossaryItem[] }>>(
+    `/projects/${projectId}/documents/${documentId}/glossary`,
   )

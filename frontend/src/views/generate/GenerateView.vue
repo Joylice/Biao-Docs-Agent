@@ -116,6 +116,8 @@
                 :selected-chapter="selectedChapter"
                 :project-id="projectId"
                 :phase="phase"
+                :outline="outline"
+                :assignment-map="assignmentMap"
                 @go-division="goToDivision"
               />
             </div>
