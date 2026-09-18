@@ -68,10 +68,12 @@ async def call_llm_with_schema(
     *,
     stage_key: str | None = None,
     project_id: str | None = None,
+    skill_name: str | None = None,
 ) -> dict[str, Any]:
     """调用 LLM 并解析 JSON 响应.
 
     stage_key：阶段路由键（model_routes）；mock 模式前置短路，不查路由。
+    skill_name：S5 归因（落 llm_usage_log.skill_name，可空）。
     temperature 优先级：route_params > 硬编码默认 0.1。
     """
     user_prompt = redact(user_prompt)  # 外发 LLM 脱敏（安全铁律，出口兜底，无开关）
@@ -102,7 +104,13 @@ async def call_llm_with_schema(
             kwargs["response_format"] = response_format
 
         response = await _call_and_log(
-            "schema", model, kwargs, len(user_prompt), stage_key=stage_key, project_id=project_id
+            "schema",
+            model,
+            kwargs,
+            len(user_prompt),
+            stage_key=stage_key,
+            project_id=project_id,
+            skill_name=skill_name,
         )
         content = response.choices[0].message.content
 
@@ -124,6 +132,7 @@ async def call_llm_text(
     *,
     stage_key: str | None = None,
     project_id: str | None = None,
+    skill_name: str | None = None,
 ) -> str:
     """调用 LLM 获取文本响应.
 
@@ -160,6 +169,7 @@ async def call_llm_text(
             len(user_prompt),
             stage_key=stage_key,
             project_id=project_id,
+            skill_name=skill_name,
         )
         # litellm 响应的 content 对 mypy 是 Any；显式落到声明返回类型
         text: str = response.choices[0].message.content
@@ -179,6 +189,7 @@ async def chat_with_tools(
     mock: bool | None = None,
     stage_key: str | None = None,
     project_id: str | None = None,
+    skill_name: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Tool Calling 对话（阶段 F）：解析 tool_calls 循环 ≤ max_rounds 轮.
 
@@ -187,11 +198,17 @@ async def chat_with_tools(
     结果脱敏后回填续问，直到纯文本收敛或轮数耗尽（不带 tools 强收敛）。
     返回 (最终文本, 调用历史 [{name, arguments, result}])。
     单个工具执行异常回填「工具执行失败」继续对话，不中断循环。
+    skill_name：S5 归因 —— **两条出口（tools_roundN 正常收敛 / tools_final 轮数耗尽）都落库**。
     temperature 优先级：调用方显式参数 > route_params > 硬编码默认 0.3。
     """
     if await settings_service.is_mock_enabled(mock):
         text = await call_llm_text(
-            system_prompt, user_prompt, temperature, mock=True, stage_key=stage_key
+            system_prompt,
+            user_prompt,
+            temperature,
+            mock=True,
+            stage_key=stage_key,
+            skill_name=skill_name,
         )
         return text, []
     user_prompt = redact(user_prompt)  # 外发 LLM 脱敏（安全铁律，出口兜底，无开关）
@@ -224,6 +241,7 @@ async def chat_with_tools(
                 len(user_prompt),
                 stage_key=stage_key,
                 project_id=project_id,
+                skill_name=skill_name,
             )
             message = response.choices[0].message
             tool_calls = getattr(message, "tool_calls", None)
@@ -259,6 +277,7 @@ async def chat_with_tools(
             len(user_prompt),
             stage_key=stage_key,
             project_id=project_id,
+            skill_name=skill_name,
         )
         return (response.choices[0].message.content or ""), calls
     except Exception as e:
@@ -276,6 +295,7 @@ async def call_llm_stream(
     *,
     stage_key: str | None = None,
     project_id: str | None = None,
+    skill_name: str | None = None,
 ) -> AsyncIterator[str]:
     """调用 LLM 获取流式文本响应（三期 S4）.
 
@@ -320,6 +340,7 @@ async def call_llm_stream(
             len(user_prompt),
             stage_key=stage_key,
             project_id=project_id,
+            skill_name=skill_name,
         )
         async for chunk in response:
             if stop_event is not None and stop_event.is_set():

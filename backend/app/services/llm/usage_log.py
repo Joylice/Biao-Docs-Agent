@@ -104,8 +104,13 @@ def usage_entry(
     completion_tokens: int | None = None,
     total_tokens: int | None = None,
     error: str | None = None,
+    agent_id: str | None = None,
+    skill_name: str | None = None,
 ) -> dict[str, Any]:
-    """构造 llm_usage_log 行数据（project_id 容错解析 UUID，非法置 NULL）."""
+    """构造 llm_usage_log 行数据（project_id 容错解析 UUID，非法置 NULL）.
+
+    S5 归因：agent_id/skill_name 可选落库（全程 nullable，缺省 None 不影响既有调用方）。
+    """
     pid: Any = None
     if project_id:
         try:
@@ -117,6 +122,8 @@ def usage_entry(
     return {
         "project_id": pid,
         "stage_key": stage_key,
+        "agent_id": agent_id,
+        "skill_name": skill_name,
         "kind": kind,
         "model": model,
         "ok": ok,

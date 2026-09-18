@@ -56,10 +56,12 @@ async def _run_single_agent(
     start = time.monotonic()
     context = build_agent_context(config.agent_id, tender_window, prior_results)
 
-    # S3 新路径：skill 契约注册表优先（内置 parse_<x> / 用户覆盖），未命中回退旧 YAML
+    # S3 新路径：skill 契约注册表优先（内置 parse_<x> / 用户覆盖），未命中回退旧 YAML。
+    # S5：命中时带出 skill_name，透传 LLM 调用落 llm_usage_log（归因到具体准则）。
     hit = await load_agent_skill_prompt(config.agent_id, "parse", context)
+    skill_name: str | None = None
     if hit is not None:
-        system_prompt, user_prompt = hit
+        system_prompt, user_prompt, skill_name = hit
     else:
         try:
             system_prompt, user_prompt = load_parser_agent_prompt(config.agent_id, context)
@@ -105,6 +107,7 @@ async def _run_single_agent(
                 prior_results or {},
                 project_id,
                 ext_tools,
+                skill_name,
             )
         else:
             # P1：直接 JSON schema 调用（行为等价旧 parse_tender_with_llm）
@@ -114,6 +117,7 @@ async def _run_single_agent(
                 response_format=response_format,
                 stage_key="parse",
                 project_id=project_id,
+                skill_name=skill_name,
             )
     except Exception as e:
         logger.warning("Agent %s 执行失败: %s", config.agent_id, e)
@@ -161,11 +165,13 @@ async def _run_agent_with_tools(
     prior_results: dict[str, Any],
     project_id: str | None,
     ext_tools: list[dict[str, Any]] | None = None,
+    skill_name: str | None = None,
 ) -> dict[str, Any]:
     """两段式执行：Stage A chat_with_tools 取证 → Stage B call_llm_with_schema JSON.
 
     进入条件：内置解析工具放行（guard + tools_enabled）**或**该 stage 绑定了外部搜索
     工具；两者皆无时调用方走单段 JSON schema 分支（行为等价旧单次调用）。
+    skill_name：S5 归因透传（Stage A/B 两段落库同一条准则名）。
     """
     from app.services.infra.tools.parser_tools import execute_parser_tool, make_tool_definitions
     from app.services.infra.tools.registry import execute_bound_tool
@@ -194,6 +200,7 @@ async def _run_agent_with_tools(
         max_rounds=2,
         stage_key="parse",
         project_id=project_id,
+        skill_name=skill_name,
     )
 
     # Stage B：JSON schema 输出
@@ -203,6 +210,7 @@ async def _run_agent_with_tools(
         response_format=response_format,
         stage_key="parse",
         project_id=project_id,
+        skill_name=skill_name,
     )
 
 

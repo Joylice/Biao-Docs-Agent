@@ -45,10 +45,11 @@ async def load_agent_skill_prompt(
     agent_id: str,
     stage_key: str,
     context: dict[str, Any],
-) -> tuple[str, str] | None:
-    """S3：解析该 Agent 的 skill 契约（内置 `parse_<x>` / 用户覆盖）.
+) -> tuple[str, str, str | None] | None:
+    """S3/S5：解析该 Agent 的 skill 契约（内置 `parse_<x>` / 用户覆盖）并带出 skill 名.
 
-    未命中返回 None，由调用方回退旧 YAML —— **不抛异常**，
+    返回 (system_prompt, user_prompt, skill_name)；skill_name 供 dispatch 透传
+    llm_usage_log 归因（S5）。未命中返回 None，由调用方回退旧 YAML —— **不抛异常**，
     对齐多 Agent 解析「单 Agent 失败不阻断」的既有降级契约。
     """
     from app.services.skills.consume import resolve_agent_skill_prompt
@@ -60,8 +61,8 @@ async def load_agent_skill_prompt(
         return None
     if hit is None:
         return None
-    system_prompt, user_prompt, _contract = hit
-    return system_prompt, user_prompt
+    system_prompt, user_prompt, contract = hit
+    return system_prompt, user_prompt, contract.name
 
 
 def _format_prior_results(prior: dict[str, Any]) -> str:

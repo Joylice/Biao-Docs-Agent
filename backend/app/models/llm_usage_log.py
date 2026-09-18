@@ -27,11 +27,16 @@ class LlmUsageLog(Base):
     __table_args__ = (
         Index("ix_llm_usage_log_project_created", "project_id", "created_at"),
         Index("ix_llm_usage_log_stage_created", "stage_key", "created_at"),
+        # S5 归因：skill 粒度聚合（GET /usage/skill-profiles）走此索引
+        Index("ix_llm_usage_log_skill_created", "skill_name", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     stage_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # S5 归因：agent 粒度（向后兼容）+ skill 粒度（本改造独有的观测维度）
+    agent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    skill_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model: Mapped[str | None] = mapped_column(String(256), nullable=True)
     ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

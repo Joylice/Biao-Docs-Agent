@@ -58,10 +58,13 @@ async def call_and_log(
     *,
     stage_key: str | None = None,
     project_id: str | None = None,
+    agent_id: str | None = None,
+    skill_name: str | None = None,
 ) -> Any:
     """acompletion 统一调用点：记录耗时/成败/usage 后返回原始响应.
 
     成功/失败各异步写一行 llm_usage_log（fire-and-forget，写失败不影响主流程）。
+    S5 归因：agent_id/skill_name 透传落库（可空，缺省 None）。
     """
     from litellm import acompletion
 
@@ -77,6 +80,8 @@ async def call_and_log(
                 model=model,
                 stage_key=stage_key,
                 project_id=project_id,
+                agent_id=agent_id,
+                skill_name=skill_name,
                 ok=False,
                 elapsed_ms=elapsed,
                 error=repr(e),
@@ -99,6 +104,8 @@ async def call_and_log(
             model=model,
             stage_key=stage_key,
             project_id=project_id,
+            agent_id=agent_id,
+            skill_name=skill_name,
             ok=True,
             elapsed_ms=elapsed,
             prompt_tokens=prompt_tokens,
