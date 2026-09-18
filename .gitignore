@@ -52,3 +52,6 @@ backend/_logs/
 *.timestamp-*.mjs
 deploy/.admin_cred.txt
 .git-rewrite/
+
+# 镜像恢复中转目录（仅本地留存，不入库）
+backend/_superseded_img_*/

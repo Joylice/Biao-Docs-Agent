@@ -1,0 +1,535 @@
+"""工作流 API 路由 — LangGraph 编排控制（经 workflow_runtime 服务层）.
+
+DB 操作统一委托 workflow_runtime（批次 1c 分层重构）；
+本层保留路由/依赖注入/请求 schema/审计埋点/事件推送/显式 commit。
+"""
+
+import logging
+import uuid
+from typing import Any, Literal
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core import audit
+from app.core.database import get_db
+from app.core.deps import get_current_owner_id, get_current_user_id
+from app.core.exceptions import BizError, ForbiddenError
+from app.core.response import success
+from app.services.infra import workflow_runtime
+from app.services.infra.event_service import publish_event, publish_user_event
+from app.services.project import division_service
+from app.services.project.project_service import _check_project_member
+
+router = APIRouter()
+
+logger = logging.getLogger(__name__)
+
+
+class ConfirmOutlineBody(BaseModel):
+    """确认大纲请求体 — outline 为前端修改后的大纲（可选）；
+
+    mounted_doc_ids 为资料库挂载配置（可选）：非 None（含空列表）时写入工作流
+    state，缺省 None 保持项目全量检索；mounted_kb_ids 为知识库级挂载（2026-08-18，
+    与文档级并集生效）。
+    start_generation（2026-08-25）：默认 False（由分工驱动编制）。True 时确认后
+    自动批量生成全部章节（旧行为）；False 时工作流停在「待分工」interrupt，
+    章节内容由分工页编制、审核通过后回写正式方案。
+    """
+
+    outline: list[dict[str, Any]] | None = None
+    mounted_doc_ids: list[uuid.UUID] | None = None
+    mounted_kb_ids: list[uuid.UUID] | None = None
+    start_generation: bool = False
+
+
+class OutlineDraftBody(BaseModel):
+    """大纲二次编辑草稿请求体 — outline 为树形嵌套编辑产物."""
+
+    outline: list[dict[str, Any]]
+    mounted_doc_ids: list[uuid.UUID] | None = None
+    mounted_kb_ids: list[uuid.UUID] | None = None
+
+
+class ConfirmReviewBody(BaseModel):
+    """确认审阅请求体 — approved 通过 / feedback 携带 {chapter_no: comment} 修改意见."""
+
+    action: Literal["approved", "feedback"] = "approved"
+    feedback: dict[str, str] = {}
+
+
+class SectionEditBody(BaseModel):
+    """章节人工编辑请求体 — content 为编辑后的 Markdown 正文."""
+
+    content: str
+
+
+class OutlineSuggestApplyBody(BaseModel):
+    """采纳大纲建议请求体 — adopted 为勾选的 suggestion_id 列表."""
+
+    adopted: list[str]
+
+
+class SectionSuggestBody(BaseModel):
+    """内容改进建议请求体 — chapter_no 可选，限定分析章节."""
+
+    chapter_no: str | None = None
+
+
+class ExportBody(BaseModel):
+    """导出选项请求体 — 前端自定义格式与导出选项.
+
+    format_override 中仅传了的字段覆盖招标解析默认值，未传字段保留默认。
+    """
+
+    include_toc: bool = True
+    include_annotations: bool = False
+    include_header_footer: bool = True
+    paper_size: str = "A4"
+    orientation: str = "portrait"
+    scope: str = "all"
+    current_chapter: str | None = None
+    format_override: dict[str, Any] | None = None
+
+
+class RerunBody(BaseModel):
+    """指定节点重跑请求体 — node_name 限白名单（retrieve/write/consistency_check/integrate）.
+
+    chapter_no：node_name=write 时可选，指定仅清除并重跑该章（其余章节不动）。
+    """
+
+    node_name: str
+    chapter_no: str | None = None
+
+
+@router.post("/{project_id}/workflow/rerun")
+async def rerun_workflow(
+    project_id: uuid.UUID,
+    body: RerunBody,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """指定节点重跑（白名单 retrieve/write/consistency_check/integrate；运行中 409）.
+
+    校验失败/运行中/不在白名单 → BizError 4090（全局处理器转 409 Conflict）。
+    """
+    await _check_project_member(db, project_id, user_id)
+
+    # 校验（白名单/运行中）在前：失败时 409 且不留审计
+    workflow_runtime._validate_rerun(project_id, body.node_name)
+
+    # 审计埋点：节点重跑（security.md §4）
+    await audit.record(
+        db,
+        user_id,
+        "workflow.rerun",
+        project_id=project_id,
+        detail={"node_name": body.node_name, "chapter_no": body.chapter_no},
+    )
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+
+    workflow_runtime.rerun_from_node_in_background(project_id, body.node_name, body.chapter_no)
+    status = await workflow_runtime.get_status_dict(project_id)
+    return success(
+        data={
+            "workflow_id": str(project_id),
+            "status": "rerun_started",
+            "node_name": body.node_name,
+            **status,
+        }
+    )
+
+
+@router.post("/{project_id}/workflow/start")
+async def start_workflow(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """启动投标方案生成工作流（后台推进图执行，遇 HITL interrupt 停下）."""
+    await _check_project_member(db, project_id, user_id)
+
+    # 审计埋点：工作流启动（security.md §4）
+    await audit.record(db, user_id, "workflow.start", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+
+    workflow_runtime.start_workflow_in_background(project_id, user_id)
+    status = await workflow_runtime.get_status_dict(project_id)
+    return success(
+        data={
+            "workflow_id": str(project_id),
+            "status": "started",
+            **status,
+        }
+    )
+
+
+@router.get("/{project_id}/workflow/status")
+async def get_workflow_status(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """获取工作流状态（从 checkpointer 读取最新 checkpoint）."""
+    await _check_project_member(db, project_id, user_id)
+
+    return success(data=await workflow_runtime.get_status_dict(project_id))
+
+
+@router.post("/{project_id}/workflow/confirm-score-points")
+async def confirm_score_points(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """人工确认评分点（resume confirm_score_points interrupt，后台推进）."""
+    await _check_project_member(db, project_id, user_id)
+    await workflow_runtime.ensure_pending_interrupt(project_id, "confirm_score_points")
+
+    workflow_runtime.resume_workflow_in_background(project_id, {"confirmed": True})
+    return success(data={"status": "confirmed", "next_phase": "outline"})
+
+
+@router.post("/{project_id}/workflow/confirm-outline")
+async def confirm_outline(
+    project_id: uuid.UUID,
+    body: ConfirmOutlineBody | None = None,
+    user_id: uuid.UUID = Depends(get_current_owner_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """人工确认/修改大纲（仅 owner；编辑后大纲与挂载配置经 resume payload 传递，
+    不经 update_state — 避免清除 checkpoint pending interrupt）."""
+    await workflow_runtime.ensure_pending_interrupt(project_id, "confirm_outline")
+
+    decision: dict[str, Any] = {"confirmed": True}
+    # 2026-08-25：由分工驱动编制时确认后不自动批量生成，停靠「待分工」
+    # body 缺省（无 body）时默认 start_generation=False（API 语义），
+    # 节点层缺省 True 仅兼容旧测试直接 resume True 的调用路径。
+    start_generation = body.start_generation if body is not None else False
+    decision["start_generation"] = start_generation
+    if body is not None:
+        if body.outline is not None:
+            decision["outline"] = body.outline
+        if body.mounted_doc_ids is not None:
+            decision["mounted_doc_ids"] = [str(x) for x in body.mounted_doc_ids]
+        if body.mounted_kb_ids is not None:
+            decision["mounted_kb_ids"] = [str(x) for x in body.mounted_kb_ids]
+    workflow_runtime.resume_workflow_in_background(project_id, decision)
+    # 阶段 C：大纲确认后通知全体成员刷新工作台（用户级频道，去重含 owner）
+    member_ids = await workflow_runtime.list_project_member_ids(db, project_id)
+    targets = {str(uid) for uid in member_ids} | {str(user_id)}
+    for uid in targets:
+        await publish_user_event(uid, {"type": "workbench_refresh", "project_id": str(project_id)})
+    next_phase = "generate" if start_generation else "division"
+    return success(data={"status": "confirmed", "next_phase": next_phase})
+
+
+@router.post("/{project_id}/workflow/regenerate-outline")
+async def regenerate_outline(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """重新生成大纲 — 仅限 confirm_outline 挂起时（覆盖旧大纲，新提示词含 covered_clauses）."""
+    await _check_project_member(db, project_id, user_id)
+    try:
+        outline = await workflow_runtime.regenerate_outline(project_id)
+    except BizError:
+        raise
+    except Exception as e:
+        raise BizError(code=5011, message=f"重新生成大纲失败: {e}") from None
+    return success(data={"status": "regenerated", "outline": outline})
+
+
+@router.put("/{project_id}/workflow/outline-draft")
+async def save_outline_draft(
+    project_id: uuid.UUID,
+    body: OutlineDraftBody,
+    user_id: uuid.UUID = Depends(get_current_owner_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """保存大纲二次编辑草稿（仅 owner 可写；留审计）."""
+    await workflow_runtime.save_outline_draft(
+        db,
+        project_id,
+        body.outline,
+        [str(x) for x in body.mounted_doc_ids] if body.mounted_doc_ids is not None else None,
+        [str(x) for x in body.mounted_kb_ids] if body.mounted_kb_ids is not None else None,
+    )
+    # 审计埋点：草稿保存（security.md §4）
+    await audit.record(db, user_id, "workflow.outline_draft_save", project_id=project_id)
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"saved": True})
+
+
+@router.get("/{project_id}/workflow/outline-draft")
+async def get_outline_draft(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """读取大纲二次编辑草稿（成员可读；无草稿返回 outline=[]）."""
+    await _check_project_member(db, project_id, user_id)
+    draft = await workflow_runtime.get_outline_draft(db, project_id)
+    if draft is None:
+        return success(
+            data={
+                "outline": [],
+                "mounted_doc_ids": None,
+                "mounted_kb_ids": None,
+                "updated_at": None,
+            }
+        )
+    return success(data=draft)
+
+
+@router.delete("/{project_id}/workflow/outline-draft")
+async def clear_outline_draft(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_owner_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """清除大纲二次编辑草稿（仅 owner；确认成功后前端调用；幂等；留审计）."""
+    await workflow_runtime.clear_outline_draft(db, project_id)
+    # 审计埋点：草稿清除（security.md §4）
+    await audit.record(db, user_id, "workflow.outline_draft_clear", project_id=project_id)
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"cleared": True})
+
+
+@router.post("/{project_id}/workflow/confirm-review")
+async def confirm_review(
+    project_id: uuid.UUID,
+    body: ConfirmReviewBody | None = None,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """人工确认审阅（resume review interrupt：approved → 导出 / feedback → 重写后复审）."""
+    await _check_project_member(db, project_id, user_id)
+    await workflow_runtime.ensure_pending_interrupt(project_id, "review_request")
+
+    # 显式声明：否则 mypy 推断出 "action" 与 "feedback" 的联合值类型，
+    # 后续 decision["feedback"] 传参与 decision["action"] 赋值都会被判不兼容
+    decision: dict[str, Any] = (
+        {"action": body.action, "feedback": body.feedback}
+        if body
+        else {"action": "approved", "feedback": {}}
+    )
+
+    # 意见回派：命中分工的章节退回负责人重编，不再走 rewrite；无分工保持原链路
+    if decision["action"] == "feedback" and decision["feedback"]:
+        remaining, events = await workflow_runtime.redispatch_feedback(
+            db, project_id, decision["feedback"]
+        )
+        decision["feedback"] = remaining
+        for event in events:
+            await publish_event(str(project_id), event)
+        # 全部意见均已回派负责人 → 无需 AI 重写，保持审阅中等待重编后复审
+        if not decision["feedback"]:
+            decision["action"] = "redispatched"
+
+    # 审计埋点：审阅确认（security.md §4）
+    await audit.record(db, user_id, "workflow.confirm_review", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计 + 回派状态在 resume 前显式提交，assignee 立即可见打回
+    await db.commit()
+
+    workflow_runtime.resume_workflow_in_background(project_id, decision)
+    if decision["action"] == "approved":
+        next_phase = "export"
+    elif decision["action"] == "redispatched":
+        next_phase = "redispatch"
+    else:
+        next_phase = "review"
+    return success(
+        data={"status": "confirmed", "action": decision["action"], "next_phase": next_phase}
+    )
+
+
+@router.post("/{project_id}/workflow/confirm-division")
+async def confirm_division(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """分工编制完成确认（resume wait_division interrupt → 进入整合审阅）.
+
+    2026-08-25 分工驱动模式：大纲确认后工作流停在 wait_division，章节内容由
+    分工审核通过时回写正式方案；本项目全部编制完成后调用本端点推进至审阅。
+    """
+    await _check_project_member(db, project_id, user_id)
+    await workflow_runtime.ensure_pending_interrupt(project_id, "wait_division")
+
+    workflow_runtime.resume_workflow_in_background(project_id, {"confirmed": True})
+    return success(data={"status": "confirmed", "next_phase": "review"})
+
+
+@router.put("/{project_id}/workflow/sections/{chapter_no}")
+async def save_section_edit(
+    project_id: uuid.UUID,
+    chapter_no: str,
+    body: SectionEditBody,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """人工编辑章节内容直接落库（state + proposal_sections 同步）.
+
+    章节级编辑权限（可视不可改）：已分配章节仅 assignee/owner 可编辑，
+    未分配章节保持现状（项目成员可编辑）。
+    """
+    await _check_project_member(db, project_id, user_id)
+    if not await division_service.check_chapter_editable(db, project_id, chapter_no, user_id):
+        raise ForbiddenError("无权编辑该章节（已分配章节仅负责人/项目负责人可编辑）")
+
+    try:
+        await workflow_runtime.save_section_edit(db, project_id, chapter_no, body.content)
+    except BizError:
+        raise
+    except Exception as e:
+        raise BizError(code=5011, message=f"章节保存失败: {e}") from None
+
+    # 审计埋点：章节人工编辑（security.md §4）
+    await audit.record(db, user_id, "workflow.section_edit", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"chapter_no": chapter_no, "saved": True})
+
+
+@router.post("/{project_id}/workflow/outline-suggest")
+async def outline_suggest(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """生成大纲优化建议（仅 confirm_outline 挂起时可用；建议为瞬态数据不落库）."""
+    from app.services.proposal.outline_suggest_service import build_outline_suggestions
+
+    await _check_project_member(db, project_id, user_id)
+    await workflow_runtime.ensure_pending_interrupt(project_id, "confirm_outline")
+
+    status = await workflow_runtime.get_status_dict(project_id)
+    suggestions = await build_outline_suggestions(status["score_points"], status["outline"])
+
+    # 审计埋点：大纲建议生成（security.md §4）
+    await audit.record(db, user_id, "workflow.outline_suggest", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"suggestions": suggestions})
+
+
+@router.post("/{project_id}/workflow/outline-suggest/apply")
+async def outline_suggest_apply(
+    project_id: uuid.UUID,
+    body: OutlineSuggestApplyBody,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """应用已采纳的大纲建议 — 仅返回调整后大纲供人工核对，不写 state.
+
+    最终执行仍由 confirm-outline 人工确认完成（确认后才生成章节）。
+    """
+    from app.services.proposal.outline_suggest_service import apply_outline_suggestions
+
+    await _check_project_member(db, project_id, user_id)
+    await workflow_runtime.ensure_pending_interrupt(project_id, "confirm_outline")
+
+    status = await workflow_runtime.get_status_dict(project_id)
+    outline = apply_outline_suggestions(status["outline"], body.adopted)
+
+    # 审计埋点：大纲建议采纳（security.md §4）
+    await audit.record(db, user_id, "workflow.outline_suggest_apply", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"outline": outline})
+
+
+@router.post("/{project_id}/workflow/section-suggest")
+async def section_suggest(
+    project_id: uuid.UUID,
+    body: SectionSuggestBody | None = None,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """生成内容改进建议（建议为瞬态数据不落库；采纳执行复用分工重编链路）."""
+    from app.services.proposal.section_suggest_service import build_section_suggestions
+
+    await _check_project_member(db, project_id, user_id)
+
+    status = await workflow_runtime.get_status_dict(project_id)
+    suggestions = await build_section_suggestions(
+        status["chapters"],
+        status["score_points"],
+        chapter_no=body.chapter_no if body else None,
+    )
+
+    # 审计埋点：内容建议生成（security.md §4）
+    await audit.record(db, user_id, "workflow.section_suggest", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+    return success(data={"suggestions": suggestions})
+
+
+@router.post("/{project_id}/workflow/export")
+async def export_document(
+    project_id: uuid.UUID,
+    body: ExportBody | None = None,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """导出 Word 文档（接收前端格式选项，返回下载信息）.
+
+    format_override 字段级覆盖：仅覆盖前端传了的字段，未传保留招标解析默认值。
+    导出完成后返回 download_url（MinIO 预签名 URL）供前端直接下载。
+    """
+    await _check_project_member(db, project_id, user_id)
+
+    # 阶段 H 导出门禁（2026-09-03 产品决策：由"未确认即拒绝"降级为"警告放行"）：
+    # 存在未人工确认的高风险废标条款时不再阻塞导出，仅随响应返回 unconfirmed_high 计数，
+    # 由前端提示"已放行，建议先完成人工确认"。硬阻塞曾导致评审流程无法走通。
+    from app.services.proposal.disqualification_service import count_unconfirmed_high
+
+    dq_pending = await count_unconfirmed_high(db, project_id)
+
+    # 审计埋点：方案导出（security.md §4）
+    await audit.record(db, user_id, "workflow.export", project_id=project_id)
+
+    # 事务约定（BUG-1）：审计写入响应前显式提交
+    await db.commit()
+
+    # 构建导出选项（None 字段不传递，保留后端默认）
+    opts = body.model_dump(exclude_none=True) if body else {}
+
+    try:
+        result = await workflow_runtime.export_workflow(project_id, export_options=opts)
+    except BizError:
+        raise
+    except Exception as e:
+        raise BizError(code=5010, message=f"导出失败: {e}") from None
+
+    # 附带未确认高风险条款计数（供前端展示"已放行"提示）
+    result["unconfirmed_high"] = dq_pending
+
+    # 生成下载 URL（预签名）
+    download_url = ""
+    storage_key = result.get("export_storage_key", "")
+    if storage_key:
+        try:
+            from app.services.document.storage_service import presigned_url
+
+            download_url = presigned_url(storage_key, expires_days=7)
+        except Exception:
+            # 降级：预签名失败不阻断导出响应，但必须可观测（P1-9）
+            logger.warning("导出下载 URL 预签名失败 storage_key=%s", storage_key, exc_info=True)
+
+    result["download_url"] = download_url
+    return success(data=result)
