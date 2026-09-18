@@ -2,7 +2,8 @@
 
 流程：parse → confirm(HITL) → outline → confirm_outline(HITL)
       → start_generation=True: (retrieve → write → validate 循环) → consistency_check
-      → integrate → review(HITL) → [approved: export / feedback: 回派负责人后等待复审]
+      → integrate → auto_review(仅首轮) → review(HITL)
+      → [approved: export / feedback: 回派负责人后等待复审（反馈不再重跑自动审阅）]
       → export → END
       → start_generation=False: wait_division(HITL) → [人工分工编制，审核通过回写后]
       → resume → consistency_check → integrate → review → ...
@@ -16,6 +17,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.agents.nodes import (
+    auto_review_node,
     chapter_route,
     confirm_outline_node,
     confirm_score_points_node,
@@ -88,6 +90,7 @@ def build_workflow() -> StateGraph[BidState]:
     workflow.add_node("validate", validate_node)
     workflow.add_node("consistency_check", consistency_check_node)
     workflow.add_node("integrate", integrate_node)
+    workflow.add_node("auto_review", auto_review_node)
     workflow.add_node("review", review_node)
     workflow.add_node("export", export_node)
 
@@ -134,8 +137,11 @@ def build_workflow() -> StateGraph[BidState]:
     # consistency_check → integrate（检查不阻塞交付主链路）
     workflow.add_edge("consistency_check", "integrate")
 
-    # integrate → review(HITL)
-    workflow.add_edge("integrate", "review")
+    # integrate → auto_review（首次到达审阅阶段时跑一轮 AI 自动审阅）→ review(HITL)
+    # 🔴 反馈回环 review_route → "review" **直接回 HITL、绕过 auto_review**
+    #    ⇒ 自动审阅只在首轮跑，每轮反馈不再重复调用 LLM。
+    workflow.add_edge("integrate", "auto_review")
+    workflow.add_edge("auto_review", "review")
 
     # review → [approved: export / feedback: 回派负责人后等待复审 /
     #           redispatched: 意见全部回派，重新挂起等待复审]

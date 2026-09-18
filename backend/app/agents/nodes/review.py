@@ -1,4 +1,4 @@
-"""审阅阶段节点 — consistency_check / integrate / review(HITL) / export + 路由."""
+"""审阅阶段节点 — consistency_check / integrate / auto_review / review(HITL) / export + 路由."""
 
 import uuid
 from typing import Any
@@ -31,7 +31,7 @@ async def consistency_check_node(state: BidState) -> dict[str, Any]:
     outline = state.get("outline", [])
 
     try:
-        issues = await check_consistency(chapters, outline)
+        issues = await check_consistency(chapters, outline, project_id)
     except Exception as e:
         logger.warning("全文一致性检查失败（降级继续）: %s", e)
         issues = []
@@ -147,8 +147,53 @@ async def integrate_node(state: BidState) -> dict[str, Any]:
     return {"current_phase": "review", "progress": 0.85, "chapters": chapters}
 
 
+async def _run_auto_review(state: BidState) -> list[dict[str, Any]]:
+    """AI 自动审阅：人工 interrupt 前跑一轮 review_chapters（stage=review）.
+
+    该 stage 绑定外部搜索工具时会带一轮联网取证（review_service 内部经
+    prefetch_external_evidence）。**失败一律降级为空意见** —— 自动审阅绝不阻塞人工审阅。
+
+    调用方是 `auto_review_node`（图上是 integrate → auto_review → review 的中间节点），
+    不是 review_node —— 原因见 `auto_review_node` 的 docstring。
+    """
+    chapters = state.get("chapters", {})
+    if not chapters:
+        return []
+    from app.services.proposal.review_service import review_chapters
+
+    try:
+        return await review_chapters(
+            chapters, state.get("score_points", []), state.get("project_id", "")
+        )
+    except Exception as e:
+        logger.warning("AI 自动审阅失败（降级为无自动意见）: %s", e)
+        return []
+
+
+async def auto_review_node(state: BidState) -> dict[str, Any]:
+    """节点：AI 自动审阅 —— **只在首次到达审阅阶段时跑一轮**（integrate → 本节点 → review）.
+
+    为什么必须独立成节点、而不是留在 review_node 的 interrupt 之前：
+    LangGraph 的 `interrupt()` **在恢复时会从头重跑「被中断的那个节点」**
+    （实证 `output/_probe_interrupt_rerun.txt`：interrupt 之前的副作用首次 1 次、
+    resume 之后变 2 次；若再经反馈回环进来则每次 +2）。把 LLM 调用留在 review_node 里，
+    一次人工审阅就是 **2 次**模型调用，每轮反馈再多 2 次。
+    独立成本节点后：首次到达 = **1 次**；反馈回环（review_route → "review"）
+    **绕过本节点** = 0 次。
+
+    结果写入 state.review_comments，供 `review_node` 的 interrupt payload 与
+    `GET workflow/status` 读取 —— 审阅往返全程卡片都有内容。
+    """
+    return {"review_comments": await _run_auto_review(state)}
+
+
 async def review_node(state: BidState) -> dict[str, Any]:
-    """节点：HITL 审阅 — interrupt 等待人工通过/反馈."""
+    """节点：HITL 审阅 — interrupt 等待人工通过/反馈.
+
+    🔴 本节点内**不得**放 LLM 调用等副作用：interrupt() 恢复时整个节点会从头重跑
+    （见 `auto_review_node` docstring 的实证）。自动审阅已由 `auto_review_node`
+    完成，这里只读 state。
+    """
     from langgraph.types import interrupt
 
     decision = interrupt(
@@ -156,6 +201,7 @@ async def review_node(state: BidState) -> dict[str, Any]:
             "type": "review_request",
             "chapters": state.get("chapters", {}),
             "score_points": state.get("score_points", []),
+            "auto_comments": state.get("review_comments", []),
             "message": "请审阅章节内容（approved / feedback）",
         }
     )
@@ -165,7 +211,10 @@ async def review_node(state: BidState) -> dict[str, Any]:
     else:
         action = "approved"
         feedback = {}
-    return {"review_action": action, "review_feedback": feedback}
+    return {
+        "review_action": action,
+        "review_feedback": feedback,
+    }
 
 
 async def export_node(state: BidState) -> dict[str, Any]:

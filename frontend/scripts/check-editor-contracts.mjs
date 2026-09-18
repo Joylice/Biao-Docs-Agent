@@ -81,6 +81,8 @@ const F = {
   divisionBoard: 'src/views/division/composables/useDivisionBoard.ts',
   annModal: 'src/views/review/components/AnnotationEditModal.vue',
   actionPanel: 'src/views/review/components/ReviewActionPanel.vue',
+  autoComments: 'src/views/review/components/ReviewAutoComments.vue',
+  webSearchPanel: 'src/components/configCenter/panels/WebSearchPanel.vue',
   verCompare: 'src/views/review/components/ReviewVersionCompare.vue',
   verModals: 'src/views/review/components/ReviewVersionModals.vue',
   verSection: 'src/views/review/components/ReviewVersionSection.vue',
@@ -345,12 +347,54 @@ group('ReviewView 装配契约（src/views/review/ReviewView.vue）')
     'useReviewActions',
   ])
     assert(src.includes(c), `仍装配 ${c}`)
+  assert(src.includes('ReviewAutoComments'), '仍装配 ReviewAutoComments（AI 自动审阅意见卡片）')
   assert(src.includes('审阅与导出'), '页头标题「审阅与导出」在位')
   assert(src.includes('审阅生成内容，批注修改意见或确认导出'), '副标题在位')
   // 批注动态 placeholder 在 N8 后移入 ReviewAnnotationPanel 子组件
   const annPanel = read('src/views/review/components/ReviewAnnotationPanel.vue')
   assert(annPanel.includes('对选中文字添加批注'), '批注动态 placeholder 在 ReviewAnnotationPanel 中')
   assert(src.includes('回滚成功，已恢复'), '回滚成功提示在位')
+}
+
+/* ─────────────── 外部工具绑定 UI（"绑定即生效"口径：只列有调用点的节点） ─────────────── */
+group('外部工具绑定契约（stageNodes.ts / WebSearchPanel.vue / useExternalToolsConfig.ts）')
+{
+  const nodes = read('src/config/stageNodes.ts')
+  const panel = read(F.webSearchPanel)
+  const composable = read('src/composables/useExternalToolsConfig.ts')
+
+  assert(nodes.includes('BINDABLE_STAGE_NODE_KEYS'), 'stageNodes 导出 BINDABLE_STAGE_NODE_KEYS')
+  // 必须做**集合等价**（含"多一个"），不能只做前缀匹配 —— 变异验证证实：
+  // 只匹配前 4 项时，往数组里塞回 'export' 守卫照样 rc=0（漏报新增）。
+  const bindableMatch = nodes.match(/BINDABLE_STAGE_NODE_KEYS[^=]*=\s*\[([^\]]*)\]/)
+  const bindableKeys = bindableMatch
+    ? bindableMatch[1]
+        .split(',')
+        .map((s) => s.trim().replace(/^'|'$/g, ''))
+        .filter(Boolean)
+    : []
+  assert(
+    JSON.stringify(bindableKeys) === JSON.stringify(['parse', 'outline', 'generate', 'review']),
+    '可绑定节点集合恰为 parse/outline/generate/review（「方案导出」不入列）',
+  )
+  assert(nodes.includes("label: '方案导出'"), '「方案导出」节点仍在 5 节点归并表中（路由/概览面板依赖）')
+
+  const idx = panel.indexOf('const unboundNodes')
+  assert(idx >= 0, 'WebSearchPanel 仍有 unboundNodes（绑定下拉数据源）')
+  const unboundBlock = idx >= 0 ? panel.slice(idx, idx + 300) : ''
+  assert(
+    unboundBlock.includes('BINDABLE_NODE_GROUPS'),
+    '绑定下拉取 BINDABLE_NODE_GROUPS（「方案导出」不进下拉）',
+  )
+  assert(
+    !unboundBlock.includes('STAGE_NODE_GROUPS'),
+    '绑定下拉不得回退全量 STAGE_NODE_GROUPS（否则方案导出回到下拉）',
+  )
+  assert(panel.includes('legacyBoundNodes'), '存量假绑定仍有解绑通道（不静默隐藏）')
+  assert(
+    composable.includes('BINDABLE_STAGE_NODE_KEYS.includes(nodeKey)'),
+    'bindNode 用 BINDABLE_STAGE_NODE_KEYS 兜底（防经代码路径写入假绑定）',
+  )
 }
 
 /* ────────────────────────────── 汇总 ────────────────────────────── */

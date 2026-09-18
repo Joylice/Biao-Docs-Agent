@@ -83,28 +83,39 @@
         <div class="websearch-panel__bindings-title">阶段绑定</div>
         <div class="websearch-panel__bindings-list">
           <a-tag
-            v-for="stage in boundStages"
-            :key="stage"
+            v-for="node in boundNodes"
+            :key="node.key"
             closable
-            @close="unbindStage(toolRow!, stage)"
+            @close="onUnbindNode(node.key)"
           >
-            {{ stageLabels[stage] || stage }}
+            {{ node.label }}
+          </a-tag>
+          <!-- 存量假绑定清理通道：非可绑定节点若历史上绑过，仍需可见 + 可解绑（不静默隐藏） -->
+          <a-tag
+            v-for="node in legacyBoundNodes"
+            :key="node.key"
+            color="warning"
+            closable
+            :title="LEGACY_BIND_HINT"
+            @close="onUnbindNode(node.key)"
+          >
+            {{ node.label }}（不生效）
           </a-tag>
           <a-select
-            v-if="availableStages.length > 0"
-            placeholder="绑定阶段"
+            v-if="unboundNodes.length > 0"
+            placeholder="绑定编制节点"
             size="small"
-            style="width: 140px"
-            @change="(val: unknown) => bindStage(toolRow!, String(val))"
+            style="width: 160px"
+            @change="(val: unknown) => onBindNode(String(val))"
           >
-            <a-select-option v-for="s in availableStages" :key="s" :value="s">
-              {{ stageLabels[s] || s }}
+            <a-select-option v-for="n in unboundNodes" :key="n.key" :value="n.key">
+              {{ n.label }}
             </a-select-option>
           </a-select>
-          <span v-else class="websearch-panel__muted">已绑定全部可绑定阶段</span>
+          <span v-else class="websearch-panel__muted">已绑定全部可绑定节点</span>
         </div>
         <div class="websearch-panel__hint">
-          绑定后流水线节点按需调用该工具；绑定列表为会话内口径（刷新后需重新查看）
+          绑定即生效（无需再开联网开关）。已接线节点：招标解析、方案大纲生成、方案生成、方案评审；「方案导出」为纯渲染阶段、无模型调用点，不提供绑定。
         </div>
       </div>
     </a-spin>
@@ -125,10 +136,14 @@ import { ApiOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import { useConfigCenterStore } from '@/stores/configCenter'
 import {
   PRESET_DEFAULT_NAMES,
-  TOOL_BINDABLE_STAGES,
   useExternalToolsConfig,
   type WebsearchPreset,
 } from '@/composables/useExternalToolsConfig'
+import {
+  BINDABLE_NODE_GROUPS,
+  STAGE_NODE_GROUPS,
+  type StageNodeGroup,
+} from '@/config/stageNodes'
 
 const props = withDefaults(
   defineProps<{
@@ -153,8 +168,8 @@ const {
   toggleEnable,
   remove,
   runTest,
-  bindStage,
-  unbindStage,
+  bindNode,
+  unbindNode,
   isDirtyPreset,
 } = config
 
@@ -174,24 +189,46 @@ const presetHints: Record<WebsearchPreset, string> = {
 }
 const presetHint = computed(() => presetHints[preset.value])
 
-/** 展示层归并映射（与 UsageTrendChart 同步） */
-const stageLabels: Record<string, string> = {
-  parse: '招标解析',
-  score: '招标解析',
-  outline: '方案大纲生成',
-  write: '方案生成',
-  validate: '方案生成',
-  consistency: '方案生成',
-  review: '方案评审',
-  export: '方案导出',
+/** 存量「不生效」绑定说明（方案导出等无模型调用点节点） */
+const LEGACY_BIND_HINT = '该节点无模型调用点（如方案导出为纯渲染），绑定不会触发，建议解绑'
+
+/** 该工具当前已绑定的 stage_key[]（无工具行时为空） */
+function boundStageKeys(): string[] {
+  return toolRow.value ? (config.bindings.value[toolRow.value.id] ?? []) : []
 }
 
-const boundStages = computed(() =>
-  toolRow.value ? (config.bindings.value[toolRow.value.id] ?? []) : [],
-)
-const availableStages = computed(() =>
-  TOOL_BINDABLE_STAGES.filter((s) => !boundStages.value.includes(s)),
-)
+/** 该工具已绑定的**可绑定**节点（stage_key 归并到节点；整节点展示与解绑） */
+const boundNodes = computed(() => {
+  const bound = boundStageKeys()
+  return (BINDABLE_NODE_GROUPS as readonly StageNodeGroup[]).filter((n) =>
+    n.stageKeys.some((k) => bound.includes(k)),
+  )
+})
+
+/**
+ * 历史上绑过的**非可绑定**节点（如方案导出）—— 只用于展示 + 解绑清理，不进下拉.
+ * 不静默隐藏：隐藏会让存量假绑定再也无法从 UI 清除。
+ */
+const legacyBoundNodes = computed(() => {
+  const bound = boundStageKeys()
+  return (STAGE_NODE_GROUPS as readonly StageNodeGroup[])
+    .filter((n) => !BINDABLE_NODE_GROUPS.some((b) => b.key === n.key))
+    .filter((n) => n.stageKeys.some((k) => bound.includes(k)))
+})
+
+/** 尚未绑定的**可绑定**节点（绑定下拉项；「方案导出」不在其中） */
+const unboundNodes = computed(() => {
+  const boundKeys = new Set(boundNodes.value.map((n) => n.key))
+  return (BINDABLE_NODE_GROUPS as readonly StageNodeGroup[]).filter((n) => !boundKeys.has(n.key))
+})
+
+const onBindNode = (nodeKey: string) => {
+  if (toolRow.value) void bindNode(toolRow.value, nodeKey)
+}
+
+const onUnbindNode = (nodeKey: string) => {
+  if (toolRow.value) void unbindNode(toolRow.value, nodeKey)
+}
 
 const onToggle = (checked: boolean) => {
   if (toolRow.value) void toggleEnable(toolRow.value, checked)

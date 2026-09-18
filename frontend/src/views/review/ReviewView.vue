@@ -109,6 +109,11 @@
                     <AuditOutlined /> 审阅
                   </span>
                 </template>
+                <ReviewAutoComments
+                  :comments="reviewComments"
+                  :titles="chapterTitleMap"
+                  @locate="locateAutoComment"
+                />
                 <ReviewActionPanel
                   :active-chapter="activeChapter"
                   :current-status="currentChapterStatus"
@@ -224,6 +229,7 @@ import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 import ReviewChapterList from './components/ReviewChapterList.vue'
 import ReviewProgressBar from './components/ReviewProgressBar.vue'
 import ReviewActionPanel from './components/ReviewActionPanel.vue'
+import ReviewAutoComments from './components/ReviewAutoComments.vue'
 import ReviewVersionSection from './components/ReviewVersionSection.vue'
 import ReviewVersionCompare from './components/ReviewVersionCompare.vue'
 import ReviewExportModal from './components/ReviewExportModal.vue'
@@ -250,6 +256,7 @@ const {
   chapters,
   outline,
   reviewFeedback,
+  reviewComments,
   exportStatus,
   exportStorageKey,
   disqualificationRisks,
@@ -363,6 +370,17 @@ const fullAvailable = computed(() => fullKeys.value.length > 0)
 /** 正式方案是否可导出（分工模式需至少一章已通过回写） */
 const exportAvailable = computed(() => formalChapterKeys.value.length > 0)
 
+/** 章节号 → 标题（AI 自动审阅意见卡片用；章级意见取大纲标题兜底） */
+const chapterTitleMap = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {}
+  for (const c of outline.value) map[c.chapter_no] = c.title
+  for (const no of chapterKeys.value) {
+    const t = titleOf(no)
+    if (t) map[no] = t
+  }
+  return map
+})
+
 /** 分工原始状态表（树状态点配色用） */
 const rawStatusMap = computed<Record<string, string>>(() => {
   const map: Record<string, string> = {}
@@ -420,6 +438,22 @@ const {
 /* ==================== 方法 ==================== */
 const onSelectionChange = (sel: { from: number; to: number; text: string } | null) => {
   setSelection(sel)
+}
+
+/**
+ * 定位 AI 自动审阅意见所指章节.
+ *
+ * 自动意见的 chapter_no 来自 state.chapters（**章级**）；分工模式下审阅单元是子节
+ * （如 3.1）→ 章级意见按 `章号.` 前缀落到首个子节，避免点了没反应。
+ */
+const locateAutoComment = (chapterNo: string) => {
+  const keys = chapterKeys.value
+  const hit = keys.includes(chapterNo) ? chapterNo : keys.find((k) => k.startsWith(`${chapterNo}.`))
+  if (!hit) {
+    message.info(`章节 ${chapterNo} 不在当前审阅单元中，请在左侧章节树查看`)
+    return
+  }
+  void selectChapter(hit)
 }
 
 /** 预览模式切换守卫：全文不可用（无已通过章节）时阻止并提示 */

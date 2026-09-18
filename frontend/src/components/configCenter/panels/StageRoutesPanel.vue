@@ -9,7 +9,7 @@
       <a-tag v-if="changedStages.size > 0" color="warning">
         {{ changedStages.size }} 项待保存
       </a-tag>
-      <a-tag v-else>5 个编制节点</a-tag>
+      <a-tag v-else>{{ STAGE_NODE_GROUPS.length }} 个编制节点</a-tag>
     </div>
 
     <a-spin :spinning="loading">
@@ -122,9 +122,10 @@
 /**
  * StageRoutesPanel：阶段路由条目（P1-5，归属"语言模型"分类）.
  *
- * 8 条 stage_key 路由行按 5 个编制节点分组展示；模型在节点级一处编辑、
- * 自动同步到组内所有 stage_key（一处配置、批量生效）；温度/Token/超时
- * 保留子阶段级独立编辑（展开后可见）。
+ * 8 条 stage_key 路由行按 5 个投标编制节点分组展示（归并表见
+ * @/config/stageNodes，与后端 migration 0029_unify_stages 同口径）；
+ * 模型在节点级一处编辑、自动同步到组内所有 stage_key（一处配置、
+ * 批量生效）；温度/Token/超时保留子阶段级独立编辑（展开后可见）。
  *
  * changedStages 集合驱动导航 dirty 角标，保存经底部 footer →
  * configCenterStore.saveCurrent → registry entry.save → useRoutesConfig.save
@@ -134,6 +135,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useConfigCenterStore } from '@/stores/configCenter'
 import { useRoutesConfig, type RoutesConfigApi } from '@/composables/useRoutesConfig'
 import { useProvidersConfig } from '@/composables/useProvidersConfig'
+import {
+  groupRoutesByNode,
+  STAGE_NODE_GROUPS,
+  type StageNodeGroup,
+} from '@/config/stageNodes'
 import type { ModelRoute } from '@/api/providers'
 
 withDefaults(
@@ -188,39 +194,22 @@ const toggleExpand = (key: string) => {
   expandedGroups.value = next
 }
 
-/** 5 个编制节点定义 + stage_key 归并映射 */
-const NODE_GROUPS: { key: string; index: number; label: string; stageKeys: string[] }[] = [
-  { key: 'parse', index: 1, label: '招标解析', stageKeys: ['parse', 'score'] },
-  { key: 'outline', index: 2, label: '方案大纲生成', stageKeys: ['outline'] },
-  { key: 'generate', index: 3, label: '方案生成', stageKeys: ['write', 'validate', 'consistency'] },
-  { key: 'review', index: 4, label: '方案评审', stageKeys: ['review'] },
-  { key: 'export', index: 5, label: '方案导出', stageKeys: ['export'] },
-]
-
-interface NodeGroup {
-  key: string
-  index: number
-  label: string
-  stageKeys: string[]
+/** 编制节点分组行：共享归并表 + 组内路由 + 节点级模型汇总 */
+interface NodeGroup extends StageNodeGroup {
   routes: ModelRoute[]
   model: string
 }
 
-/** 路由按编制节点分组，模型取组内首条非空值（子阶段独立编辑后可能不同） */
-const nodeGroups = computed<NodeGroup[]>(() => {
-  return NODE_GROUPS.map((g) => {
-    const groupRoutes = routes.value.filter((r) => g.stageKeys.includes(r.stageKey))
-    const firstModel = groupRoutes.find((r) => r.model)?.model ?? ''
-    return {
-      key: g.key,
-      index: g.index,
-      label: g.label,
-      stageKeys: g.stageKeys,
-      routes: groupRoutes,
-      model: firstModel,
-    }
-  })
-})
+/**
+ * 路由按 5 个投标编制节点分组（归并口径见 @/config/stageNodes）；
+ * 节点级模型取组内首条非空值（子阶段独立编辑后可能不同）。
+ */
+const nodeGroups = computed<NodeGroup[]>(() =>
+  groupRoutesByNode(routes.value).map((g) => ({
+    ...g,
+    model: g.routes.find((r) => r.model)?.model ?? '',
+  })),
+)
 
 /** 节点级模型编辑：同步写入组内所有 stage_key 并 touch */
 const onGroupModelChange = (group: NodeGroup, value: string) => {

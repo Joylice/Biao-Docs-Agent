@@ -171,7 +171,6 @@ async def write_node(state: BidState) -> dict[str, Any]:
                         chapter.get("title", ""),
                         context,
                         doc_ids,
-                        web_search_enabled=state.get("web_search_enabled", False),
                     )
                 except Exception as e:
                     logger.warning("write 工具前置检索失败（降级原上下文）: %s", e)
@@ -292,7 +291,6 @@ async def validate_node(state: BidState) -> dict[str, Any]:
                 content,
                 issues,
                 score_points,
-                web_search_enabled=state.get("web_search_enabled", False),
             )
         except Exception as e:
             logger.warning("校验问题工具复核失败（保留原 issues）: %s", e)

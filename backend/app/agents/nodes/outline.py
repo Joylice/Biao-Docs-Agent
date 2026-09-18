@@ -43,11 +43,26 @@ async def generate_outline_node(state: BidState) -> dict[str, Any]:
     tender_no = state.get("tender_no", "")
     industry = state.get("industry", "")
 
-    system_prompt, user_prompt = load_outline_prompt(
+    system_prompt, user_prompt = await load_outline_prompt(
         score_points=score_points,
         project_name=project_name,
         tender_no=tender_no,
         industry=industry,
+    )
+
+    # 外部工具取证前置：该 stage 绑定了搜索工具时，先补一轮联网检索再生成大纲
+    # （无绑定 / mock / 异常一律原样返回，存量行为不变）
+    from app.services.infra.tools.prefetch import prefetch_external_evidence
+
+    system_prompt, user_prompt = await prefetch_external_evidence(
+        "outline",
+        system_prompt,
+        user_prompt,
+        project_id,
+        intent=(
+            f"为投标技术方案《{project_name}》生成章节大纲，需覆盖评分点："
+            + "；".join(str(sp.get("item", "")) for sp in score_points[:10])
+        ),
     )
 
     try:

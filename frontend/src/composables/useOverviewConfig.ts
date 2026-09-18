@@ -2,9 +2,10 @@
  * useOverviewConfig：配置概览分类（P1-1）逻辑模型.
  *
  * 只读汇总：3 个白名单 LLM 提供方 key 配置态（configured + 掩码尾串）、
- * 8 阶段路由目标模型、embedding/rerank 启用态、外部工具（tavily/brave/
- * searxng）配置与启停态。连通性口径 = 各 composable 单例内存中"最近一次
- * 测试结果"（用户已拍板：不做实时探测）。
+ * 5 个投标编制节点的目标模型（8 个 stage_key 经 @/config/stageNodes 归并）、
+ * embedding/rerank 启用态、外部工具（tavily/brave/searxng）配置与启停态。
+ * 连通性口径 = 各 composable 单例内存中"最近一次测试结果"（用户已拍板：
+ * 不做实时探测）。
  *
  * 数据新鲜度：watch store.overviewVersion（任一条目保存成功后 ++）重取；
  * 打开弹窗时 load 一次。
@@ -17,6 +18,7 @@ import type { ExternalTool } from '@/api/externalTools'
 import { getExternalTools } from '@/api/externalTools'
 import type { ModelRoute } from '@/api/providers'
 import { getProviders, getRoutes } from '@/api/providers'
+import { groupRoutesByNode } from '@/config/stageNodes'
 import type { RetrievalParamsDB } from '@/api/retrieval'
 import { getRetrievalSettings } from '@/api/retrieval'
 import type { LlmSettings } from '@/api/settings'
@@ -27,6 +29,24 @@ import {
   WEBSEARCH_PRESETS,
   type WebsearchPreset,
 } from './useExternalToolsConfig'
+
+/** 概览快照中单个投标编制节点（5 个，展示层归并产物） */
+export interface OverviewRouteNode {
+  /** 节点 id（展示层分组键，非后端字段） */
+  key: string
+  /** 节点序号 1..5 */
+  index: number
+  /** 节点中文名（← 归并表 label，非组内 stage_name） */
+  label: string
+  /** 归并到本节点的 stage_key（顺序 = 流水线顺序） */
+  stageKeys: readonly string[]
+  /** 节点级目标模型：组内首条非空 model；组内全空 → ''（展示为回退全局） */
+  model: string
+  /** 组内实际命中路由行的阶段数（后端缺行时 < stageKeys.length） */
+  stageCount: number
+  /** 组内 enabled=false 的阶段数（0 = 全部启用） */
+  disabledCount: number
+}
 
 /** 概览快照（纯数据，OverviewPanel 渲染源；单测覆盖映射） */
 export interface OverviewSnapshot {
@@ -40,7 +60,8 @@ export interface OverviewSnapshot {
     /** 最近一次测试结果：true=成功 / false=失败 / null=未测试（composable 内存态） */
     lastTestOk: boolean | null
   }>
-  routes: Array<{ stageKey: string; stageName: string; model: string; enabled: boolean }>
+  /** 阶段路由：8 个 stage_key 归并为 5 个投标编制节点 */
+  routeNodes: OverviewRouteNode[]
   retrieval: {
     embeddingModel: string
     embeddingConfigured: boolean
@@ -81,11 +102,14 @@ export function buildOverviewSnapshot(input: {
         lastTestOk: null,
       }
     }),
-    routes: input.routes.map((r) => ({
-      stageKey: r.stageKey,
-      stageName: r.stageName,
-      model: r.model,
-      enabled: r.enabled,
+    routeNodes: groupRoutesByNode(input.routes).map((g) => ({
+      key: g.key,
+      index: g.index,
+      label: g.label,
+      stageKeys: g.stageKeys,
+      model: g.routes.find((r) => r.model)?.model ?? '',
+      stageCount: g.routes.length,
+      disabledCount: g.routes.filter((r) => !r.enabled).length,
     })),
     retrieval: {
       embeddingModel: input.llm.embedding_model,

@@ -62,6 +62,9 @@ class BidState(TypedDict, total=False):
     # ── 审阅（HITL resume 结果）──
     review_action: str  # approved | feedback
     review_feedback: dict[str, Any]  # {chapter_no: comment}
+    # AI 自动审阅意见（review 节点在 interrupt 前跑一轮 review_service.review_chapters；
+    # 该 stage 绑定外部搜索工具时会带联网取证）。失败降级为空列表，不阻塞人工审阅。
+    review_comments: list[dict[str, Any]]
 
     # ── 导出 ──
     # 注：图内 export_node 会读该字段，但当前图路径不注入它——导出实际由
@@ -83,9 +86,11 @@ class BidState(TypedDict, total=False):
     # 旧 checkpoint 无该字段时 state.get(...) 走查表默认，不报错。
     routes_snapshot: dict[str, dict[str, Any]]
 
-    # ── 外部搜索开关（Phase 2）──
-    # confirm_outline 时从 resume decision 取值（缺省 False），
-    # 旧 checkpoint 无此字段时 state.get("web_search_enabled", False) 返回 False。
+    # ── 外部搜索开关（已弃用，2026-09-18）──
+    # 历史字段：confirm_outline 时从 resume decision 取值，但前端配置中心与
+    # ConfirmOutlineBody 都没有该入口 → 恒为 False。外部工具现以 stage_tool_bindings
+    # 显式绑定为唯一真源（见 infra/tools/registry.py:get_definitions），本字段不再参与
+    # 任何判断，仅为兼容旧 checkpoint 保留。
     web_search_enabled: bool
 
 

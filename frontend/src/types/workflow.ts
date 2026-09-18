@@ -24,6 +24,8 @@ export interface OutlineTreeNode {
 export interface WorkflowInterrupt {
   type: string
   data?: Record<string, unknown>
+  /** AI 自动审阅意见（review 节点 interrupt 前一轮 LLM 输出） */
+  auto_comments?: AutoReviewComment[]
 }
 
 /** 工作流状态 */
@@ -38,6 +40,8 @@ export interface WorkflowStatus {
   review_action?: string
   /** 章节审阅反馈意见（章节号 → 意见） */
   review_feedback?: Record<string, string>
+  /** AI 自动审阅意见（review 节点 interrupt 前一轮 LLM 输出） */
+  review_comments?: AutoReviewComment[]
   /** 导出状态：pending/running/done/failed */
   export_status?: string
   /** 导出产物存储标识 */
@@ -183,4 +187,12 @@ export interface ExportOptions {
   current_chapter?: string
   /** 格式覆盖（字段级覆盖招标解析默认值） */
   format_override?: FormatOverride
+}
+
+/** AI 自动审阅意见（review 节点在 interrupt 前跑一轮 LLM 的输出） */
+export interface AutoReviewComment {
+  chapter_no: string
+  comment: string
+  action?: string
+  severity?: string
 }

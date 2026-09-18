@@ -41,24 +41,41 @@
           </div>
         </div>
 
-        <!-- ── 阶段路由 ── -->
+        <!-- ── 阶段路由（8 个 stage_key 归并为 5 个投标编制节点）── -->
         <div class="overview-panel__section">
           <div class="overview-panel__section-title">
             阶段路由
+            <a-tag class="overview-panel__section-tag">
+              {{ snapshot.routeNodes.length }} 个编制节点
+            </a-tag>
             <a-button type="link" size="small" @click="store.selectItem('llm:routes')">
               前往配置
             </a-button>
           </div>
-          <div class="overview-panel__grid overview-panel__grid--wide">
-            <div v-for="r in snapshot.routes" :key="r.stageKey" class="overview-card overview-card--static">
+          <div class="overview-panel__grid overview-panel__grid--nodes">
+            <button
+              v-for="node in snapshot.routeNodes"
+              :key="node.key"
+              class="overview-card"
+              type="button"
+              @click="store.selectItem('llm:routes')"
+            >
               <div class="overview-card__head">
-                <span class="overview-card__name">{{ r.stageName }}</span>
-                <a-tag v-if="!r.enabled" color="default" class="overview-card__tag">已停用</a-tag>
+                <span class="overview-card__name">
+                  <span class="overview-card__index">{{ node.index }}</span>
+                  {{ node.label }}
+                </span>
+                <a-tag v-if="node.disabledCount > 0" color="default" class="overview-card__tag">
+                  {{ node.disabledCount === node.stageCount ? '已停用' : node.disabledCount + ' 项停用' }}
+                </a-tag>
               </div>
               <div class="overview-card__row">
-                <code class="overview-card__mono">{{ r.model || '（回退全局配置）' }}</code>
+                <code class="overview-card__mono">{{ node.model || '（回退全局配置）' }}</code>
               </div>
-            </div>
+              <div class="overview-card__keys">
+                <code v-for="sk in node.stageKeys" :key="sk" class="overview-card__key">{{ sk }}</code>
+              </div>
+            </button>
           </div>
         </div>
 
@@ -136,7 +153,9 @@
  * OverviewPanel：配置概览（P1-1）——只读状态汇总 + 条目跳转.
  *
  * 数据源为 buildOverviewSnapshot 快照（providers/routes/llm/retrieval/tools
- * 并行拉取）；连通性口径 = composable 内存中最近一次测试结果（不做实时探测）。
+ * 并行拉取；其中 routes 已按 5 个投标编制节点归并，归并口径见
+ * @/config/stageNodes）；连通性口径 = composable 内存中最近一次测试结果
+ * （不做实时探测）。
  * 数据新鲜度：watch configCenterStore.overviewVersion（任一条目保存成功
  * bumpOverview）自动重取；本面板只读，registry save 为 no-op。
  */
@@ -210,6 +229,12 @@ watch(
   color: var(--text-secondary);
 }
 
+/* 归并口径提示（5 个编制节点） */
+.overview-panel__section-tag {
+  margin-inline-end: 0;
+  font-weight: 400;
+}
+
 .overview-panel__grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -218,6 +243,11 @@ watch(
 
 .overview-panel__grid--wide {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* 编制节点：5 张卡自适应（860px 容器下 3 列 → 3+2） */
+.overview-panel__grid--nodes {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
 .overview-card {
@@ -235,14 +265,6 @@ watch(
 
 .overview-card:hover {
   border-color: var(--color-primary);
-}
-
-.overview-card--static {
-  cursor: default;
-}
-
-.overview-card--static:hover {
-  border-color: var(--border-color);
 }
 
 .overview-card__head {
@@ -286,9 +308,42 @@ watch(
   word-break: break-all;
 }
 
+/* 编制节点序号徽标 */
+.overview-card__index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 10px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+/* 归并到本节点的 stage_key 清单 */
+.overview-card__keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.overview-card__key {
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--color-primary);
+  background: var(--color-primary-lighter);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+}
+
 @media (max-width: 1024px) {
   .overview-panel__grid,
-  .overview-panel__grid--wide {
+  .overview-panel__grid--wide,
+  .overview-panel__grid--nodes {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

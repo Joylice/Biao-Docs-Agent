@@ -41,6 +41,7 @@ from app.agents.nodes.parse import (
 )
 from app.agents.nodes.refresh import refresh_context_node
 from app.agents.nodes.review import (
+    auto_review_node,
     chapter_route,
     consistency_check_node,
     export_node,
@@ -67,6 +68,7 @@ __all__ = [
     "_upsert_section",
     "_upsert_skeleton",
     "async_session_factory",
+    "auto_review_node",
     "benchmark_service",
     "chapter_route",
     "confirm_outline_node",

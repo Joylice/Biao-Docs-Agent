@@ -21,7 +21,7 @@ import {
   fetchChapterAssignments,
   fetchDisqualificationRisks as fetchDisqualificationRisksApi,
 } from '@/api'
-import type { WorkflowStatus, AssignmentNode } from '@/types'
+import type { WorkflowStatus, AssignmentNode, AutoReviewComment } from '@/types'
 import type { OutlineSection } from '@/types/outline'
 
 export interface OutlineNode {
@@ -46,6 +46,8 @@ export function useReviewState(projectId: string) {
   const outline = ref<OutlineNode[]>([])
   const submitters = ref<Record<string, string>>({})
   const reviewFeedback = ref<Record<string, string>>({})
+  /** AI 自动审阅意见（review 节点 interrupt 前一轮 LLM 输出；后端 status.review_comments） */
+  const reviewComments = ref<AutoReviewComment[]>([])
   const exportStatus = ref('')
   const exportStorageKey = ref('')
   const disqualificationRisks = ref<Record<string, RiskItem[]>>({})
@@ -111,6 +113,7 @@ export function useReviewState(projectId: string) {
     chapters.value = data.chapters || {}
     outline.value = (data.outline || []) as OutlineNode[]
     reviewFeedback.value = data.review_feedback || {}
+    reviewComments.value = data.review_comments || []
     exportStatus.value = data.export_status || ''
     exportStorageKey.value = data.export_storage_key || ''
 
@@ -135,6 +138,7 @@ export function useReviewState(projectId: string) {
         chapters.value = data.chapters || {}
         outline.value = (data.outline || []) as OutlineNode[]
         reviewFeedback.value = data.review_feedback || {}
+        reviewComments.value = data.review_comments || []
         exportStatus.value = data.export_status || ''
         exportStorageKey.value = data.export_storage_key || ''
         if (data.error) { stopPolling(); message.error(data.error); return }
@@ -243,6 +247,7 @@ export function useReviewState(projectId: string) {
     outline,
     submitters,
     reviewFeedback,
+    reviewComments,
     exportStatus,
     exportStorageKey,
     disqualificationRisks,

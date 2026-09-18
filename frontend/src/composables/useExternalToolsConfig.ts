@@ -10,9 +10,10 @@
  * 保持原值；显式"清除" → 保存携带空串；输入非空 → 携带新值；疑似脱敏串
  * （isMaskedKey，S-1 对齐）拒传。GET 返回的 apiKeyMasked 仅作 placeholder。
  *
- * 阶段绑定：后端无"列出全部绑定"端点（GET /settings/external-tools 不含
- * bindings），沿用旧 view 的会话内推断口径——load 后绑定表为空，bind/unbind
- * 动作本地记录；该限制已在面板文案注明。
+ * 阶段绑定：后端 GET /settings/external-tools 已回传 boundStages（工具 → stage_key[]），
+ * load() 据此初始化 bindings（首屏即可见已绑关系）；bind/unbind 即时生效并本地同步。
+ * 对外以「编制节点」为粒度（stageNodes.STAGE_NODE_GROUPS），落库仍是 stage_key 行；
+ * 可绑节点取 stageNodes.BINDABLE_STAGE_NODE_KEYS（「方案导出」无模型调用点，不进绑定）。
  *
  * 实现为「依赖注入工厂 + 模块级单例」（单测经 createExternalToolsConfig 注入）。
  */
@@ -29,6 +30,7 @@ import {
   type BindPayload,
   type ExternalTool,
 } from '@/api/externalTools'
+import { BINDABLE_STAGE_NODE_KEYS, STAGE_NODE_GROUPS } from '@/config/stageNodes'
 import { getApiErrorMessage } from './apiErrorMessage'
 import { isMaskedKey } from './useProvidersConfig'
 
@@ -106,7 +108,7 @@ export interface ExternalToolsConfigDeps {
 export interface ExternalToolsConfigApi {
   loading: Ref<boolean>
   tools: Ref<ExternalTool[]>
-  /** toolId → 绑定的 stage_key[]（会话内推断，load 后为空） */
+  /** toolId → 绑定的 stage_key[]（load 时由后端 boundStages 初始化） */
   bindings: Ref<Record<string, string[]>>
   /** 各 preset 编辑态表单（key: tavily / brave / searxng） */
   forms: Record<WebsearchPreset, ToolPresetForm>
@@ -125,10 +127,12 @@ export interface ExternalToolsConfigApi {
   /** 绑定/解绑阶段（本地 bindings 记录 + API 调用） */
   bindStage: (tool: ExternalTool, stageKey: string) => Promise<boolean>
   unbindStage: (tool: ExternalTool, stageKey: string) => Promise<boolean>
+  /** 绑定/解绑整个编制节点（= 组内全部 stage_key；仅一次成功通知） */
+  bindNode: (tool: ExternalTool, nodeKey: string) => Promise<boolean>
+  unbindNode: (tool: ExternalTool, nodeKey: string) => Promise<boolean>
 }
 
-/** 可绑定阶段白名单（与后端 STAGE_TOOL_WHITELIST 的 http_search 范围一致） */
-export const TOOL_BINDABLE_STAGES = ['parse', 'outline', 'write', 'validate'] as const
+/** 绑定以「编制节点」为对外粒度；可绑 stage_key 集合由 @/config/stageNodes 的 5 节点决定 */
 
 export function createExternalToolsConfig(deps: ExternalToolsConfigDeps): ExternalToolsConfigApi {
   const {
@@ -160,7 +164,8 @@ export function createExternalToolsConfig(deps: ExternalToolsConfigDeps): Extern
     try {
       const rows = await getTools()
       tools.value = rows
-      bindings.value = {}
+      // 首屏即展示已绑关系：由后端 boundStages 初始化（无该字段时为空）
+      bindings.value = Object.fromEntries(rows.map((t) => [t.id, [...(t.boundStages ?? [])]]))
       for (const preset of WEBSEARCH_PRESETS) {
         const form = freshForm(preset)
         const row = rows.find((t) => t.preset === preset)
@@ -352,6 +357,61 @@ export function createExternalToolsConfig(deps: ExternalToolsConfigDeps): Extern
     }
   }
 
+  /**
+   * 绑定整个编制节点（= 组内全部 stage_key，差集批量绑定，仅一次成功通知）.
+   *
+   * 仅接受 BINDABLE_STAGE_NODE_KEYS：UI 下拉已过滤「方案导出」，此处再兜一道 ——
+   * 绑定一旦落库就是「假绑定」（该节点无模型调用点，永不触发），只能靠人工解绑
+   * 清理，故不允许经代码路径写入。
+   */
+  async function bindNode(tool: ExternalTool, nodeKey: string): Promise<boolean> {
+    if (!BINDABLE_STAGE_NODE_KEYS.includes(nodeKey)) return false
+    const node = STAGE_NODE_GROUPS.find((n) => n.key === nodeKey)
+    if (!node) return false
+    const current = bindings.value[tool.id] ?? []
+    const toBind = node.stageKeys.filter((k) => !current.includes(k))
+    if (toBind.length === 0) return true
+    try {
+      for (const stageKey of toBind) {
+        await bindTool(tool.id, { stage_key: stageKey })
+      }
+      bindings.value = { ...bindings.value, [tool.id]: [...current, ...toBind] }
+      notifySuccess(`已绑定到「${node.label}」`)
+      return true
+    } catch (error) {
+      notifyError(getApiErrorMessage(error, '绑定失败'))
+      return false
+    }
+  }
+
+  /**
+   * 解绑整个编制节点（= 组内全部 stage_key）.
+   *
+   * 这里**刻意用全量 STAGE_NODE_GROUPS**（而非 BINDABLE 子集）：历史存量可能已绑
+   * 过「方案导出」，必须保留解绑通道才能清理假绑定。
+   */
+  async function unbindNode(tool: ExternalTool, nodeKey: string): Promise<boolean> {
+    const node = STAGE_NODE_GROUPS.find((n) => n.key === nodeKey)
+    if (!node) return false
+    const current = bindings.value[tool.id] ?? []
+    const toUnbind = node.stageKeys.filter((k) => current.includes(k))
+    if (toUnbind.length === 0) return true
+    try {
+      for (const stageKey of toUnbind) {
+        await unbindTool(tool.id, stageKey)
+      }
+      bindings.value = {
+        ...bindings.value,
+        [tool.id]: current.filter((k) => !node.stageKeys.includes(k)),
+      }
+      notifySuccess(`已从「${node.label}」解绑`)
+      return true
+    } catch (error) {
+      notifyError(getApiErrorMessage(error, '解绑失败'))
+      return false
+    }
+  }
+
   return {
     loading,
     tools,
@@ -368,6 +428,8 @@ export function createExternalToolsConfig(deps: ExternalToolsConfigDeps): Extern
     runTest,
     bindStage,
     unbindStage,
+    bindNode,
+    unbindNode,
   }
 }
 

@@ -245,6 +245,55 @@ describe('toggleEnable / remove / runTest / bind', () => {
     expect(unbindTool).toHaveBeenCalledWith('tool-tavily', 'parse')
     expect(config.bindings.value['tool-tavily']).toEqual([])
   })
+
+  it('load 用后端 boundStages 初始化 bindings（首屏即可见已绑关系）', async () => {
+    const { config } = await loadOk({
+      getTools: vi.fn().mockResolvedValue([mkTool('tavily', { boundStages: ['outline', 'write'] })]),
+    })
+
+    expect(config.bindings.value['tool-tavily']).toEqual(['outline', 'write'])
+  })
+
+  it('bindNode/unbindNode：展开为编制节点组内全部 stage_key（仅一次成功通知）', async () => {
+    const { config, bindTool, unbindTool, notifySuccess } = await loadOk()
+
+    const tool = config.getToolByPreset('tavily')!
+    // 方案生成 = write + validate + consistency
+    await config.bindNode(tool, 'generate')
+    expect(bindTool).toHaveBeenCalledTimes(3)
+    expect(bindTool).toHaveBeenCalledWith('tool-tavily', { stage_key: 'write' })
+    expect(bindTool).toHaveBeenCalledWith('tool-tavily', { stage_key: 'validate' })
+    expect(bindTool).toHaveBeenCalledWith('tool-tavily', { stage_key: 'consistency' })
+    expect(config.bindings.value['tool-tavily']).toEqual(['write', 'validate', 'consistency'])
+    expect(notifySuccess).toHaveBeenCalledTimes(1)
+    expect(notifySuccess).toHaveBeenCalledWith('已绑定到「方案生成」')
+
+    await config.unbindNode(tool, 'generate')
+    expect(unbindTool).toHaveBeenCalledTimes(3)
+    expect(config.bindings.value['tool-tavily']).toEqual([])
+
+    // 未知节点：直接 false，不触网
+    expect(await config.bindNode(tool, 'nope')).toBe(false)
+  })
+
+  it('bindNode：「方案导出」不可绑定（无模型调用点，绑定即假绑定）', async () => {
+    const { config, bindTool } = await loadOk()
+
+    const tool = config.getToolByPreset('tavily')!
+    expect(await config.bindNode(tool, 'export')).toBe(false)
+    expect(bindTool).not.toHaveBeenCalled()
+  })
+
+  it('unbindNode：仍可解绑存量「方案导出」绑定（保留假绑定清理通道）', async () => {
+    const { config, unbindTool } = await loadOk({
+      getTools: vi.fn().mockResolvedValue([mkTool('tavily', { boundStages: ['export'] })]),
+    })
+
+    const tool = config.getToolByPreset('tavily')!
+    expect(await config.unbindNode(tool, 'export')).toBe(true)
+    expect(unbindTool).toHaveBeenCalledWith('tool-tavily', 'export')
+    expect(config.bindings.value['tool-tavily']).toEqual([])
+  })
 })
 
 /* ---------------- isConflictError ---------------- */
