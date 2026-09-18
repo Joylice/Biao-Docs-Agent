@@ -397,6 +397,84 @@ group('外部工具绑定契约（stageNodes.ts / WebSearchPanel.vue / useExtern
   )
 }
 
+/* ─────────────── S4：SKILL.md 契约体系（skills 分类 / 双面板改名 / api 封装） ─────────────── */
+group('S4 行为准则契约（configRegistry / SkillPanel / api/skills / useSkillsConfig）')
+{
+  const registry = read('src/config/configRegistry.ts')
+  const panel = read('src/components/configCenter/panels/SkillPanel.vue')
+  const toolPanel = read('src/components/configCenter/panels/ToolBindingsPanel.vue')
+  const api = read('src/api/skills.ts')
+  const skillsCfg = read('src/composables/useSkillsConfig.ts')
+  const toolCfg = read('src/composables/useToolBindingsConfig.ts')
+
+  // 分类集合等价（铁律⑤：禁前缀匹配 —— 前缀拦不住「多一个/换一个」）
+  const catsMatch = registry.match(/const categories[^=]*=\s*\[([\s\S]*?)\n\]/)
+  const catIds = catsMatch
+    ? [...catsMatch[1].matchAll(/id:\s*'([a-z]+)'/g)].map((m) => m[1])
+    : []
+  assert(
+    JSON.stringify(catIds) ===
+      JSON.stringify(['overview', 'llm', 'retrieval', 'websearch', 'tools', 'skills', 'system']),
+    '一级分类集合恰为 7 项（S4：「技能」→ tools 外部工具，新增 skills 行为准则）',
+  )
+  assert(!/panels\/SkillsPanel\.vue/.test(registry), 'configRegistry 不再 import SkillsPanel（已更名，防回退）')
+
+  // 条目 → 面板绑定
+  const tIdx = registry.indexOf("id: 'tools:bindings'")
+  assert(
+    tIdx >= 0 && registry.slice(tIdx, tIdx + 500).includes('markRaw(ToolBindingsPanel)'),
+    'tools:bindings 挂 ToolBindingsPanel（外部工具绑定）',
+  )
+  const sIdx = registry.indexOf("id: 'skills:list'")
+  assert(
+    sIdx >= 0 && registry.slice(sIdx, sIdx + 500).includes('markRaw(SkillPanel)'),
+    'skills:list 挂 SkillPanel（行为准则）',
+  )
+
+  // api 端点面（对齐后端 /settings/skills 9 端点；仅需登录无 admin）
+  for (const fn of [
+    'getSkills',
+    'getSkill',
+    'createSkill',
+    'updateSkill',
+    'deleteSkill',
+    'resetSkill',
+    'exportSkills',
+    'importSkills',
+    'previewSkill',
+  ])
+    assert(new RegExp(`export const ${fn}\\b`).test(api), `api/skills 导出 ${fn}`)
+  assert(api.includes('/settings/skills'), 'api/skills 端点前缀 /settings/skills')
+  assert(api.includes('expected_version'), 'api/skills 透传 expected_version（乐观锁前端半边）')
+
+  // SkillPanel 内置只读（前端把 403 变成不渲染 —— 后端门禁的 UI 前置防线）
+  const writeGuards = (panel.match(/v-if="!row\.builtin"/g) || []).length
+  assert(
+    writeGuards >= 4,
+    `内置行不渲染写操作（v-if="!row.builtin" × ${writeGuards} ≥ 4）`,
+  )
+  assert(panel.includes('onReset'), '覆盖内置行有「恢复内置」入口（onReset 接线）')
+  assert(panel.includes('row.shadowsBuiltin'), '恢复内置按钮按 shadowsBuiltin 显隐')
+
+  // useSkillsConfig：乐观锁版本回写（连续两次保存第二次不 409 的关键）
+  assert(
+    /optimisticVersion\s*=\s*updated\.optimisticVersion/.test(skillsCfg),
+    'useSkillsConfig 保存后回写 optimisticVersion（防连续保存 409）',
+  )
+
+  // 改名防交叉回退（import 语句级精确匹配，注释里的改名史不误伤）
+  assert(
+    !/from '@\/composables\/useToolBindingsConfig'/.test(panel),
+    'SkillPanel 不引用 useToolBindingsConfig（语义防串）',
+  )
+  assert(
+    !/from '@\/composables\/useSkillsConfig'/.test(toolPanel),
+    'ToolBindingsPanel 不引用 useSkillsConfig（语义防串）',
+  )
+  assert(skillsCfg.includes('SkillView'), 'useSkillsConfig 消费 SkillView（真 skill 模型）')
+  assert(toolCfg.includes('ToolRow'), 'useToolBindingsConfig 仍导出 ToolRow（工具视图行）')
+}
+
 /* ────────────────────────────── 汇总 ────────────────────────────── */
 console.log('\n' + '─'.repeat(64))
 if (failed === 0) {
