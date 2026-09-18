@@ -1,10 +1,10 @@
 <template>
-  <div class="skills-panel">
+  <div class="tool-bindings-panel">
     <!-- 头部 -->
-    <div class="skills-panel__header">
+    <div class="tool-bindings-panel__header">
       <div>
-        <h3 class="skills-panel__title">{{ title }}</h3>
-        <p class="skills-panel__desc">
+        <h3 class="tool-bindings-panel__title">{{ title }}</h3>
+        <p class="tool-bindings-panel__desc">
           {{ desc || '以外部工具为主，按绑定的投标编制节点归类；每个工具可绑定到其所属节点下的阶段。' }}
         </p>
       </div>
@@ -15,42 +15,42 @@
     </div>
 
     <a-spin :spinning="loading">
-      <div class="skills-panel__list">
+      <div class="tool-bindings-panel__list">
         <div
           v-for="tool in toolRows"
           :key="tool.toolId"
-          class="skill-card"
-          :class="{ 'skill-card--inactive': !tool.toolEnabled }"
+          class="tool-card"
+          :class="{ 'tool-card--inactive': !tool.toolEnabled }"
         >
           <!-- 工具为主实体：名称 + 关联编制节点徽标 + 工具启用态（展示） -->
-          <div class="skill-card__head">
-            <span class="skill-card__name">{{ tool.toolName }}</span>
+          <div class="tool-card__head">
+            <span class="tool-card__name">{{ tool.toolName }}</span>
             <a-tag
               v-for="label in tool.nodeLabels"
               :key="label"
-              class="skill-card__node"
+              class="tool-card__node"
             >{{ label }}</a-tag>
             <a-tag
               v-if="tool.nodeLabels.length === 0"
-              class="skill-card__node skill-card__node--none"
+              class="tool-card__node tool-card__node--none"
             >未关联编制节点</a-tag>
             <a-tag
-              class="skill-card__tool-state"
+              class="tool-card__tool-state"
               :color="tool.toolEnabled ? 'green' : 'default'"
             >{{ tool.toolEnabled ? '工具启用' : '工具停用' }}</a-tag>
           </div>
 
           <!-- 该工具绑定的阶段（含逐阶段启停 / 解绑）+ 绑定新阶段的下拉 -->
-          <div class="skill-card__bindings">
-            <span class="skill-card__label">绑定阶段</span>
+          <div class="tool-card__bindings">
+            <span class="tool-card__label">绑定阶段</span>
             <span
               v-for="s in tool.boundStages"
               :key="s.stageKey"
-              class="skill-card__stage"
-              :class="{ 'skill-card__stage--off': !s.stageEnabled }"
+              class="tool-card__stage"
+              :class="{ 'tool-card__stage--off': !s.stageEnabled }"
             >
-              <code class="skill-card__stage-key">{{ s.stageKey }}</code>
-              <span class="skill-card__stage-name">{{ s.stageName }}</span>
+              <code class="tool-card__stage-key">{{ s.stageKey }}</code>
+              <span class="tool-card__stage-name">{{ s.stageName }}</span>
               <a-switch
                 :checked="s.stageEnabled"
                 size="small"
@@ -59,12 +59,12 @@
                 @change="(c: unknown) => onToggleStage(s.stageKey, !!c)"
               />
               <CloseOutlined
-                class="skill-card__unbind"
+                class="tool-card__unbind"
                 title="解绑该阶段"
                 @click="onUnbindStage(tool.toolId, s.stageKey)"
               />
             </span>
-            <span v-if="tool.boundStages.length === 0" class="skill-card__muted">
+            <span v-if="tool.boundStages.length === 0" class="tool-card__muted">
               尚未绑定任何阶段
             </span>
 
@@ -87,7 +87,7 @@
                 >{{ s.stageName }} · {{ s.stageKey }}</a-select-option>
               </a-select-opt-group>
             </a-select>
-            <span v-else class="skill-card__muted">已绑定全部阶段</span>
+            <span v-else class="tool-card__muted">已绑定全部阶段</span>
           </div>
         </div>
       </div>
@@ -98,7 +98,11 @@
 
 <script setup lang="ts">
 /**
- * SkillsPanel：外部工具管理（P1-3）—— 工具为主、关联编制节点视图.
+ * ToolBindingsPanel：外部工具管理 —— 工具为主、关联编制节点视图.
+ *
+ * 🔴 S4 改名说明：本文件原名 `SkillsPanel.vue`。SKILL.md 契约体系（S4）引入后，
+ * 「skill」这个名字被让给行为准则资产（SkillPanel.vue），本面板管理的其实是
+ * 「外部工具 ↔ 编制阶段绑定」，故更名为 ToolBindingsPanel（语义对齐）。
  *
  * 与「阶段路由」面板不同，本页不按 5 个编制节点做分组区，而是以「外部工具」
  * 为主实体：每张卡 = 一个工具，卡内展示它关联的编制节点（经 @/config/stageNodes
@@ -108,9 +112,9 @@
  */
 import { onMounted } from 'vue'
 import { ReloadOutlined, CloseOutlined } from '@ant-design/icons-vue'
-import { useSkillsConfig } from '@/composables/useSkillsConfig'
+import { useToolBindingsConfig } from '@/composables/useToolBindingsConfig'
 import type { ExternalTool } from '@/api/externalTools'
-import type { ToolRow } from '@/composables/useSkillsConfig'
+import type { ToolRow } from '@/composables/useToolBindingsConfig'
 import { STAGE_NODE_GROUPS, type StageNodeGroup } from '@/config/stageNodes'
 
 withDefaults(
@@ -121,7 +125,7 @@ withDefaults(
   { title: '外部工具', desc: '' },
 )
 
-const config = useSkillsConfig()
+const config = useToolBindingsConfig()
 
 const { loading, toolRows, routes, tools, load, toggleEnabled, bindStage, unbindStage } = config
 
@@ -158,11 +162,11 @@ onMounted(load)
 </script>
 
 <style scoped>
-.skills-panel {
+.tool-bindings-panel {
   max-width: 760px;
 }
 
-.skills-panel__header {
+.tool-bindings-panel__header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -170,38 +174,38 @@ onMounted(load)
   margin-bottom: var(--space-4);
 }
 
-.skills-panel__title {
+.tool-bindings-panel__title {
   margin: 0;
   font-size: 16px;
   font-weight: 700;
   color: var(--text-primary);
 }
 
-.skills-panel__desc {
+.tool-bindings-panel__desc {
   margin: 4px 0 0;
   font-size: 12px;
   color: var(--text-tertiary);
   line-height: 1.6;
 }
 
-.skills-panel__list {
+.tool-bindings-panel__list {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
 
-.skill-card {
+.tool-card {
   padding: var(--space-3) var(--space-4);
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
 }
 
-.skill-card--inactive {
+.tool-card--inactive {
   opacity: 0.65;
 }
 
-.skill-card__head {
+.tool-card__head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -209,42 +213,42 @@ onMounted(load)
   flex-wrap: wrap;
 }
 
-.skill-card__name {
+.tool-card__name {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.skill-card__node {
+.tool-card__node {
   font-size: 11px;
   color: var(--color-primary);
   background: var(--color-primary-lighter);
   border-color: transparent;
 }
 
-.skill-card__node--none {
+.tool-card__node--none {
   color: var(--text-tertiary);
   background: var(--bg-muted, #f0f0f0);
 }
 
-.skill-card__head > :last-child {
+.tool-card__head > :last-child {
   margin-left: auto;
 }
 
-.skill-card__bindings {
+.tool-card__bindings {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
 }
 
-.skill-card__label {
+.tool-card__label {
   font-size: 11px;
   color: var(--text-tertiary);
   flex-shrink: 0;
 }
 
-.skill-card__stage {
+.tool-card__stage {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -254,31 +258,31 @@ onMounted(load)
   border-radius: var(--radius-sm);
 }
 
-.skill-card__stage--off {
+.tool-card__stage--off {
   opacity: 0.6;
 }
 
-.skill-card__stage-key {
+.tool-card__stage-key {
   font-size: 11px;
   color: var(--color-primary);
 }
 
-.skill-card__stage-name {
+.tool-card__stage-name {
   font-size: 12px;
   color: var(--text-primary);
 }
 
-.skill-card__unbind {
+.tool-card__unbind {
   font-size: 12px;
   color: var(--text-tertiary);
   cursor: pointer;
 }
 
-.skill-card__unbind:hover {
+.tool-card__unbind:hover {
   color: var(--color-danger, #ff4d4f);
 }
 
-.skill-card__muted {
+.tool-card__muted {
   font-size: 12px;
   color: var(--text-tertiary);
 }

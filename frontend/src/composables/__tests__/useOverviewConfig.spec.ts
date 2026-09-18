@@ -1,5 +1,5 @@
 /**
- * useOverviewConfig / useSkillsConfig 纯函数映射测试（T04）.
+ * useOverviewConfig / useToolBindingsConfig 纯函数映射测试（T04）.
  *
  * buildOverviewSnapshot：白名单口径（custom/deepseek/zhipu + tavily/brave/
  * searxng）数据映射、缺行回退；阶段路由按 5 个投标编制节点归并
@@ -13,7 +13,8 @@ vi.mock('@/api/client', () => ({
 }))
 
 import { buildOverviewSnapshot } from '@/composables/useOverviewConfig'
-import { buildToolRows, type ToolRow } from '@/composables/useSkillsConfig'
+// 🔴 S4 改名：buildToolRows/ToolRow 从 useSkillsConfig 迁至 useToolBindingsConfig
+import { buildToolRows, type ToolRow } from '@/composables/useToolBindingsConfig'
 import type { ModelRoute } from '@/api/providers'
 import type { ExternalTool } from '@/api/externalTools'
 

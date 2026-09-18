@@ -13,7 +13,7 @@
  * 配置中心占位面板（T01）。
  *
  * configRegistry 各条目在 T02-T04 迁移真实面板（ProviderPanel/StageRoutesPanel/
- * RetrievalPanel/WebSearchPanel/SkillsPanel/RuntimePanel/OverviewPanel）之前，
+ * RetrievalPanel/WebSearchPanel/ToolBindingsPanel/RuntimePanel/OverviewPanel）之前，
  * 统一以本组件占位，保证弹窗骨架、两级导航与保存/脏状态链路可先行集成验证。
  */
 withDefaults(

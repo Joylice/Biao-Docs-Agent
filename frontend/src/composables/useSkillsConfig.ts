@@ -1,190 +1,212 @@
 /**
- * useSkillsConfig：技能分类（P1-3）逻辑模型.
+ * useSkillsConfig：行为准则（SKILL.md 契约）管理逻辑模型（S4）.
  *
- * 「技能」= 流水线阶段的业务视图（旧 SkillsView 的阶段绑定管理部分迁移，
- * 该文件 T05 下线不修改）：列表来自 GET /settings/routes（8 阶段的名称/
- * 启用态），启停 = PUT /settings/routes/{stage_key} { enabled }（后端无
- * 路由乐观锁，即时保存）；阶段绑定 = 该阶段绑定的外部工具（数据源为
- * useExternalToolsConfig 的 tools + 会话内 bindings，bind/unbind 走
- * /settings/external-tools/{id}/bind 端点）。
+ * 🔴 命名沿革：本文件原名对应「外部工具绑定」逻辑（已更名
+ * `useToolBindingsConfig.ts`）。SKILL.md 契约体系落地后，本文件接管
+ * 「skill」这个名字 —— 管理的是 `api/skills.ts` 暴露的双源注册表：
+ *
+ * - 内置层（`backend/skills/<目录名>/SKILL.md`）：只读，可被禁用（回退旧 YAML）；
+ * - 用户层（DB）：可增删改 + 启停 + zip 导入导出 + 预览渲染。
+ *
+ * 交互口径（与后端契约逐条对齐，改动前先读 `app/api/skills.py`）：
+ * 1. 写操作（create/update/delete/reset）是**即时提交**，无表单 dirty 语义
+ *    → registry entry.save 为 no-op；乐观锁 `optimisticVersion` 由后端返回值
+ *    回写本行，409 冲突时提示刷新；
+ * 2. `enabled=false` 的用户 skill 等于「不生效」（注册表回退内置层），但仍在
+ *    列表中可见（`effective=false`），否则用户无法重新启用；
+ * 3. 内置层删除/更新一律 403 —— 前端对 `builtin=true` 的行**不渲染**写按钮。
  *
  * 实现为「依赖注入工厂 + 模块级单例」（单测经 createSkillsConfig 注入）。
  */
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
-  getRoutes,
-  updateRoute,
-  type ModelRoute,
-  type RouteUpdatePayload,
-} from '@/api/providers'
-import {
-  bindExternalTool,
-  getExternalTools,
-  unbindExternalTool,
-  type ExternalTool,
-} from '@/api/externalTools'
+  createSkill,
+  deleteSkill,
+  getSkills,
+  importSkills,
+  previewSkill,
+  resetSkill,
+  updateSkill,
+  type SkillCreatePayload,
+  type SkillImportItem,
+  type SkillListResult,
+  type SkillPreviewResult,
+  type SkillUpdatePayload,
+  type SkillView,
+} from '@/api/skills'
 import { getApiErrorMessage } from './apiErrorMessage'
-import { STAGE_NODE_GROUPS } from '@/config/stageNodes'
 
-/** 工具绑定的单个阶段（用于工具卡内逐阶段展示 / 启停 / 解绑） */
-export interface ToolBoundStage {
-  stageKey: string
-  stageName: string
-  /** 该阶段是否启用（阶段级，与工具自身启用态相互独立） */
-  stageEnabled: boolean
-}
-
-/**
- * 工具（外部工具）视图行：SkillsPanel 渲染与单测共用.
- *
- * 口径：本面板以「外部工具」为主实体，每个工具关联其绑定的投标编制节点
- * （经 @/config/stageNodes 的 STAGE_NODE_GROUPS 归并，对齐 5 节点口径）。
- * 绑定关系本质仍是「阶段 ↔ 工具」（后端 bind/unbind 以 stage_key 为键），
- * 此处仅做**展示层反转**：工具 → 其所属编制节点 + 已绑定阶段。
- */
-export interface ToolRow {
-  toolId: string
-  toolName: string
-  /** 工具自身启用态（ExternalTool.enabled，仅展示，本面板不就地切换） */
-  toolEnabled: boolean
-  /** 关联编制节点 key（去重，顺序同 STAGE_NODE_GROUPS） */
-  nodeKeys: string[]
-  /** 关联编制节点中文名 */
-  nodeLabels: string[]
-  /** 该工具已绑定的阶段 */
-  boundStages: ToolBoundStage[]
-}
-
-/**
- * 纯函数：routes + tools + bindings → 工具视图行（供面板渲染与单测直接覆盖）。
- *
- * nodeKeys/nodeLabels 取 STAGE_NODE_GROUPS 顺序归并，不依赖入参顺序；
- * 绑定中引用了 routes 不存在的 stage_key 时静默剔除（与 groupRoutesByNode 一致）。
- */
-export function buildToolRows(
-  routes: ModelRoute[],
-  tools: ExternalTool[],
-  bindings: Record<string, string[]>,
-): ToolRow[] {
-  const routeByKey = new Map(routes.map((r) => [r.stageKey, r]))
-  return tools.map((tool) => {
-    const boundKeys = bindings[tool.id] ?? []
-    const boundStages: ToolBoundStage[] = boundKeys
-      .map((stageKey) => routeByKey.get(stageKey))
-      .filter((r): r is ModelRoute => r !== undefined)
-      .map((r) => ({ stageKey: r.stageKey, stageName: r.stageName, stageEnabled: r.enabled }))
-    const nodeKeys = STAGE_NODE_GROUPS.filter((g) =>
-      g.stageKeys.some((sk) => boundKeys.includes(sk)),
-    ).map((g) => g.key)
-    return {
-      toolId: tool.id,
-      toolName: tool.name,
-      toolEnabled: tool.enabled,
-      nodeKeys,
-      nodeLabels: STAGE_NODE_GROUPS.filter((g) => nodeKeys.includes(g.key)).map((g) => g.label),
-      boundStages,
-    }
-  })
-}
+/** 预览渲染的单条结果（导入回执复用同一形状） */
+export type { SkillImportItem }
 
 export interface SkillsConfigDeps {
-  getRoutes: () => Promise<ModelRoute[]>
-  updateRoute: (stageKey: string, payload: RouteUpdatePayload) => Promise<unknown>
-  getTools: () => Promise<ExternalTool[]>
-  bindTool: (id: string, payload: { stage_key: string }) => Promise<unknown>
-  unbindTool: (id: string, stageKey: string) => Promise<void>
+  listSkills: () => Promise<SkillListResult>
+  doCreate: (payload: SkillCreatePayload) => Promise<SkillView>
+  doUpdate: (name: string, payload: SkillUpdatePayload) => Promise<SkillView>
+  doDelete: (name: string) => Promise<void>
+  doReset: (name: string) => Promise<string>
+  doImport: (file: File) => Promise<{ items: SkillImportItem[]; total: number; created: number }>
+  doPreview: (bodyMd: string, name?: string) => Promise<SkillPreviewResult>
   notifyError: (msg: string) => void
   notifySuccess: (msg: string) => void
 }
 
 export interface SkillsConfigApi {
   loading: Ref<boolean>
-  routes: Ref<ModelRoute[]>
-  tools: Ref<ExternalTool[]>
-  /** toolId → 绑定的 stage_key[]（会话内推断，load 后为空） */
-  bindings: Ref<Record<string, string[]>>
-  /** 工具视图行（computed，面板直接渲染，工具为主、关联编制节点） */
-  toolRows: ComputedRef<ToolRow[]>
+  /** 列表原始数据（含 builtinCount/userCount/bodyMaxChars/stageKeys 元信息） */
+  result: Ref<SkillListResult | null>
+  /** 视图行（computed，面板直接渲染；内置在前、用户在后由后端排序保证） */
+  rows: ComputedRef<SkillView[]>
+  /** 合法阶段集合（后端下发，避免前端硬编码漂移） */
+  stageKeys: ComputedRef<string[]>
+  /** 正文长度上限（后端 SKILL_BODY_MAX_CHARS） */
+  bodyMaxChars: ComputedRef<number>
   load: () => Promise<void>
-  /** 启停（即时保存）；失败返回 false（开关 UI 由调用方回滚） */
-  toggleEnabled: (stageKey: string, enabled: boolean) => Promise<boolean>
-  bindStage: (tool: ExternalTool, stageKey: string) => Promise<boolean>
-  unbindStage: (tool: ExternalTool, stageKey: string) => Promise<boolean>
+  /** 创建（人工创建 → 后端直接启用） */
+  create: (payload: SkillCreatePayload) => Promise<boolean>
+  /** 更新（三态 + 乐观锁；version 不匹配 → 409，提示刷新） */
+  update: (name: string, payload: SkillUpdatePayload) => Promise<boolean>
+  /** 启停（乐观锁自动带当前版本；失败不回滚 UI，由调用方重新 load） */
+  toggleEnabled: (row: SkillView, enabled: boolean) => Promise<boolean>
+  /** 删除（内置行调用必 403，本层不做拦截——由后端为唯一真源） */
+  remove: (row: SkillView) => Promise<boolean>
+  /** 恢复内置（删除用户层覆盖行） */
+  reset: (row: SkillView) => Promise<boolean>
+  /** zip 导入；返回逐条回执（created=false 的条目由面板显式呈现） */
+  importZip: (file: File) => Promise<SkillImportItem[] | null>
+  /** 预览渲染（不落库） */
+  preview: (bodyMd: string, name?: string) => Promise<SkillPreviewResult | null>
 }
 
 export function createSkillsConfig(deps: SkillsConfigDeps): SkillsConfigApi {
-  const { getRoutes, updateRoute, getTools, bindTool, unbindTool, notifyError, notifySuccess } = deps
+  const {
+    listSkills,
+    doCreate,
+    doUpdate,
+    doDelete,
+    doReset,
+    doImport,
+    doPreview,
+    notifyError,
+    notifySuccess,
+  } = deps
 
   const loading = ref(false)
-  const routes = ref<ModelRoute[]>([])
-  const tools = ref<ExternalTool[]>([])
-  const bindings = ref<Record<string, string[]>>({})
+  const result = ref<SkillListResult | null>(null)
 
-  const toolRows = computed(() => buildToolRows(routes.value, tools.value, bindings.value))
+  const rows = computed<SkillView[]>(() => result.value?.items ?? [])
+  const stageKeys = computed<string[]>(() => result.value?.stageKeys ?? [])
+  const bodyMaxChars = computed<number>(() => result.value?.bodyMaxChars ?? 8000)
 
   async function load(): Promise<void> {
     loading.value = true
     try {
-      const [routeRows, toolRows] = await Promise.all([getRoutes(), getTools()])
-      routes.value = routeRows
-      tools.value = toolRows
-      // 用后端回填的 boundStages 初始化绑定映射，使首屏即展示工具↔编制节点关联
-      // （而非会话内乐观更新后才出现）。绑定/解绑操作仍经下方 bind/unbind 更新此映射。
-      bindings.value = Object.fromEntries(
-        toolRows.map((t) => [t.id, [...(t.boundStages ?? [])]]),
-      )
+      result.value = await listSkills()
     } catch (error) {
-      notifyError(getApiErrorMessage(error, '加载技能配置失败'))
+      notifyError(getApiErrorMessage(error, '加载行为准则失败'))
     } finally {
       loading.value = false
     }
   }
 
-  async function toggleEnabled(stageKey: string, enabled: boolean): Promise<boolean> {
+  async function create(payload: SkillCreatePayload): Promise<boolean> {
     try {
-      await updateRoute(stageKey, { enabled })
-      const row = routes.value.find((r) => r.stageKey === stageKey)
-      if (row) row.enabled = enabled
-      notifySuccess(enabled ? `阶段「${row?.stageName ?? stageKey}」已启用` : '阶段已停用')
+      await doCreate(payload)
+      notifySuccess(`准则「${payload.title}」已创建`)
+      await load()
       return true
     } catch (error) {
-      notifyError(getApiErrorMessage(error, '更新失败，请刷新后重试'))
+      notifyError(getApiErrorMessage(error, '创建失败'))
       return false
     }
   }
 
-  async function bindStage(tool: ExternalTool, stageKey: string): Promise<boolean> {
+  async function update(name: string, payload: SkillUpdatePayload): Promise<boolean> {
     try {
-      await bindTool(tool.id, { stage_key: stageKey })
-      const list = bindings.value[tool.id] ?? []
-      if (!list.includes(stageKey)) {
-        bindings.value = { ...bindings.value, [tool.id]: [...list, stageKey] }
-      }
-      notifySuccess('已绑定')
+      const updated = await doUpdate(name, payload)
+      // 乐观锁版本回写：避免「连续两次保存，第二次带着旧版本 409」
+      const row = result.value?.items.find((r) => r.name === name)
+      if (row) row.optimisticVersion = updated.optimisticVersion
+      notifySuccess('准则已更新')
       return true
     } catch (error) {
-      notifyError(getApiErrorMessage(error, '绑定失败'))
+      notifyError(getApiErrorMessage(error, '更新失败（若提示冲突请刷新后重试）'))
       return false
     }
   }
 
-  async function unbindStage(tool: ExternalTool, stageKey: string): Promise<boolean> {
+  async function toggleEnabled(row: SkillView, enabled: boolean): Promise<boolean> {
+    return update(row.name, {
+      enabled,
+      expected_version: row.optimisticVersion ?? undefined,
+    })
+  }
+
+  async function remove(row: SkillView): Promise<boolean> {
     try {
-      await unbindTool(tool.id, stageKey)
-      bindings.value = {
-        ...bindings.value,
-        [tool.id]: (bindings.value[tool.id] ?? []).filter((s) => s !== stageKey),
-      }
-      notifySuccess('已解绑')
+      await doDelete(row.name)
+      notifySuccess(`准则「${row.title}」已删除`)
+      await load()
       return true
     } catch (error) {
-      notifyError(getApiErrorMessage(error, '解绑失败'))
+      notifyError(getApiErrorMessage(error, '删除失败'))
       return false
     }
   }
 
-  return { loading, routes, tools, bindings, toolRows, load, toggleEnabled, bindStage, unbindStage }
+  async function reset(row: SkillView): Promise<boolean> {
+    try {
+      const msg = await doReset(row.name)
+      notifySuccess(msg)
+      await load()
+      return true
+    } catch (error) {
+      notifyError(getApiErrorMessage(error, '重置失败'))
+      return false
+    }
+  }
+
+  async function importZip(file: File): Promise<SkillImportItem[] | null> {
+    try {
+      const r = await doImport(file)
+      notifySuccess(
+        r.created === r.total
+          ? `导入完成：共 ${r.total} 条`
+          : `导入完成：成功 ${r.created} / 共 ${r.total} 条（同名未覆盖）`,
+      )
+      await load()
+      return r.items
+    } catch (error) {
+      notifyError(getApiErrorMessage(error, '导入失败'))
+      return null
+    }
+  }
+
+  async function preview(bodyMd: string, name?: string): Promise<SkillPreviewResult | null> {
+    try {
+      return await doPreview(bodyMd, name)
+    } catch (error) {
+      notifyError(getApiErrorMessage(error, '预览渲染失败'))
+      return null
+    }
+  }
+
+  return {
+    loading,
+    result,
+    rows,
+    stageKeys,
+    bodyMaxChars,
+    load,
+    create,
+    update,
+    toggleEnabled,
+    remove,
+    reset,
+    importZip,
+    preview,
+  }
 }
 
 /* ---------------- 模块级单例 ---------------- */
@@ -194,11 +216,13 @@ let singleton: SkillsConfigApi | null = null
 export function useSkillsConfig(): SkillsConfigApi {
   if (!singleton) {
     singleton = createSkillsConfig({
-      getRoutes,
-      updateRoute,
-      getTools: getExternalTools,
-      bindTool: bindExternalTool,
-      unbindTool: unbindExternalTool,
+      listSkills: getSkills,
+      doCreate: createSkill,
+      doUpdate: updateSkill,
+      doDelete: deleteSkill,
+      doReset: resetSkill,
+      doImport: importSkills,
+      doPreview: (bodyMd, name) => previewSkill({ body_md: bodyMd, name }),
       notifySuccess: (msg) => message.success(msg),
       notifyError: (msg) => message.error(msg),
     })

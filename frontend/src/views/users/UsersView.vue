@@ -54,7 +54,7 @@
                   size="small"
                   style="width: 140px"
                   :options="roleOptions"
-                  @change="(val) => handleRoleChange(record as UserItem, val as UserRole)"
+                  @change="(val: unknown) => handleRoleChange(record as UserItem, val as UserRole)"
                 />
               </template>
               <template v-else-if="column.key === 'created_at'">

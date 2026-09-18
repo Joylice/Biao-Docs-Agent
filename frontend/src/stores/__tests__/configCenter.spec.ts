@@ -257,10 +257,18 @@ describe('configCenterStore.bumpOverview', () => {
 })
 
 describe('configRegistry 结构与白名单', () => {
-  it('一级分类为 6 项且 id 与 ARCH 定稿一致', () => {
+  it('一级分类为 7 项且 id 与 ARCH 定稿一致（S4：技能→tools 外部工具，新增 skills 行为准则）', () => {
     const ids = getConfigCategories().map((c) => c.id)
 
-    expect(ids).toEqual(['overview', 'llm', 'retrieval', 'websearch', 'skills', 'system'])
+    expect(ids).toEqual([
+      'overview',
+      'llm',
+      'retrieval',
+      'websearch',
+      'tools',
+      'skills',
+      'system',
+    ])
   })
 
   it('语言模型分类条目严格等于 UI 白名单', () => {

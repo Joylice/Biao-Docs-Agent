@@ -17,6 +17,10 @@
  * preset 条目化 + 乐观锁）与技能（skills:list → SkillsPanel，即改即存）
  * 替换真实面板。至此全部占位条目替换完毕（PlaceholderPanel 保留 import
  * 作 component 空位扩展用途）。
+ * S4 阶段：原「技能」分类更名「外部工具」（id: tools，条目 skills:list →
+ * tools:bindings，面板 SkillsPanel → ToolBindingsPanel）；腾出的 skills
+ * 分类名让给 SKILL.md 契约体系（skills:list → SkillPanel，行为准则管理，
+ * 即改即存 + zip 导入导出）。
  *
  * UI 白名单机制（PRD P0-3）：语言模型分类仅暴露 LLM_UI_WHITELIST 内条目；
  * openai/anthropic/kimi/dashscope 等 provider 数据层保留（后端 GET 仍返回
@@ -29,6 +33,7 @@ import {
   CodeOutlined,
   ControlOutlined,
   DashboardOutlined,
+  FileTextOutlined,
   GlobalOutlined,
   SearchOutlined,
   SettingOutlined,
@@ -39,7 +44,9 @@ import RetrievalPanel from '@/components/configCenter/panels/RetrievalPanel.vue'
 import RuntimePanel from '@/components/configCenter/panels/RuntimePanel.vue'
 import OverviewPanel from '@/components/configCenter/panels/OverviewPanel.vue'
 import WebSearchPanel from '@/components/configCenter/panels/WebSearchPanel.vue'
-import SkillsPanel from '@/components/configCenter/panels/SkillsPanel.vue'
+// 🔴 S4 改名：SkillsPanel → ToolBindingsPanel（外部工具绑定），新增 SkillPanel（行为准则）
+import ToolBindingsPanel from '@/components/configCenter/panels/ToolBindingsPanel.vue'
+import SkillPanel from '@/components/configCenter/panels/SkillPanel.vue'
 import { useProvidersConfig } from '@/composables/useProvidersConfig'
 import { useRoutesConfig } from '@/composables/useRoutesConfig'
 import { useRetrievalConfig } from '@/composables/useRetrievalConfig'
@@ -126,10 +133,16 @@ const categories: ConfigCategory[] = [
     icon: markRaw(GlobalOutlined),
   },
   {
-    id: 'skills',
-    title: '技能',
+    id: 'tools',
+    title: '外部工具',
     desc: '外部工具与编制节点关联',
     icon: markRaw(CodeOutlined),
+  },
+  {
+    id: 'skills',
+    title: '行为准则',
+    desc: 'SKILL.md 契约准则管理',
+    icon: markRaw(FileTextOutlined),
   },
   {
     id: 'system',
@@ -236,14 +249,25 @@ const entries: ConfigEntry[] = [
     save: () => toolsConfig.savePreset('searxng'),
     isDirty: () => toolsConfig.isDirtyPreset('searxng'),
   },
-  // 技能（T04：阶段启停/绑定均为即时操作，无表单保存语义 → save no-op）
+  // 外部工具（S4 起原「技能」分类更名；阶段启停/绑定均为即时操作 → save no-op）
+  {
+    id: 'tools:bindings',
+    categoryId: 'tools',
+    title: '工具绑定',
+    desc: '工具为主，关联投标编制节点',
+    icon: markRaw(CodeOutlined),
+    component: markRaw(ToolBindingsPanel),
+    save: noopSave,
+    isDirty: notDirty,
+  },
+  // 行为准则（S4：SKILL.md 契约，即改即存 + zip 导入导出 → save no-op）
   {
     id: 'skills:list',
     categoryId: 'skills',
-    title: '外部工具',
-    desc: '工具为主，关联投标编制节点',
-    icon: markRaw(CodeOutlined),
-    component: markRaw(SkillsPanel),
+    title: '准则管理',
+    desc: 'SKILL.md 契约准则 / 导入导出',
+    icon: markRaw(FileTextOutlined),
+    component: markRaw(SkillPanel),
     save: noopSave,
     isDirty: notDirty,
   },
