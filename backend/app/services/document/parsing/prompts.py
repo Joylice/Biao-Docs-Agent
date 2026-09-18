@@ -8,9 +8,13 @@
 本模块不直接依赖 llm_service（dispatch 负责 LLM 调用）。
 """
 
+import logging
 from typing import Any
 
+from app.core.exceptions import BizError
 from app.services.infra.prompt_loader import _composer
+
+logger = logging.getLogger(__name__)
 
 
 def build_agent_context(
@@ -35,6 +39,29 @@ def build_agent_context(
         ctx["prior_results"] = _format_prior_results(prior_results)
 
     return ctx
+
+
+async def load_agent_skill_prompt(
+    agent_id: str,
+    stage_key: str,
+    context: dict[str, Any],
+) -> tuple[str, str] | None:
+    """S3：解析该 Agent 的 skill 契约（内置 `parse_<x>` / 用户覆盖）.
+
+    未命中返回 None，由调用方回退旧 YAML —— **不抛异常**，
+    对齐多 Agent 解析「单 Agent 失败不阻断」的既有降级契约。
+    """
+    from app.services.skills.consume import resolve_agent_skill_prompt
+
+    try:
+        hit = await resolve_agent_skill_prompt(agent_id, stage_key, context, db=None)
+    except Exception:
+        logger.warning("Agent %s 的 skill 契约解析异常，回退 YAML", agent_id, exc_info=True)
+        return None
+    if hit is None:
+        return None
+    system_prompt, user_prompt, _contract = hit
+    return system_prompt, user_prompt
 
 
 def _format_prior_results(prior: dict[str, Any]) -> str:
@@ -66,11 +93,24 @@ def load_parser_agent_prompt(
 
     向后兼容：P1 阶段如果 parse_{agent_id}.yaml 不存在，回退到旧 parse.yaml
     （行为等价，保证不 break 旧测试）。
+
+    2026-09-18 收窄异常口径：原实现 `except Exception:` 会吞掉**一切**异常
+    （含 YAML 语法错、DSL 字段名错、模板名校验失败），静默回退旧模板且零日志 ——
+    表现为「改了提示词但模型行为没变」，排查成本极高。
+    现改为**只兜「模板不存在」（BizError 5009）**，其他异常一律上抛；
+    且回退时打 warning 留痕，不再静默。
     """
     template_name = f"parse_{agent_id}"
     try:
         return _composer.compose(template_name, context)
-    except Exception:
-        # P1 回退：parse_score/parse_disqual/parse_norm/parse_validator 尚未创建时
-        # 用旧 parse.yaml，行为与单次 LLM 调用等价（保证 G1 行为等价判据）
+    except BizError as e:
+        if e.code != 5009:
+            raise
+        # 仅「模板文件不存在」走回退（P1 过渡：parse_{agent_id}.yaml 未创建时用旧 parse.yaml）
+        logger.warning(
+            "解析 Agent 模板 %s.yaml 不存在，回退 parse.yaml（agent=%s）",
+            template_name,
+            agent_id,
+            exc_info=True,
+        )
         return _composer.compose("parse", context)

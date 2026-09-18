@@ -24,7 +24,11 @@ from typing import Any
 
 from app.core.redact import redact
 from app.services.document.parsing.guard import get_allowed_tools_for_agent
-from app.services.document.parsing.prompts import build_agent_context, load_parser_agent_prompt
+from app.services.document.parsing.prompts import (
+    build_agent_context,
+    load_agent_skill_prompt,
+    load_parser_agent_prompt,
+)
 from app.services.document.parsing.registry import PARSER_AGENTS, ParserAgentConfig
 from app.services.document.parsing.results import AgentResult, ParsedTender, merge_agent_results
 from app.services.document.parsing.windows import select_parse_window
@@ -52,14 +56,19 @@ async def _run_single_agent(
     start = time.monotonic()
     context = build_agent_context(config.agent_id, tender_window, prior_results)
 
-    try:
-        system_prompt, user_prompt = load_parser_agent_prompt(config.agent_id, context)
-    except Exception as e:
-        logger.warning("Agent %s 提示词加载失败，回退旧 parse.yaml: %s", config.agent_id, e)
-        # 回退：用旧 parse.yaml 作为提示词
-        from app.services.infra.prompt_loader import load_parse_prompt
+    # S3 新路径：skill 契约注册表优先（内置 parse_<x> / 用户覆盖），未命中回退旧 YAML
+    hit = await load_agent_skill_prompt(config.agent_id, "parse", context)
+    if hit is not None:
+        system_prompt, user_prompt = hit
+    else:
+        try:
+            system_prompt, user_prompt = load_parser_agent_prompt(config.agent_id, context)
+        except Exception as e:
+            logger.warning("Agent %s 提示词加载失败，回退旧 parse.yaml: %s", config.agent_id, e)
+            # 回退：用旧 parse.yaml 作为提示词
+            from app.services.infra.prompt_loader import load_parse_prompt
 
-        system_prompt, user_prompt = load_parse_prompt(redact(tender_window))
+            system_prompt, user_prompt = load_parse_prompt(redact(tender_window))
 
     # 组装 response_format
     response_format: dict[str, Any] = {
@@ -75,12 +84,17 @@ async def _run_single_agent(
         },
     }
 
-    # P1：工具默认关，不触发 chat_with_tools
+    # 内置解析工具：受 guard 三层防御 + tools_enabled 总开关约束
     allowed_tools = get_allowed_tools_for_agent(config.agent_id, tools_enabled)
+    # 外部搜索工具：真源 = stage_tool_bindings 显式绑定，与内置工具开关无关
+    # （配置中心「绑定即生效」；parse 即「招标解析」编制节点）
+    from app.services.infra.tools.registry import get_definitions as get_ext_definitions
+
+    ext_tools = await get_ext_definitions("parse", project_id)
 
     try:
-        if allowed_tools:
-            # P2+：两段式（先 chat_with_tools 取证，再 call_llm_with_schema 出 JSON）
+        if allowed_tools or ext_tools:
+            # 两段式（先 chat_with_tools 取证，再 call_llm_with_schema 出 JSON）
             result = await _run_agent_with_tools(
                 config,
                 system_prompt,
@@ -90,6 +104,7 @@ async def _run_single_agent(
                 tender_window,
                 prior_results or {},
                 project_id,
+                ext_tools,
             )
         else:
             # P1：直接 JSON schema 调用（行为等价旧 parse_tender_with_llm）
@@ -145,18 +160,30 @@ async def _run_agent_with_tools(
     tender_window: str,
     prior_results: dict[str, Any],
     project_id: str | None,
+    ext_tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """两段式执行：Stage A chat_with_tools 取证 → Stage B call_llm_with_schema JSON.
 
-    P2 阶段启用；P1 阶段不会进入此分支（tools_enabled=False → allowed_tools 为空）。
+    进入条件：内置解析工具放行（guard + tools_enabled）**或**该 stage 绑定了外部搜索
+    工具；两者皆无时调用方走单段 JSON schema 分支（行为等价旧单次调用）。
     """
     from app.services.infra.tools.parser_tools import execute_parser_tool, make_tool_definitions
+    from app.services.infra.tools.registry import execute_bound_tool
     from app.services.llm.llm_service import call_llm_with_schema, chat_with_tools
 
-    tools = make_tool_definitions(allowed_tools, tender_window, prior_results)
+    builtin_defs = make_tool_definitions(allowed_tools, tender_window, prior_results)
+    builtin_names = {d["function"]["name"] for d in builtin_defs}
+    tools = builtin_defs + list(ext_tools or [])
 
     async def _executor(name: str, arguments: dict[str, Any]) -> str:
-        return await execute_parser_tool(name, arguments, config.agent_id)
+        # 内置工具经 guard 三层防御；外部工具（name = tool_id）走绑定工具执行器
+        if name in builtin_names:
+            # 修复：原实现漏传 tender_window / prior_results，
+            # 致 search_tender_text 恒拿不到全文（永远返回「缺少全文或查询词」）
+            return await execute_parser_tool(
+                name, arguments, config.agent_id, tender_window, prior_results
+            )
+        return await execute_bound_tool(name, arguments, project_id)
 
     # Stage A：取证（≤2 轮）
     _text, _calls = await chat_with_tools(

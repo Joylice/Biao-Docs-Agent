@@ -19,6 +19,7 @@ from app.models.proposal import (
 from app.models.rbac import Permission, Role, RolePermission
 from app.models.retrieval_config import RetrievalConfig
 from app.models.user import User
+from app.models.user_skill import UserSkill
 
 __all__ = [
     "AuditLog",
@@ -44,4 +45,5 @@ __all__ = [
     "ScorePoint",
     "StageToolBinding",
     "User",
+    "UserSkill",
 ]

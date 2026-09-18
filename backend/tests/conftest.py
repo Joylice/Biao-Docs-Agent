@@ -10,7 +10,14 @@ from app.core.config import settings
 from app.main import app
 from app.services.infra import settings_service
 from app.services.infra import workflow_runtime as wf_facade
-from app.services.infra.workflow import runtime as wf_runtime
+
+# 2026-09-18 修复：原为 `from app.services.infra.workflow import runtime`，
+# 但 `app/services/infra/` 下并无 `workflow/` 子包（是扁平文件 workflow_runtime.py /
+# workflow_content_service.py / workflow_outline_service.py / workflow_feedback_service.py），
+# 该导入直接 ImportError ⇒ 整个测试套件 0 收集（属历史遗留，HEAD 版即存在）。
+# 门面本身即 runtime（workflow_runtime.py 是唯一承载模块），故两个别名指向同一对象；
+# 下方 `for _mod in (wf_facade, wf_runtime)` 的双层打桩语义仍然成立（同一对象重复打桩幂等）。
+from app.services.infra import workflow_runtime as wf_runtime
 
 # 测试环境无 PostgreSQL：缩短 checkpointer 连接池等待，避免 TestClient lifespan 阻塞 30s；
 # Windows ProactorEventLoop 下 psycopg 不可用，直接短路初始化避免连接重试噪音

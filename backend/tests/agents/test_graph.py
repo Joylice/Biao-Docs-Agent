@@ -123,6 +123,37 @@ def mock_deps(monkeypatch):
     async def fake_export_to_word(**kwargs) -> str:
         return f"{PROJECT_ID}/export/test.docx"
 
+    async def fake_check_consistency(*args, **kwargs) -> list:
+        """不 mock 会真调 LLM → 超时挂起.
+
+        刻意用 *args, **kwargs 而非精确签名：节点内的调用处在 except Exception
+        保护之下，若桩的形参与真实函数不匹配会抛 TypeError 并**被静默吞成「无 issues」**
+        （实测：2 参桩仍让全部用例通过 ⇒ 变异验证判为漏报）。签名正确性由
+        TestMockStubSignatures 用 inspect.signature 独立守卫。
+        """
+        return []
+
+    async def fake_review_chapters(*args, **kwargs) -> list:
+        """auto_review_node 的副作用调用；不 mock 会真调 LLM → 超时挂起（同上，用通用签名）."""
+        return []
+
+    async def fake_is_mock_enabled(mock: bool | None = None) -> bool:
+        """运行时配置读取会真连 PG → 挂起；测试固定为「非 mock」走确定性分支."""
+        return False
+
+    async def fake_get_runtime_config():
+        """get_runtime_config 是多个入口的公共瓶颈（is_mock_enabled / resolve_llm_target）.
+
+        虽内置 ``asyncio.timeout(5.0)``，但无 DB 环境下 psycopg connect 为静默阻塞，
+        且 **_runtime_cache 只缓存成功/失败结果、不缓存"正在连接"状态** ⇒ 每个节点
+        都重新付一次 5s 代价，多节点累积即超时。直接返回 None（走 env 回退分支）。
+        """
+        return None
+
+    async def fake_get_route_cached(_stage_key: str):
+        """阶段路由查询同样真连 PG；返回 None 即走旧逻辑（env 回退）."""
+        return None
+
     monkeypatch.setattr(nodes, "async_session_factory", fake_session_factory)
     monkeypatch.setattr(nodes, "publish_event", fake_publish_event)
     monkeypatch.setattr(
@@ -134,9 +165,42 @@ def mock_deps(monkeypatch):
     monkeypatch.setattr(
         "app.services.proposal.review_service.rewrite_chapter", fake_rewrite_chapter
     )
+    monkeypatch.setattr(
+        "app.services.proposal.consistency_service.check_consistency",
+        fake_check_consistency,
+    )
+    monkeypatch.setattr(
+        "app.services.proposal.review_service.review_chapters", fake_review_chapters
+    )
     monkeypatch.setattr("app.services.llm.rag_service.get_embedding", fake_get_embedding)
     monkeypatch.setattr("app.services.llm.rag_service.retrieve_similar", fake_retrieve_similar)
     monkeypatch.setattr("app.services.document.export_service.export_to_word", fake_export_to_word)
+
+    # ── 外部工具取证（prefetch_external_evidence）─────────────────────────────
+    # registry.get_definitions 走**自己的**（= app.core.database）session 工厂直连真实
+    # PG —— 本机无 PG 时会在 psycopg connect 处无限阻塞，表现为整条 LangGraph 链路
+    # 「静默挂起」（节点内 except 只在异常时降级，而这里是**阻塞**不是异常）。
+    # 用空工厂 + 空绑定短路；prefetch 的 mock 短路逻辑照旧走 settings 判定。
+    def empty_tool_factory():
+        return FakeDB()
+
+    monkeypatch.setattr(
+        "app.services.infra.tools.registry.async_session_factory", empty_tool_factory
+    )
+    from app.services.infra.tools import registry
+
+    registry.invalidate()
+    # ── 运行时配置（is_mock_enabled / get_runtime_config）────────────────────
+    # chat_with_tools 内部判 mock 时会读运行时配置；该函数虽有 asyncio.timeout(5.0)
+    # 兜底，但无 DB 环境下 psycopg connect 为**静默丢包**式阻塞，逐个节点累积后
+    # 整条链路远超测试超时。直接固定为「非 mock」以走确定性 mock 分支。
+    monkeypatch.setattr("app.services.infra.settings.runtime.is_mock_enabled", fake_is_mock_enabled)
+    monkeypatch.setattr(
+        "app.services.infra.settings.runtime.get_runtime_config", fake_get_runtime_config
+    )
+    monkeypatch.setattr(
+        "app.services.infra.settings.runtime._get_route_cached", fake_get_route_cached
+    )
 
 
 @pytest.fixture
@@ -214,6 +278,40 @@ class TestWorkflowInterrupt:
         # 新连接同一 thread → 从断点继续
         result = await graph.ainvoke(Command(resume=True), config)
         assert result["__interrupt__"][0].value["type"] == "confirm_outline"
+
+
+class TestMockStubSignatures:
+    """被 mock 的函数签名守卫.
+
+    🔴 动机（变异验证实测）：节点内的外部调用普遍包在 except Exception 里做**降级**，
+    因此「桩的形参与真实函数不匹配」不会让测试失败 —— 只会抛 TypeError 后被静默吞成
+    默认值（如「无 issues」）。实测把 fake_check_consistency 退回 2 参，**全部用例
+    仍然通过** ⇒ 这是测试套件的固有盲区，必须用 inspect.signature 显式守卫，
+    否则 S3 引入的「第 3 参 project_id」一旦被误删，测试会静默放行。
+    """
+
+    def test_check_consistency_accepts_project_id(self) -> None:
+        import inspect
+
+        from app.services.proposal.consistency_service import check_consistency
+
+        params = list(inspect.signature(check_consistency).parameters)
+        assert params == ["chapters", "outline", "project_id"], (
+            f"check_consistency 签名漂移: {params}；节点按 3 参调用（project_id），"
+            "漂移会因 except Exception 静默降级而无任何测试失败"
+        )
+        assert inspect.signature(check_consistency).parameters["project_id"].default is None
+
+    def test_review_chapters_accepts_project_id(self) -> None:
+        import inspect
+
+        from app.services.proposal.review_service import review_chapters
+
+        params = list(inspect.signature(review_chapters).parameters)
+        assert params == ["chapters", "score_points", "project_id"], (
+            f"review_chapters 签名漂移: {params}；auto_review_node 按 3 参调用"
+        )
+        assert inspect.signature(review_chapters).parameters["project_id"].default is None
 
 
 class TestWorkflowErrors:

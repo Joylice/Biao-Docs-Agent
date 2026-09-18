@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 async def review_chapters(
     chapters: dict[str, str],
     score_points: list[dict[str, Any]],
+    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """审阅已生成章节，返回审阅意见列表."""
     # 构造评分点摘要
@@ -27,9 +28,20 @@ async def review_chapters(
         chapter_summary += f"\n\n### 章节 {chapter_no}\n{content[:500]}..."
 
     # 章节内容拼接提示词前脱敏（外发 LLM 安全铁律）
-    system_prompt, user_prompt = load_review_prompt(
+    system_prompt, user_prompt = await load_review_prompt(
         chapter_summary=redact(chapter_summary),
         score_points=sp_text,
+    )
+
+    # 外部工具取证前置（stage=review 绑定搜索工具时；无绑定/mock/异常原样返回）
+    from app.services.infra.tools.prefetch import prefetch_external_evidence
+
+    system_prompt, user_prompt = await prefetch_external_evidence(
+        "review",
+        system_prompt,
+        user_prompt,
+        project_id,
+        intent="依据评分标准逐条审查章节内容，可参考外部标准/规范原文佐证",
     )
 
     try:
@@ -63,6 +75,7 @@ async def review_chapters(
                 },
             },
             stage_key="review",
+            project_id=project_id,
         )
         # result 来自 schema 化 LLM 调用，对 mypy 是 Any；显式落到声明返回类型
         comments: list[dict[str, Any]] = result.get("comments", [])

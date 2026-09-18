@@ -25,32 +25,67 @@ import {
   type ExternalTool,
 } from '@/api/externalTools'
 import { getApiErrorMessage } from './apiErrorMessage'
+import { STAGE_NODE_GROUPS } from '@/config/stageNodes'
 
-/** 技能（阶段）视图行：OverviewPanel/SkillsPanel 渲染与快照共用 */
-export interface SkillRow {
+/** 工具绑定的单个阶段（用于工具卡内逐阶段展示 / 启停 / 解绑） */
+export interface ToolBoundStage {
   stageKey: string
   stageName: string
-  enabled: boolean
-  /** 绑定到该阶段的外部工具名列表（会话内推断口径） */
-  boundToolNames: string[]
+  /** 该阶段是否启用（阶段级，与工具自身启用态相互独立） */
+  stageEnabled: boolean
 }
 
 /**
- * 纯函数：routes + tools + bindings → 技能视图行（供面板渲染与单测直接覆盖）。
+ * 工具（外部工具）视图行：SkillsPanel 渲染与单测共用.
+ *
+ * 口径：本面板以「外部工具」为主实体，每个工具关联其绑定的投标编制节点
+ * （经 @/config/stageNodes 的 STAGE_NODE_GROUPS 归并，对齐 5 节点口径）。
+ * 绑定关系本质仍是「阶段 ↔ 工具」（后端 bind/unbind 以 stage_key 为键），
+ * 此处仅做**展示层反转**：工具 → 其所属编制节点 + 已绑定阶段。
  */
-export function buildSkillRows(
+export interface ToolRow {
+  toolId: string
+  toolName: string
+  /** 工具自身启用态（ExternalTool.enabled，仅展示，本面板不就地切换） */
+  toolEnabled: boolean
+  /** 关联编制节点 key（去重，顺序同 STAGE_NODE_GROUPS） */
+  nodeKeys: string[]
+  /** 关联编制节点中文名 */
+  nodeLabels: string[]
+  /** 该工具已绑定的阶段 */
+  boundStages: ToolBoundStage[]
+}
+
+/**
+ * 纯函数：routes + tools + bindings → 工具视图行（供面板渲染与单测直接覆盖）。
+ *
+ * nodeKeys/nodeLabels 取 STAGE_NODE_GROUPS 顺序归并，不依赖入参顺序；
+ * 绑定中引用了 routes 不存在的 stage_key 时静默剔除（与 groupRoutesByNode 一致）。
+ */
+export function buildToolRows(
   routes: ModelRoute[],
   tools: ExternalTool[],
   bindings: Record<string, string[]>,
-): SkillRow[] {
-  return routes.map((route) => ({
-    stageKey: route.stageKey,
-    stageName: route.stageName,
-    enabled: route.enabled,
-    boundToolNames: tools
-      .filter((t) => (bindings[t.id] ?? []).includes(route.stageKey))
-      .map((t) => t.name),
-  }))
+): ToolRow[] {
+  const routeByKey = new Map(routes.map((r) => [r.stageKey, r]))
+  return tools.map((tool) => {
+    const boundKeys = bindings[tool.id] ?? []
+    const boundStages: ToolBoundStage[] = boundKeys
+      .map((stageKey) => routeByKey.get(stageKey))
+      .filter((r): r is ModelRoute => r !== undefined)
+      .map((r) => ({ stageKey: r.stageKey, stageName: r.stageName, stageEnabled: r.enabled }))
+    const nodeKeys = STAGE_NODE_GROUPS.filter((g) =>
+      g.stageKeys.some((sk) => boundKeys.includes(sk)),
+    ).map((g) => g.key)
+    return {
+      toolId: tool.id,
+      toolName: tool.name,
+      toolEnabled: tool.enabled,
+      nodeKeys,
+      nodeLabels: STAGE_NODE_GROUPS.filter((g) => nodeKeys.includes(g.key)).map((g) => g.label),
+      boundStages,
+    }
+  })
 }
 
 export interface SkillsConfigDeps {
@@ -69,8 +104,8 @@ export interface SkillsConfigApi {
   tools: Ref<ExternalTool[]>
   /** toolId → 绑定的 stage_key[]（会话内推断，load 后为空） */
   bindings: Ref<Record<string, string[]>>
-  /** 技能视图行（computed，面板直接渲染） */
-  skillRows: ComputedRef<SkillRow[]>
+  /** 工具视图行（computed，面板直接渲染，工具为主、关联编制节点） */
+  toolRows: ComputedRef<ToolRow[]>
   load: () => Promise<void>
   /** 启停（即时保存）；失败返回 false（开关 UI 由调用方回滚） */
   toggleEnabled: (stageKey: string, enabled: boolean) => Promise<boolean>
@@ -86,7 +121,7 @@ export function createSkillsConfig(deps: SkillsConfigDeps): SkillsConfigApi {
   const tools = ref<ExternalTool[]>([])
   const bindings = ref<Record<string, string[]>>({})
 
-  const skillRows = computed(() => buildSkillRows(routes.value, tools.value, bindings.value))
+  const toolRows = computed(() => buildToolRows(routes.value, tools.value, bindings.value))
 
   async function load(): Promise<void> {
     loading.value = true
@@ -94,7 +129,11 @@ export function createSkillsConfig(deps: SkillsConfigDeps): SkillsConfigApi {
       const [routeRows, toolRows] = await Promise.all([getRoutes(), getTools()])
       routes.value = routeRows
       tools.value = toolRows
-      bindings.value = {}
+      // 用后端回填的 boundStages 初始化绑定映射，使首屏即展示工具↔编制节点关联
+      // （而非会话内乐观更新后才出现）。绑定/解绑操作仍经下方 bind/unbind 更新此映射。
+      bindings.value = Object.fromEntries(
+        toolRows.map((t) => [t.id, [...(t.boundStages ?? [])]]),
+      )
     } catch (error) {
       notifyError(getApiErrorMessage(error, '加载技能配置失败'))
     } finally {
@@ -145,7 +184,7 @@ export function createSkillsConfig(deps: SkillsConfigDeps): SkillsConfigApi {
     }
   }
 
-  return { loading, routes, tools, bindings, skillRows, load, toggleEnabled, bindStage, unbindStage }
+  return { loading, routes, tools, bindings, toolRows, load, toggleEnabled, bindStage, unbindStage }
 }
 
 /* ---------------- 模块级单例 ---------------- */

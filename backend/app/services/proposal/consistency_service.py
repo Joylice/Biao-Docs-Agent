@@ -46,9 +46,14 @@ CONSISTENCY_SCHEMA = {
 
 
 async def check_consistency(
-    chapters: dict[str, str], outline: list[dict[str, Any]]
+    chapters: dict[str, str],
+    outline: list[dict[str, Any]],
+    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """检查全文一致性，返回 issues 列表；mock/空章节/非法响应均返回 []."""
+    """检查全文一致性，返回 issues 列表；mock/空章节/非法响应均返回 [].
+
+    project_id 仅用于外部工具取证（stage=consistency 绑定搜索工具时），缺省不取证。
+    """
     if not chapters:
         return []
     if await settings_service.is_mock_enabled():
@@ -67,7 +72,19 @@ async def check_consistency(
         if no not in known and content:
             parts.append(f"## 第{no}章\n\n{content}")
 
-    system_prompt, user_prompt = load_consistency_prompt("\n\n---\n\n".join(parts))
+    system_prompt, user_prompt = await load_consistency_prompt("\n\n---\n\n".join(parts))
+
+    # 外部工具取证前置（stage=consistency 绑定搜索工具时；无绑定/mock/异常原样返回）
+    from app.services.infra.tools.prefetch import prefetch_external_evidence
+
+    system_prompt, user_prompt = await prefetch_external_evidence(
+        "consistency",
+        system_prompt,
+        user_prompt,
+        project_id,
+        intent="全文一致性检查：术语冲突 / 重复段落 / 编号断裂，可参考外部标准与规范用语",
+    )
+
     result = await call_llm_with_schema(
         system_prompt=system_prompt,
         user_prompt=user_prompt,

@@ -634,11 +634,17 @@ class TestWriteNodeCoverageMatrix:
 
 
 class TestConsistencyCheckNode:
-    """全文一致性检查节点 — integrate 前检查，可修复问题定向重写一轮，失败降级不阻塞."""
+    """全文一致性检查节点 — integrate 前检查，可修复问题定向重写一轮，失败降级不阻塞.
+
+    注：``check_consistency(chapters, outline, project_id)`` 的**三参签名**由
+    skill 化改造引入（consistency 阶段需 project_id 解析 skill 契约与外部工具绑定）；
+    本类所有 fake 桩必须同步该签名 —— 否则节点内 ``except Exception`` 会**静默降级**
+    （日志只留一句 warning），表现为"没有 issues"，极易被误判为逻辑问题。
+    """
 
     @pytest.mark.asyncio
     async def test_no_issues_passes_through(self, monkeypatch) -> None:
-        async def fake_check(chapters, outline):
+        async def fake_check(chapters, outline, project_id=None):
             return []
 
         monkeypatch.setattr(
@@ -654,7 +660,7 @@ class TestConsistencyCheckNode:
         """可修复 issues → 按章节聚合意见走 rewrite 链路，标记 consistency_retried."""
         rewritten: list[str] = []
 
-        async def fake_check(chapters, outline):
+        async def fake_check(chapters, outline, project_id=None):
             return [
                 {
                     "chapter_no": "1",
@@ -696,7 +702,7 @@ class TestConsistencyCheckNode:
         """已重写过一轮仍有问题 → 发 warning 事件，不再重写、不阻塞导出."""
         events: list[dict] = []
 
-        async def fake_check(chapters, outline):
+        async def fake_check(chapters, outline, project_id=None):
             return [{"chapter_no": "1", "description": "重复段落", "fixable": True}]
 
         async def fake_rewrite(**kwargs):
@@ -725,7 +731,7 @@ class TestConsistencyCheckNode:
     async def test_check_failure_degrades_not_blocking(self, monkeypatch) -> None:
         """检查异常 → 降级无问题继续流程（不阻塞导出）."""
 
-        async def fake_check(chapters, outline):
+        async def fake_check(chapters, outline, project_id=None):
             raise RuntimeError("LLM 不可用")
 
         monkeypatch.setattr(
@@ -734,6 +740,27 @@ class TestConsistencyCheckNode:
         state = {"project_id": str(PROJECT_ID), "chapters": {"1": "x"}, "outline": []}
         result = await nodes.consistency_check_node(state)
         assert result["consistency_issues"] == []
+
+    def test_check_consistency_signature_matches_node_call(self) -> None:
+        """契约守卫：``check_consistency`` 的形参与节点调用点必须一致.
+
+        回归锚点：skill 化改造把签名从 2 参扩到 3 参（+project_id）后，
+        本类 4 个 fake 桩未同步 ⇒ 节点内 ``except Exception`` **静默降级**，
+        4 个用例以"没有 issues"的迷惑现象失败。此断言把签名钉死，
+        避免下次再出现"改了签名、测试静默通过/迷惑失败"。
+        """
+        import inspect
+
+        from app.services.proposal.consistency_service import check_consistency
+
+        params = list(inspect.signature(check_consistency).parameters)
+        assert params == ["chapters", "outline", "project_id"], (
+            f"check_consistency 形参已变更为 {params}；"
+            "请同步 nodes/review.py 调用点与本类所有 fake 桩签名"
+        )
+        # 第三个参数必须有默认值（调用点可能不传）
+        sig = inspect.signature(check_consistency)
+        assert sig.parameters["project_id"].default is None
 
 
 class TestNodeCommits:

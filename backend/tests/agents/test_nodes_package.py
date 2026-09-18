@@ -8,6 +8,7 @@
 import importlib
 import inspect
 import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -52,9 +53,23 @@ REEXPORTS = NODE_FUNCS + ROUTES + HELPERS + CONSTANTS + ["logger"]
 class TestPackageStructure:
     def test_is_package_with_submodules(self) -> None:
         assert hasattr(nodes, "__path__"), "app.agents.nodes 应为包（原 nodes.py 已拆分为包）"
-        for sub in ("parse", "outline", "chapter", "consistency", "review", "_shared"):
+        # 职责拆分后的实际子模块（consistency 归入 review，非独立模块）
+        for sub in ("parse", "outline", "chapter", "review", "refresh", "wait_division", "_shared"):
             mod = importlib.import_module(f"app.agents.nodes.{sub}")
-            assert inspect.ismodule(mod)
+            assert inspect.ismodule(mod), f"app.agents.nodes.{sub} 应为模块"
+
+    def test_submodule_set_matches_package_dir(self) -> None:
+        """契约守卫：子模块集合必须与包目录实际 .py 一一对应（防测试与现实漂移）.
+
+        回归锚点：``consistency`` 曾被误列为独立子模块，但实现归入 ``review.py``
+        ⇒ ``import app.agents.nodes.consistency`` 必抛 ModuleNotFoundError。
+        改为从目录推导，新增/删除子模块时测试自动跟随。
+        """
+        pkg_dir = Path(nodes.__file__).parent
+        on_disk = {p.stem for p in pkg_dir.glob("*.py") if p.stem != "__init__"}
+        for sub in on_disk:
+            mod = importlib.import_module(f"app.agents.nodes.{sub}")
+            assert inspect.ismodule(mod), f"目录存在 {sub}.py 但无法导入"
 
     @pytest.mark.parametrize("name", REEXPORTS)
     def test_symbol_reexported(self, name: str) -> None:

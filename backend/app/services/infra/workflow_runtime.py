@@ -348,6 +348,7 @@ async def get_status_dict(project_id: uuid.UUID | str) -> dict[str, Any]:
         "chapters": values.get("chapters", {}),
         "review_action": values.get("review_action", ""),
         "review_feedback": values.get("review_feedback", {}),
+        "review_comments": values.get("review_comments", []),
         "export_status": values.get("export_status", ""),
         "export_storage_key": values.get("export_storage_key", ""),
         "error": values.get("error", ""),

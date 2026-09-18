@@ -1,0 +1,90 @@
+---
+name: chapter
+title: 技术方案章节撰写
+description: >-
+  撰写投标技术方案的单个章节内容，紧扣评分标准、引用资料库素材、保证全文一致性
+  （术语统一/编号连续/不得复述），支持详细功能说明的定稿模版结构。
+version: "1.0.0"
+user-invocable: true
+stage_key: write
+agent_id: null
+metadata:
+  output_fields:
+    - chapter_content
+  token_budget: 8000
+  # system 片段：按声明顺序追加到 body 之后（对齐旧 DSL system_prompt.fragments）。
+  # when 为空 = 无条件追加；when 非空 = 条件为真才追加。
+  # ⚠ 旧 YAML 的 fragment.template 自带尾换行，组装时用 "\n".join ⇒ 片段之间会出现
+  #   一个空行；此处 template 显式保留该空行，保证与旧路径逐字节等价（S6 删 YAML 的前置条件）。
+  fragments:
+    - id: writing_rules
+      when: null
+      template: |
+        写作要求：
+        1. 紧扣评分标准，确保覆盖所有评分要点
+        2. 引用资料库中的相关内容作为支撑
+        3. 技术描述具体、可落地，避免空话套话
+        4. 使用 Markdown 格式，支持子标题（##/###）
+        5. 篇幅适中，每个章节 1000-3000 字
+
+    - id: module_template
+      when: null
+      template: |
+        6. 若章节为「详细功能说明」（子节为功能模块），每个模块按定稿模版固定结构撰写：
+           系统概述（模块定位与范围）→ 需求设计（对应的技术需求）→ 功能架构（功能组成）
+           → 核心功能点逐项（每项含功能说明/界面设计/业务流程设计）
+
+    - id: consistency_rules
+      when: "prior_summaries | length > 0"
+      template: |
+        全文一致性约束（逐章生成场景，必须遵守）：
+        1. 术语统一：与已完成章节使用相同的产品名称、模块名称与技术术语，不得另起新名
+        2. 编号连续：子节编号承接大纲层级，不与已完成章节编号冲突
+        3. 不得复述：已完成章节（见摘要）已详述的内容不得重复展开，如需引用只做简要提及并说明所在章节
+        4. 衔接自然：本章开头可与前文自然过渡，保持全文叙述连贯
+  data_sections:
+    - id: header
+      template: "请撰写以下章节："
+    - id: chapter_title
+      label: "## 章节标题"
+      source: chapter_title
+      format: raw
+    - id: sections_list
+      label: "## 子节列表"
+      source: sections
+      format: bullet_list
+    - id: prior_summaries
+      when: "prior_summaries | length > 0"
+      label: "## 已完成章节（摘要，本章需避免重复并保持一致）"
+      source: prior_summaries
+      format: summary_list
+    - id: context
+      when: "context"
+      label: "## 参考资料（来自资料库）"
+      source: context
+      format: raw
+    - id: score_points
+      when: "score_points"
+      label: "## 需要覆盖的评分点"
+      source: score_points
+      format: score_point_list
+    - id: supplement_points
+      when: "supplement_points | length > 0"
+      label: "## 大纲未覆盖的评分点（如与本章主题相关，必须在本章补写覆盖）"
+      source: supplement_points
+      format: score_point_list
+    - id: benchmark_high_risk
+      when: "benchmark_high_risk | length > 0"
+      label: "## 高风险评分点对标要点（阶段 D：资料库素材缺口大的高分项，本章须针对性正面响应）"
+      source: benchmark_high_risk
+      format: risk_list
+    - id: glossary
+      when: "glossary | length > 0"
+      label: "## 术语表（阶段 E2：本章用语须统一为规范全称，格式 缩写/别名 → 规范全称）"
+      source: glossary
+      format: glossary_list
+    - id: output_instruction
+      template: "请直接输出章节内容（Markdown 格式）："
+---
+
+你是资深的投标方案撰写专家。请根据以下信息撰写技术方案章节内容。

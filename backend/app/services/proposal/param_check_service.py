@@ -66,7 +66,7 @@ def find_unit_values(content: str, unit: str) -> list[float]:
 async def _llm_judge(assertion: dict[str, Any], content: str) -> bool:
     """规则不确定时的 LLM 比对：返回是否通过（异常/解析失败降级 pass）."""
     try:
-        system_prompt, user_prompt = load_param_check_prompt(
+        system_prompt, user_prompt = await load_param_check_prompt(
             assertion=json.dumps(assertion, ensure_ascii=False),
             content_excerpt=content[:2000],
         )

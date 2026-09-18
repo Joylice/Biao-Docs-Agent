@@ -66,10 +66,89 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "required": ["term", "canonical"],
         },
     },
+    # ── Skill 契约体系三工具（S3）─────────────────────────────────────────
+    # 对齐 OpenMAIC 的 create_skill / read / findSkill：Agent Runtime 按需消费行为准则。
+    "create_skill": {
+        "name": "create_skill",
+        "description": (
+            "把本次任务中总结出的可复用行为准则固化为一条新 skill。"
+            "新建的 skill 默认处于**待审状态**（不立即生效），"
+            "需人工在 Skill 设置页启用后才参与后续任务。"
+            "若只是临时调整本次输出的写法，不要调用本工具。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "skill 标识：小写字母开头，仅含小写字母/数字/下划线，3~64 字符",
+                },
+                "title": {"type": "string", "description": "展示名（简短中文名）"},
+                "description": {
+                    "type": "string",
+                    "description": "适用场景描述（供人工审阅判断是否启用）",
+                },
+                "stage_key": {
+                    "type": "string",
+                    "description": "适用阶段",
+                    "enum": [
+                        "parse",
+                        "score",
+                        "outline",
+                        "write",
+                        "validate",
+                        "consistency",
+                        "review",
+                        "export",
+                    ],
+                },
+                "body_md": {
+                    "type": "string",
+                    "description": "行为准则正文（Markdown，≤8000 字符）",
+                },
+            },
+            "required": ["name", "title", "description", "stage_key", "body_md"],
+        },
+    },
+    "read_skill": {
+        "name": "read_skill",
+        "description": "读取某条 skill 的完整正文（行为准则）。用于确认当前实际生效的准则内容。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "skill 标识（如 parse_score / outline）"},
+            },
+            "required": ["name"],
+        },
+    },
+    "find_skill": {
+        "name": "find_skill",
+        "description": (
+            "按阶段或关键词检索可用的 skill 清单（返回 name/title/description/来源层，不含正文）。"
+            "用于在开始某阶段任务前，先看清有哪些行为准则可用。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "stage_key": {
+                    "type": "string",
+                    "description": "限定阶段（可选，缺省全部）",
+                },
+                "keyword": {
+                    "type": "string",
+                    "description": "关键词（可选，匹配 name/title/description）",
+                },
+            },
+        },
+    },
 }
 
 WRITE_TOOLS = ["kb_search", "get_score_points"]  # write_node 绑定
 VALIDATE_TOOLS = ["list_sections", "get_score_points"]  # validate_node 绑定
+
+# Skill 契约工具（默认**不**绑定到任何节点）—— 按需在节点内显式加入，
+# 避免每次 LLM 调用都多背 3 个工具定义（token 成本）与多一轮工具循环延迟。
+SKILL_TOOLS = ["create_skill", "read_skill", "find_skill"]
 
 
 def get_tool_definitions(names: list[str]) -> list[dict[str, Any]]:
@@ -161,6 +240,105 @@ def update_glossary(
     return [*merged, {"term": term, "canonical": canonical, "desc": desc}]
 
 
+# ───────────────────────── Skill 契约三工具（S3）─────────────────────────
+
+
+async def create_skill(
+    name: str,
+    title: str,
+    description: str,
+    stage_key: str,
+    body_md: str,
+) -> dict[str, Any]:
+    """把 Agent 总结的行为准则落成用户层 skill（**默认待审，不立即生效**）.
+
+    产品口径①A：`created_by="llm"` ⇒ `enabled=False`，须人工在 Skill 设置页启用。
+    失败（重名/内置同名/超长/非法阶段）返回 `{"ok": False, "error": ...}` 而**不抛异常**
+    —— 工具循环里抛异常会中断整轮对话，而「建准则失败」不该拖垮主任务。
+    """
+    from app.services.skills import service as skill_service
+
+    try:
+        async with async_session_factory() as db:
+            row = await skill_service.create_skill(
+                db,
+                name=name,
+                title=title,
+                description=description,
+                stage_key=stage_key,
+                body_md=body_md,
+                created_by="llm",
+            )
+            await db.commit()
+    except Exception as e:
+        logger.warning("create_skill 失败: name=%s err=%s", name, e)
+        return {"ok": False, "error": str(e)}
+    return {
+        "ok": True,
+        "name": row.name,
+        "enabled": row.enabled,
+        "pendingReview": not row.enabled,
+        "message": "准则已暂存为待审状态，需人工在 Skill 设置页启用后才生效",
+    }
+
+
+async def read_skill(name: str) -> dict[str, Any]:
+    """读单条 skill 的契约详情（含正文）."""
+    from app.services.skills import registry as skill_registry
+
+    try:
+        async with async_session_factory() as db:
+            contract = await skill_registry.find_skill(name, db)
+    except Exception as e:
+        logger.warning("read_skill 失败: name=%s err=%s", name, e)
+        return {"ok": False, "error": str(e)}
+    if contract is None:
+        return {"ok": False, "error": f"skill '{name}' 不存在"}
+    return {
+        "ok": True,
+        "name": contract.name,
+        "title": contract.title,
+        "description": contract.description,
+        "version": contract.version,
+        "stageKey": contract.stage_key,
+        "agentId": contract.agent_id,
+        "source": "builtin" if contract.builtin else "user",
+        "virtualPath": contract.virtual_path,
+        "body": contract.body,
+    }
+
+
+async def find_skill(stage_key: str | None = None, keyword: str | None = None) -> dict[str, Any]:
+    """检索可用 skill 清单（不含正文，只给 name/title/description/来源）."""
+    from app.services.skills import registry as skill_registry
+
+    try:
+        async with async_session_factory() as db:
+            contracts = await skill_registry.list_skills(db)
+    except Exception as e:
+        logger.warning("find_skill 失败: %s", e)
+        return {"ok": False, "error": str(e)}
+
+    items: list[dict[str, Any]] = []
+    kw = (keyword or "").strip().lower()
+    for c in contracts:
+        if stage_key and c.stage_key != stage_key:
+            continue
+        if kw and kw not in f"{c.name} {c.title} {c.description}".lower():
+            continue
+        items.append(
+            {
+                "name": c.name,
+                "title": c.title,
+                "description": c.description,
+                "stageKey": c.stage_key,
+                "agentId": c.agent_id,
+                "source": "builtin" if c.builtin else "user",
+            }
+        )
+    return {"ok": True, "count": len(items), "skills": items}
+
+
 async def execute_tool(
     name: str,
     arguments: dict[str, Any],
@@ -184,6 +362,19 @@ async def execute_tool(
             arguments.get("canonical", ""),
             arguments.get("desc", ""),
         )
+    # Skill 契约三工具（S3）
+    if name == "create_skill":
+        return await create_skill(
+            arguments.get("name", ""),
+            arguments.get("title", ""),
+            arguments.get("description", ""),
+            arguments.get("stage_key", ""),
+            arguments.get("body_md", ""),
+        )
+    if name == "read_skill":
+        return await read_skill(arguments.get("name", ""))
+    if name == "find_skill":
+        return await find_skill(arguments.get("stage_key"), arguments.get("keyword"))
     # 外部工具：name 为 tool_id（UUID 字符串），不在内置 TOOL_SCHEMAS 中
     if name not in TOOL_SCHEMAS:
         from app.services.infra.tools.registry import execute_external_tool as _ext_exec
@@ -204,11 +395,10 @@ async def write_tool_preflight(
     chapter_title: str,
     base_context: str,
     doc_ids: list[Any] | None = None,
-    web_search_enabled: bool = False,
 ) -> str:
     """write 前置 Tool Calling（仅真实模式调用）：LLM 自主决定是否补充检索.
 
-    绑定 kb_search/get_score_points + 外部搜索工具（若 web_search_enabled）；
+    绑定 kb_search/get_score_points + 该 stage 已绑定的外部搜索工具；
     kb_search 命中素材追加到 base_context 后返回（无调用/无命中时原样返回），
     原 retrieve 注入素材保持基础上下文。
     """
@@ -219,9 +409,9 @@ async def write_tool_preflight(
         result = await execute_tool(name, arguments, project_id)
         return json.dumps(result, ensure_ascii=False)
 
-    # 合并内置工具 + 外部工具定义（双闸校验：stage=write 且 web_search_enabled）
+    # 合并内置工具 + 外部工具定义（外部工具真源 = stage_tool_bindings 显式绑定）
     builtin_tools = get_tool_definitions(WRITE_TOOLS)
-    ext_tools = await get_ext_definitions("write", web_search_enabled, project_id)
+    ext_tools = await get_ext_definitions("write", project_id)
     all_tools = builtin_tools + ext_tools
 
     _text, calls = await chat_with_tools(
@@ -260,11 +450,10 @@ async def validate_tool_recheck(
     content: str,
     issues: list[str],
     score_points: list[dict[str, Any]],
-    web_search_enabled: bool = False,
 ) -> list[str]:
     """validate 辅助取证复核（仅真实模式调用）：tool calling 复核 issues 是否真实成立.
 
-    绑定 list_sections/get_score_points + 外部搜索工具（若 web_search_enabled）取证；
+    绑定 list_sections/get_score_points + 该 stage 已绑定的外部搜索工具取证；
     LLM 输出 {"keep": [...]}，仅保留仍成立的 issues；响应无法解析时保守保留全部。
     """
     from app.services.infra.tools.registry import get_definitions as get_ext_definitions
@@ -276,7 +465,7 @@ async def validate_tool_recheck(
 
     # 合并内置工具 + 外部工具定义
     builtin_tools = get_tool_definitions(VALIDATE_TOOLS)
-    ext_tools = await get_ext_definitions("validate", web_search_enabled, project_id)
+    ext_tools = await get_ext_definitions("validate", project_id)
     all_tools = builtin_tools + ext_tools
 
     text, _calls = await chat_with_tools(

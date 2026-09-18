@@ -35,8 +35,8 @@ from app.services.infra.tools.registry import STAGE_TOOL_WHITELIST, invalidate
 logger = logging.getLogger(__name__)
 
 
-def _tool_to_view(tool: ExternalTool) -> dict[str, Any]:
-    """工具 ORM → 前端视图（密钥脱敏）."""
+def _tool_to_view(tool: ExternalTool, bound_stages: list[str] | None = None) -> dict[str, Any]:
+    """工具 ORM → 前端视图（密钥脱敏；含已绑定 stage_key 列表）."""
     plain_key = _decrypt_or_empty(tool.api_key_enc)
     return {
         "id": str(tool.id),
@@ -50,14 +50,33 @@ def _tool_to_view(tool: ExternalTool) -> dict[str, Any]:
         "maxQueryChars": tool.max_query_chars,
         "enabled": tool.enabled,
         "version": tool.version,
+        "boundStages": list(bound_stages or []),
     }
 
 
+async def _load_bound_stage_map(
+    db: AsyncSession, tool_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[str]]:
+    """一次性查出 tool_id → 已绑定 stage_key 列表（供 list_tools 批量附加，避免 N+1）."""
+    if not tool_ids:
+        return {}
+    result = await db.execute(
+        select(StageToolBinding.tool_id, StageToolBinding.stage_key).where(
+            StageToolBinding.tool_id.in_(tool_ids)
+        )
+    )
+    mapping: dict[uuid.UUID, list[str]] = {}
+    for tool_id, stage_key in result.all():
+        mapping.setdefault(tool_id, []).append(stage_key)
+    return mapping
+
+
 async def list_tools(db: AsyncSession) -> list[dict[str, Any]]:
-    """列出所有外部工具（密钥脱敏）."""
+    """列出所有外部工具（密钥脱敏，并附带各工具已绑定的 stage_key）."""
     result = await db.execute(select(ExternalTool).order_by(ExternalTool.created_at.desc()))
     rows = result.scalars().all()
-    return [_tool_to_view(t) for t in rows]
+    bound_map = await _load_bound_stage_map(db, [t.id for t in rows])
+    return [_tool_to_view(t, bound_map.get(t.id)) for t in rows]
 
 
 async def create_tool(

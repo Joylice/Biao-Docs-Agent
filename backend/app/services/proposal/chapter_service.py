@@ -263,7 +263,7 @@ async def generate_chapter(
     else:
         gl_text = ""
 
-    system_prompt, user_prompt = load_chapter_prompt(
+    system_prompt, user_prompt = await load_chapter_prompt(
         chapter_title=chapter_title,
         sections=sections,
         context=context,

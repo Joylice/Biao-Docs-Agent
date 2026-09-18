@@ -3,6 +3,7 @@
 import json
 import uuid
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -41,16 +42,64 @@ class FakeDB:
         pass
 
 
-class TestRegistry:
-    """工具注册表：四工具 schema + OpenAI tools 封装."""
+@pytest.fixture
+def no_external_tools(monkeypatch):
+    """切断 registry 的外部工具 DB 查询（挂起根因）.
 
-    def test_four_tools_registered(self) -> None:
-        assert set(tools.TOOL_SCHEMAS) == {
-            "kb_search",
-            "get_score_points",
-            "list_sections",
-            "update_glossary",
-        }
+    ``registry.get_definitions`` 用的是 **它自己模块级**（= ``app.core.database``）
+    的 ``async_session_factory`` —— 本机无 PG 时该查询会在 SQLAlchemy 连接池里
+    阻塞重试，导致 ``write_tool_preflight`` / ``validate_tool_recheck`` 整体挂死；
+    而 pytest 的 ``ProactorEventLoop`` 又让 psycopg 无法快速抛错（只报
+    ``Psycopg cannot use the 'ProactorEventLoop'``），所以表现为「静默挂起」。
+
+    这里把 registry 的 session 工厂换成 FakeDB（返回空绑定），
+    与 ``chat_with_tools`` 的 AsyncMock 配合，保证用例只验证语义封装本身。
+    """
+
+    def empty_factory():
+        return FakeDB([])
+
+    monkeypatch.setattr("app.services.infra.tools.registry.async_session_factory", empty_factory)
+    # 缓存会跨用例复用，清掉以免被其他用例的绑定污染
+    from app.services.infra.tools import registry
+
+    registry.invalidate()
+    yield
+    registry.invalidate()
+
+
+class TestRegistry:
+    """工具注册表：业务四工具 + skill 三工具 schema 与 OpenAI tools 封装."""
+
+    # 阶段 F 原有四工具（SRD §6.3）
+    BUSINESS_TOOLS: ClassVar[set[str]] = {
+        "kb_search",
+        "get_score_points",
+        "list_sections",
+        "update_glossary",
+    }
+    # skill 化改造新增（Agent Runtime 按需消费 SKILL.md 契约）
+    SKILL_TOOL_NAMES: ClassVar[set[str]] = {"create_skill", "find_skill", "read_skill"}
+
+    def test_business_tools_registered(self) -> None:
+        """业务四工具必须存在（集合等价，非子集 —— 防"多一个"漏报）."""
+        assert set(tools.TOOL_SCHEMAS) >= self.BUSINESS_TOOLS
+        assert {
+            n for n in tools.TOOL_SCHEMAS if n not in self.SKILL_TOOL_NAMES
+        } == self.BUSINESS_TOOLS
+
+    def test_skill_tools_registered(self) -> None:
+        """skill 三工具必须存在，且与 SKILL_TOOLS 常量集合等价."""
+        assert set(tools.SKILL_TOOLS) == self.SKILL_TOOL_NAMES
+        assert set(tools.TOOL_SCHEMAS) >= self.SKILL_TOOL_NAMES
+
+    def test_tool_schemas_total_set_equivalent(self) -> None:
+        """TOOL_SCHEMAS 全量集合等价（防新增/删除工具未被测试发现）."""
+        expected = self.BUSINESS_TOOLS | self.SKILL_TOOL_NAMES
+        assert set(tools.TOOL_SCHEMAS) == expected, (
+            f"工具集变更：多出 {set(tools.TOOL_SCHEMAS) - expected}，"
+            f"缺失 {expected - set(tools.TOOL_SCHEMAS)}"
+        )
 
     def test_definitions_openai_shape(self) -> None:
         defs = tools.get_tool_definitions(["kb_search", "get_score_points"])
@@ -158,7 +207,7 @@ class TestPreflightAndRecheck:
     """write 前置补充检索 / validate 辅助取证（chat_with_tools 之上的语义封装）."""
 
     @pytest.mark.asyncio
-    async def test_preflight_appends_kb_hits(self) -> None:
+    async def test_preflight_appends_kb_hits(self, no_external_tools) -> None:
         calls = [
             {
                 "name": "kb_search",
@@ -174,7 +223,7 @@ class TestPreflightAndRecheck:
         assert "基础素材" in ctx and "补充素材A" in ctx
 
     @pytest.mark.asyncio
-    async def test_preflight_no_calls_returns_base(self) -> None:
+    async def test_preflight_no_calls_returns_base(self, no_external_tools) -> None:
         with patch(
             "app.services.llm.llm_service.chat_with_tools", AsyncMock(return_value=("无需补充", []))
         ):
@@ -182,7 +231,7 @@ class TestPreflightAndRecheck:
         assert ctx == "基础素材"
 
     @pytest.mark.asyncio
-    async def test_recheck_keeps_confirmed_issues(self) -> None:
+    async def test_recheck_keeps_confirmed_issues(self, no_external_tools) -> None:
         issues = ["字数不足（10 < 200）", "误报问题"]
         with patch(
             "app.services.llm.llm_service.chat_with_tools",
@@ -192,7 +241,7 @@ class TestPreflightAndRecheck:
         assert kept == ["字数不足（10 < 200）"]
 
     @pytest.mark.asyncio
-    async def test_recheck_invalid_json_keeps_all(self) -> None:
+    async def test_recheck_invalid_json_keeps_all(self, no_external_tools) -> None:
         issues = ["问题A"]
         with patch(
             "app.services.llm.llm_service.chat_with_tools", AsyncMock(return_value=("解析不了", []))

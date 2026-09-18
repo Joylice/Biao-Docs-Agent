@@ -35,7 +35,8 @@ class ToolPreset:
 # 预设工具注册表：preset 名 → ToolPreset
 PRESET_TOOLS: dict[str, ToolPreset] = {
     "tavily": ToolPreset(
-        default_base_url="https://api.tavily.com",
+        # 完整搜索端点（POST /search）——与 brave 一致，客户端不再追加路径
+        default_base_url="https://api.tavily.com/search",
         requires_key=True,
         auth_style="bearer_body",
         auth_header="",

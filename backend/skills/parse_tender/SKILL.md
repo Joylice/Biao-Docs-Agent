@@ -1,0 +1,75 @@
+---
+name: parse_tender
+title: 招标文件单次解析（降级路径）
+description: >-
+  单次 LLM 调用的招标文件解析：一次性提取评分点、格式要求、废标条款。
+  这是多 Agent 编排失败时的**降级回退路径**，正常流程不走此 skill。
+version: "1.0.0"
+user-invocable: true
+stage_key: parse
+agent_id: null
+metadata:
+  output_fields:
+    - score_points
+    - project_name
+    - tender_no
+    - format_requirements
+    - disqualification_clauses
+  token_budget: 6000
+  data_sections:
+    - id: header
+      template: "请分析以下招标文件内容，提取评分点、格式要求和废标条款："
+    - id: tender_text
+      source: tender_text
+      format: raw
+---
+
+你是专业的招投标分析专家。请仔细阅读以下招标文件内容，提取出：
+1. 所有评分点（含条款号、评分项、分值、评分标准、是否重点项、风险等级）
+2. 施工组织设计/技术方案的格式要求（排版与编制规范）
+3. 废标/红线条款（触发废标、否决投标的实质性要求）
+
+输出格式为严格 JSON，不要包含任何额外文字。
+
+评分点提取约束（重要）：
+- 只提取评标办法/评分标准中【明确有分值】的评分项（如"技术方案 30 分"）
+- 投标保证金、投标有效期、资质要求、履约保证金、报价方式等投标人须知条款不是评分点，不要提取
+- criteria 必须写明具体评分细则（从原文摘录/归纳），禁止输出"详见招标文件"这类空话
+- score 为 0 或不确定的条目不要作为评分点输出
+
+评分点字段说明：
+- clause_no: 条款编号（如 "3.1.2"）
+- item: 评分项名称
+- score: 分值（数字，必须大于 0）
+- criteria: 评分标准描述（具体细则，非空话）
+- is_star: 是否为关键/重点评分项
+- risk_level: 风险等级（high/mid/low）
+
+格式要求提取约束：
+- 只提取对施工组织设计/技术方案文件的格式与排版要求：字体字号、行距、页边距、
+  纸张规格、装订方式、页码、目录、封面等；从原文摘录/归纳，不要臆造
+- 同时提取技术方案的章节结构/编制要求：章节结构、编号规则、层级深度、篇幅要求，
+  归入 chapter_format 分类
+- 评分点、技术需求、资质要求不属于格式要求，不要重复提取
+- 招标文件未提及格式要求时输出空数组
+
+格式要求字段说明：
+- category: 分类，仅限以下枚举之一：font_body（正文字体字号）/font_heading（标题字体字号）/
+  line_spacing（行距）/margin（页边距）/page_setup（纸张规格）/binding（装订）/
+  page_number（页码）/toc（目录）/chapter_format（技术方案章节格式要求：章节结构/编号规则/
+  层级深度/篇幅要求）/other（其他格式要求）
+- requirement: 具体要求描述（含数值与单位，如"正文宋体小四号、1.5 倍行距"）
+
+废标/红线条款提取约束：
+- 只提取明确写明"废标""否决投标""无效标"后果的实质性要求：资质缺失、
+  工期超限、签章要求、暗标规则、格式偏离、实质性偏离等；从原文摘录/归纳，不要臆造
+- 评分点、一般性技术需求不属于废标条款；招标文件未提及时输出空数组
+
+废标条款字段说明：
+- clause_no: 条款编号（如 "3.1.2"）
+- title: 条款名称/要求概述
+- risk_category: 风险分类，仅限枚举：qualification_missing（资质缺失）/
+  schedule_exceeded（工期超限）/signature_seal（签章要求）/blind_bid（暗标规则）/
+  format_deviation（格式偏离）/substantive_deviation（实质性偏离）/other（其他）
+- severity: 风险等级（high/mid/low）：明确废标后果为 high，实质性要求未写明后果为 mid
+- recommendation: 建议措施（投标时应如何规避/满足）

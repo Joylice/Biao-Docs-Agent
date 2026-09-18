@@ -13,6 +13,8 @@ export interface ExternalTool {
   maxQueryChars: number
   enabled: boolean
   version: number
+  /** 已绑定的阶段 key 列表（GET /settings/external-tools 回填，供 SkillsPanel 首屏即展示关联） */
+  boundStages?: string[]
 }
 
 /** 外部工具创建请求 */

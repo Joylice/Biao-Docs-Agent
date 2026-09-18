@@ -128,7 +128,7 @@ const categories: ConfigCategory[] = [
   {
     id: 'skills',
     title: '技能',
-    desc: '技能启停与绑定',
+    desc: '外部工具与编制节点关联',
     icon: markRaw(CodeOutlined),
   },
   {
@@ -240,8 +240,8 @@ const entries: ConfigEntry[] = [
   {
     id: 'skills:list',
     categoryId: 'skills',
-    title: '技能列表',
-    desc: '启停与阶段绑定',
+    title: '外部工具',
+    desc: '工具为主，关联投标编制节点',
     icon: markRaw(CodeOutlined),
     component: markRaw(SkillsPanel),
     save: noopSave,

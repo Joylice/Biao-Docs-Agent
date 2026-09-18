@@ -85,7 +85,6 @@ class TestFullWorkflow:
             "retrieved_citations": [{"chunk_id": "c1", "doc_title": "招标文件", "page_no": 3}],
             "validate_retries": 0,
             "validation_ok": True,
-            "disqualification_risk": False,
             "chapter_summaries": {"1": {"title": "项目概述", "summary": "摘要"}},
             "consistency_issues": [
                 {"chapter_no": "1", "type": "术语", "description": "不一致", "fixable": True}
@@ -93,6 +92,17 @@ class TestFullWorkflow:
             "consistency_retried": False,
             "review_action": "approved",
             "review_feedback": {"1": "补充范围说明"},
+            # 2026-09-18 同步：`review_comments`（评审页 AI 自动审阅意见的 state 出口，
+            # 由独立节点 `auto_review_node` 写入）此前漏加进本样例；
+            # `disqualification_risk` 已从 BidState 移除，同步删除。
+            "review_comments": [
+                {
+                    "chapter_no": "1",
+                    "severity": "warning",
+                    "action": "revise",
+                    "comment": "补充范围",
+                }
+            ],
             "export_options": None,
             "export_storage_key": "p1/export/test.docx",
             "export_status": "done",
@@ -139,8 +149,13 @@ class TestChunkingIntegration:
 class TestPromptIntegration:
     """提示词模板集成测试."""
 
-    def test_all_templates_loadable(self) -> None:
-        """所有提示词模板可正常加载."""
+    async def test_all_templates_loadable(self) -> None:
+        """所有提示词模板可正常加载.
+
+        2026-09-18（S3）：`load_outline_prompt` / `load_chapter_prompt` /
+        `load_review_prompt` 已改为 async（内部先查 skill 注册表、未命中回退 YAML），
+        故本用例改为 async 并 await。
+        """
         from app.services.infra.prompt_loader import (
             load_chapter_prompt,
             load_outline_prompt,
@@ -148,22 +163,24 @@ class TestPromptIntegration:
             load_review_prompt,
         )
 
-        # parse
+        # parse（仍为同步：降级路径专用，未接 skill 注册表）
         system, user = load_parse_prompt("测试招标文本")
         assert system
         assert "测试招标文本" in user
 
         # outline
-        system, user = load_outline_prompt(
+        system, user = await load_outline_prompt(
             [{"clause_no": "1", "item": "方案", "score": 10}],
         )
         assert system
         assert "方案" in user
 
         # chapter
-        _system, user = load_chapter_prompt("系统架构", ["总体设计"], "参考资料", "评分点", "")
+        _system, user = await load_chapter_prompt(
+            "系统架构", ["总体设计"], "参考资料", "评分点", ""
+        )
         assert "系统架构" in user
 
         # review
-        _system, user = load_review_prompt("章节摘要", "评分点")
+        _system, user = await load_review_prompt("章节摘要", "评分点")
         assert "章节摘要" in user
