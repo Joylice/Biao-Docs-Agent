@@ -119,6 +119,56 @@ async def skill_profiles(
     return items
 
 
+async def agent_profiles(
+    db: AsyncSession,
+    project_id: UUID | str | None = None,
+    days: int = DEFAULT_DAYS,
+) -> list[dict[str, Any]]:
+    """按 agent_id 聚合用量画像（P0-2）：次数/成功率/失败数/回退数/token/平均延迟.
+
+    口径对齐 skill_profiles，差别仅在 group_by 列（agent_id vs skill_name）：
+    - failed_calls = calls - ok_calls；
+    - agent_id 为 NULL 的行（迁移前历史 / 非解析链路调用）归 "unknown"；
+    - fallback_calls 列保留（当前恒 0，防口径漂移）；
+    - 按 calls 降序。
+    """
+    stmt = select(
+        LlmUsageLog.agent_id,
+        func.count().label("calls"),
+        func.sum(case((LlmUsageLog.ok.is_(True), 1), else_=0)).label("ok_calls"),
+        func.sum(case((LlmUsageLog.fallback_used.is_(True), 1), else_=0)).label("fallback_count"),
+        func.coalesce(func.sum(func.coalesce(LlmUsageLog.total_tokens, 0)), 0).label(
+            "total_tokens"
+        ),
+        func.coalesce(func.avg(LlmUsageLog.latency_ms), 0.0).label("avg_latency_ms"),
+    )
+    if days and days > 0:
+        since = datetime.now(UTC) - timedelta(days=days)
+        stmt = stmt.where(LlmUsageLog.created_at >= since)
+    if project_id is not None:
+        stmt = stmt.where(LlmUsageLog.project_id == project_id)
+    stmt = stmt.group_by(LlmUsageLog.agent_id).order_by(func.count().desc())
+
+    result = await db.execute(stmt)
+    items: list[dict[str, Any]] = []
+    for row in result.all():
+        calls = int(row.calls or 0)
+        ok_calls = int(row.ok_calls or 0)
+        items.append(
+            {
+                "agent_id": row.agent_id or "unknown",
+                "calls": calls,
+                "ok_calls": ok_calls,
+                "failed_calls": calls - ok_calls,
+                "fallback_calls": int(row.fallback_count or 0),
+                "success_rate": round(ok_calls / calls, 4) if calls else 0.0,
+                "total_tokens": int(row.total_tokens or 0),
+                "avg_latency_ms": round(float(row.avg_latency_ms or 0), 1),
+            }
+        )
+    return items
+
+
 async def usage_trend(
     db: AsyncSession,
     project_id: UUID | str | None = None,

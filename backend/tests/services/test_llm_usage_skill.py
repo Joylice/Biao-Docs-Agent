@@ -139,12 +139,12 @@ class _Capture:
 
     def __init__(self, responses: list[Any]) -> None:
         self.responses = list(responses)
-        self.calls: list[tuple[str, str | None]] = []
+        self.calls: list[tuple[str, str | None, str | None]] = []
 
     async def __call__(
         self, kind: str, model: str, kwargs: dict[str, Any], n: int, **kw: Any
     ) -> Any:
-        self.calls.append((kind, kw.get("skill_name")))
+        self.calls.append((kind, kw.get("skill_name"), kw.get("agent_id")))
         return self.responses.pop(0)
 
 
@@ -178,10 +178,16 @@ class TestLlmServicePassthrough:
         monkeypatch.setattr(llm_service, "_call_and_log", cap)
         asyncio.run(
             llm_service.call_llm_with_schema(
-                "sys", "user", {}, mock=False, stage_key="parse", skill_name="parse_score"
+                "sys",
+                "user",
+                {},
+                mock=False,
+                stage_key="parse",
+                skill_name="parse_score",
+                agent_id="score_agent",
             )
         )
-        assert cap.calls == [("schema", "parse_score")]
+        assert cap.calls == [("schema", "parse_score", "score_agent")]
 
     def test_text_entry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _patch_llm_env(monkeypatch)
@@ -189,10 +195,15 @@ class TestLlmServicePassthrough:
         monkeypatch.setattr(llm_service, "_call_and_log", cap)
         asyncio.run(
             llm_service.call_llm_text(
-                "sys", "user", mock=False, stage_key="parse", skill_name="parse_score"
+                "sys",
+                "user",
+                mock=False,
+                stage_key="parse",
+                skill_name="parse_score",
+                agent_id="score_agent",
             )
         )
-        assert cap.calls == [("text", "parse_score")]
+        assert cap.calls == [("text", "parse_score", "score_agent")]
 
     def test_stream_entry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _patch_llm_env(monkeypatch)
@@ -215,12 +226,17 @@ class TestLlmServicePassthrough:
             return [
                 chunk
                 async for chunk in llm_service.call_llm_stream(
-                    "sys", "user", mock=False, stage_key="parse", skill_name="parse_score"
+                    "sys",
+                    "user",
+                    mock=False,
+                    stage_key="parse",
+                    skill_name="parse_score",
+                    agent_id="score_agent",
                 )
             ]
 
         assert asyncio.run(run()) == ["chunk"]
-        assert cap.calls == [("stream", "parse_score")]
+        assert cap.calls == [("stream", "parse_score", "score_agent")]
 
 
 class TestChatWithToolsAttribution:
@@ -233,7 +249,7 @@ class TestChatWithToolsAttribution:
         return cap
 
     def test_normal_convergence_exit(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """出口 1：第 1 轮即纯文本收敛（无 tool_calls）→ tools_round1 落 skill_name."""
+        """出口 1：第 1 轮即纯文本收敛（无 tool_calls）→ tools_round1 落 skill_name + agent_id."""
         cap = self._run(monkeypatch, [_resp("收敛文本")])
 
         async def _exec(_name: str, _args: dict[str, Any]) -> str:
@@ -241,13 +257,20 @@ class TestChatWithToolsAttribution:
 
         text, calls = asyncio.run(
             llm_service.chat_with_tools(
-                "sys", "user", [], _exec, mock=False, stage_key="parse", skill_name="parse_score"
+                "sys",
+                "user",
+                [],
+                _exec,
+                mock=False,
+                stage_key="parse",
+                skill_name="parse_score",
+                agent_id="score_agent",
             )
         )
         assert text == "收敛文本"
         assert calls == []
-        # 恰一次调用且带归因
-        assert cap.calls == [("tools_round1", "parse_score")]
+        # 恰一次调用且带双归因
+        assert cap.calls == [("tools_round1", "parse_score", "score_agent")]
 
     def test_rounds_exhausted_exit(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """出口 2：轮数耗尽 → tools_final 强收敛也落同一 skill_name."""
@@ -271,13 +294,15 @@ class TestChatWithToolsAttribution:
                 mock=False,
                 stage_key="parse",
                 skill_name="parse_score",
+                agent_id="score_agent",
             )
         )
         assert text == "最终收敛"
         assert len(calls) == 2
-        kinds = [k for k, _s in cap.calls]
+        kinds = [k for k, _s, _a in cap.calls]
         assert kinds == ["tools_round1", "tools_round2", "tools_final"]
-        assert all(s == "parse_score" for _k, s in cap.calls), "三条调用全部落 skill_name"
+        assert all(s == "parse_score" for _k, s, _a in cap.calls), "三条调用全部落 skill_name"
+        assert all(a == "score_agent" for _k, _s, a in cap.calls), "三条调用全部落 agent_id"
 
 
 # ────────────────────────── 5. load_agent_skill_prompt 返回 skill 名 ──────────────────────────
@@ -411,6 +436,89 @@ class TestSkillProfilesApi:
             assert body["code"] == 0
             assert body["data"]["days"] == 7
             assert body["data"]["items"][0]["skill_name"] == "parse_score"
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+            app.dependency_overrides.pop(get_current_user_id, None)
+
+
+# ────────────────────────── 8. agent_profiles 聚合 + 端点 ──────────────────────────
+
+
+def _arow(agent: str | None, calls: int, ok: int, fb: int, tokens: int, lat: float) -> Any:
+    """agent_profiles 行桩（结构对齐 usage_service.agent_profiles 返回列）."""
+    return SimpleNamespace(
+        agent_id=agent,
+        calls=calls,
+        ok_calls=ok,
+        fallback_count=fb,
+        total_tokens=tokens,
+        avg_latency_ms=lat,
+    )
+
+
+class TestAgentProfiles:
+    def test_aggregates_by_agent(self) -> None:
+        """按 agent_id 聚合：failed_calls = calls - ok_calls，NULL→unknown."""
+        from app.services.infra import usage_service
+
+        db = _FakeRows([_arow("score_agent", 10, 7, 0, 5000, 200.0)])
+        items = asyncio.run(usage_service.agent_profiles(db, None, 7))
+        assert len(items) == 1
+        item = items[0]
+        assert item["agent_id"] == "score_agent"
+        assert item["calls"] == 10
+        assert item["ok_calls"] == 7
+        assert item["failed_calls"] == 3
+        assert item["success_rate"] == 0.7
+        assert item["total_tokens"] == 5000
+        assert item["avg_latency_ms"] == 200.0
+
+    def test_null_agent_grouped_as_unknown(self) -> None:
+        from app.services.infra import usage_service
+
+        db = _FakeRows([_arow(None, 4, 4, 0, 100, 50.0)])
+        items = asyncio.run(usage_service.agent_profiles(db, None, 7))
+        assert items[0]["agent_id"] == "unknown"
+        assert items[0]["failed_calls"] == 0
+
+    def test_empty_window(self) -> None:
+        from app.services.infra import usage_service
+
+        db = _FakeRows([])
+        assert asyncio.run(usage_service.agent_profiles(db, None, 7)) == []
+
+
+class TestAgentProfilesApi:
+    def test_endpoint_contract(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """GET /usage/agent-profiles：仅登录可读，items+days 结构."""
+        from fastapi.testclient import TestClient
+
+        from app.core.database import get_db
+        from app.core.deps import get_current_user_id
+        from app.main import app
+
+        async def fake_agent_profiles(_db: Any, _pid: Any, _days: int) -> list[dict[str, Any]]:
+            return [{"agent_id": "score_agent", "calls": 1}]
+
+        from app.services.infra import usage_service
+
+        monkeypatch.setattr(usage_service, "agent_profiles", fake_agent_profiles)
+
+        class _Session:
+            async def commit(self) -> None: ...
+
+        app.dependency_overrides[get_db] = lambda: _Session()
+        app.dependency_overrides[get_current_user_id] = lambda: (
+            "00000000-0000-0000-0000-000000000001"
+        )
+        try:
+            client = TestClient(app)
+            r = client.get("/api/v1/usage/agent-profiles?days=7")
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["code"] == 0
+            assert body["data"]["days"] == 7
+            assert body["data"]["items"][0]["agent_id"] == "score_agent"
         finally:
             app.dependency_overrides.pop(get_db, None)
             app.dependency_overrides.pop(get_current_user_id, None)

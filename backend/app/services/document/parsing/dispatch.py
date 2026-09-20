@@ -122,6 +122,7 @@ async def _run_single_agent(
                 response_format=response_format,
                 stage_key="parse",
                 project_id=project_id,
+                agent_id=config.agent_id,
                 skill_name=skill_name,
             )
     except Exception as e:
@@ -176,7 +177,7 @@ async def _run_agent_with_tools(
 
     进入条件：内置解析工具放行（guard + tools_enabled）**或**该 stage 绑定了外部搜索
     工具；两者皆无时调用方走单段 JSON schema 分支（行为等价旧单次调用）。
-    skill_name：S5 归因透传（Stage A/B 两段落库同一条准则名）。
+    agent_id/skill_name：S5 归因透传（Stage A/B 两段落库同一条准则名与 agent）。
     """
     from app.services.infra.tools.parser_tools import execute_parser_tool, make_tool_definitions
     from app.services.infra.tools.registry import execute_bound_tool
@@ -205,6 +206,7 @@ async def _run_agent_with_tools(
         max_rounds=2,
         stage_key="parse",
         project_id=project_id,
+        agent_id=config.agent_id,
         skill_name=skill_name,
     )
 
@@ -215,6 +217,7 @@ async def _run_agent_with_tools(
         response_format=response_format,
         stage_key="parse",
         project_id=project_id,
+        agent_id=config.agent_id,
         skill_name=skill_name,
     )
 

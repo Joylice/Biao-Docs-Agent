@@ -3,6 +3,7 @@
 - /usage/summary：按 stage/model 聚合 llm_usage_log：调用次数/成功率/token 总量/平均延迟。
 - /usage/trend：按 日期 × stage_key 聚合 token，供配置中心各智能体用量折线图使用。
 - /usage/skill-profiles：S5 按 skill_name 聚合（含 failed_calls），「改完准则看指标」的数据出口。
+- /usage/agent-profiles：P0-2 按 agent_id 聚合（口径同 skill-profiles，供前端 RuntimePanel）。
 """
 
 import uuid
@@ -53,4 +54,16 @@ async def get_skill_profiles(
 ) -> dict[str, Any]:
     """按 skill_name 聚合用量画像（S5）：次数/成功率/failed_calls/回退数/token/延迟."""
     items = await usage_service.skill_profiles(db, project_id, days)
+    return success(data={"items": items, "days": days})
+
+
+@router.get("/usage/agent-profiles")
+async def get_agent_profiles(
+    project_id: uuid.UUID | None = None,
+    days: int = Query(default=7, ge=0, le=365, description="统计窗口天数，0=全部历史"),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """按 agent_id 聚合用量画像（P0-2）：次数/成功率/failed_calls/回退数/token/延迟."""
+    items = await usage_service.agent_profiles(db, project_id, days)
     return success(data={"items": items, "days": days})
