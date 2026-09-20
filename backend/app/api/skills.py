@@ -40,7 +40,11 @@ from app.services.skills.contract import (
     validate_contract,
 )
 from app.services.skills.loader import load_builtin_skills
-from app.services.skills.zip_io import export_skills_zip, import_skills_zip
+from app.services.skills.zip_io import (
+    SKILL_ZIP_MAX_BYTES,
+    export_skills_zip,
+    import_skills_zip,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -325,7 +329,15 @@ async def import_skills_api(
 
     同名已存在时**不覆盖**，如实回报 ``created=false`` —— 静默覆盖是危险默认值
     （用户导入一份旧包会把线上准则冲掉）。
+
+    防御纵深：``file.size`` 已知且超限时在 read **之前**拒绝 ——
+    超大 body 不进内存（``zip_io`` 的同名检查在 read 之后，挡不住内存放大）。
+    size 未知（None）时退回 zip_io 的 read 后检查，口径不变。
     """
+    if file.size is not None and file.size > SKILL_ZIP_MAX_BYTES:
+        raise ValidationError(
+            f"zip 超过体积上限：{file.size} > {SKILL_ZIP_MAX_BYTES} 字节（1 MiB）"
+        )
     raw = await file.read()
     parsed = import_skills_zip(raw, owner_id=user_id)
 
