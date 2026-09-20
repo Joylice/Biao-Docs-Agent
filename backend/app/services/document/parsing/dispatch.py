@@ -9,9 +9,9 @@
   - 多数失败（≥2/3 提取 Agent 失败）→ 回退旧 parse_tender_with_llm 单次调用；
   - validator 失败 → 不阻断，warnings 填「交叉校验未完成」。
 
-P1 阶段：Agent 提示词 YAML 未就绪 → load_parser_agent_prompt 回退旧 parse.yaml，
-行为与旧单次 LLM 等价。dispatch 入口被 worker/tasks.py 调用（但 worker 仍可走旧路径
-直到 T1.5 接线）。
+S6 收敛（2026-09-18）：per-agent YAML（parse_score.yaml 等）已删（真源迁 skills/<name>/SKILL.md）；
+skill 契约未命中时直接兜底旧 parse.yaml（load_parse_prompt），「单 Agent 失败不阻断」
+降级契约保持。dispatch 入口被 worker/tasks.py 调用。
 
 依赖方向：parsing.windows / parsing.registry / parsing.prompts /
 parsing.guard / parsing.results → infra.llm_service（单向）。
@@ -27,7 +27,6 @@ from app.services.document.parsing.guard import get_allowed_tools_for_agent
 from app.services.document.parsing.prompts import (
     build_agent_context,
     load_agent_skill_prompt,
-    load_parser_agent_prompt,
 )
 from app.services.document.parsing.registry import PARSER_AGENTS, ParserAgentConfig
 from app.services.document.parsing.results import AgentResult, ParsedTender, merge_agent_results
@@ -56,21 +55,27 @@ async def _run_single_agent(
     start = time.monotonic()
     context = build_agent_context(config.agent_id, tender_window, prior_results)
 
-    # S3 新路径：skill 契约注册表优先（内置 parse_<x> / 用户覆盖），未命中回退旧 YAML。
+    # S3 新路径：skill 契约注册表优先（内置 parse_<x> / 用户覆盖），未命中兜底旧 parse.yaml。
     # S5：命中时带出 skill_name，透传 LLM 调用落 llm_usage_log（归因到具体准则）。
     hit = await load_agent_skill_prompt(config.agent_id, "parse", context)
     skill_name: str | None = None
     if hit is not None:
         system_prompt, user_prompt, skill_name = hit
     else:
-        try:
-            system_prompt, user_prompt = load_parser_agent_prompt(config.agent_id, context)
-        except Exception as e:
-            logger.warning("Agent %s 提示词加载失败，回退旧 parse.yaml: %s", config.agent_id, e)
-            # 回退：用旧 parse.yaml 作为提示词
-            from app.services.infra.prompt_loader import load_parse_prompt
+        # S6：per-agent YAML（parse_score.yaml 等）已删，skill 未命中直接兜底旧 parse.yaml。
+        # 兜底自身失败按「单 Agent 失败不阻断」返回失败结果（原回退链最外层语义）。
+        from app.services.infra.prompt_loader import load_parse_prompt
 
+        try:
             system_prompt, user_prompt = load_parse_prompt(redact(tender_window))
+        except Exception as e:
+            logger.warning("Agent %s parse.yaml 兜底加载失败: %s", config.agent_id, e)
+            return AgentResult(
+                agent_id=config.agent_id,
+                data={},
+                success=False,
+                elapsed_s=time.monotonic() - start,
+            )
 
     # 组装 response_format
     response_format: dict[str, Any] = {

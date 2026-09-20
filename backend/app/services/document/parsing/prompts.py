@@ -2,17 +2,17 @@
 
 职责：
 - build_agent_context：根据 Agent 配置 + 窗口文本组装提示词渲染上下文；
-- load_parser_agent_prompt：委托 PromptComposer 加载 parse_{agent_id}.yaml。
+- load_agent_skill_prompt：S3/S5 解析 skill 契约（真源 = skills/<name>/SKILL.md +
+  用户 DB 覆盖），返回三元组带 skill 名归因；未命中由调用方兜底旧 parse.yaml。
 
-依赖方向：infra.prompt_loader → infra.prompt_composer（单向）。
+S6 收敛（2026-09-18）：load_parser_agent_prompt（per-agent YAML parse_<agent_id>.yaml
+二级回退）已删除 —— 四份 parse_*.yaml 真源已迁 backend/skills/<name>/SKILL.md，
+兜底只保留最底层 parse.yaml（dispatch 直接调 load_parse_prompt）。
 本模块不直接依赖 llm_service（dispatch 负责 LLM 调用）。
 """
 
 import logging
 from typing import Any
-
-from app.core.exceptions import BizError
-from app.services.infra.prompt_loader import _composer
 
 logger = logging.getLogger(__name__)
 
@@ -81,37 +81,3 @@ def _format_prior_results(prior: dict[str, Any]) -> str:
         elif isinstance(val, str) and val:
             parts.append(f"## {field_name}\n{val}\n")
     return "\n".join(parts) if parts else "（无前序结果）"
-
-
-def load_parser_agent_prompt(
-    agent_id: str,
-    context: dict[str, Any],
-) -> tuple[str, str]:
-    """加载解析 Agent 提示词（委托 PromptComposer）.
-
-    模板文件：prompts/parse_{agent_id}.yaml
-    （score_agent → parse_score.yaml, validator_agent → parse_validator.yaml, …）
-
-    向后兼容：P1 阶段如果 parse_{agent_id}.yaml 不存在，回退到旧 parse.yaml
-    （行为等价，保证不 break 旧测试）。
-
-    2026-09-18 收窄异常口径：原实现 `except Exception:` 会吞掉**一切**异常
-    （含 YAML 语法错、DSL 字段名错、模板名校验失败），静默回退旧模板且零日志 ——
-    表现为「改了提示词但模型行为没变」，排查成本极高。
-    现改为**只兜「模板不存在」（BizError 5009）**，其他异常一律上抛；
-    且回退时打 warning 留痕，不再静默。
-    """
-    template_name = f"parse_{agent_id}"
-    try:
-        return _composer.compose(template_name, context)
-    except BizError as e:
-        if e.code != 5009:
-            raise
-        # 仅「模板文件不存在」走回退（P1 过渡：parse_{agent_id}.yaml 未创建时用旧 parse.yaml）
-        logger.warning(
-            "解析 Agent 模板 %s.yaml 不存在，回退 parse.yaml（agent=%s）",
-            template_name,
-            agent_id,
-            exc_info=True,
-        )
-        return _composer.compose("parse", context)

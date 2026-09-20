@@ -6,6 +6,8 @@
 
 # Python
 .venv/
+# 损坏的 .venv 原地重命名留存（2026-09-18 git rm 事故连带损伤 site-packages，仅本地排查用）
+.venv_broken_*/
 __pycache__/
 *.pyc
 .mypy_cache/
